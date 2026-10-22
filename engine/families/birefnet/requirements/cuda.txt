@@ -3,3 +3,6 @@
 # Below 1.27: later releases need the CUDA 13 runtime (NVIDIA driver 580+); 1.21-1.26 use
 # CUDA 12, which matches the torch cu124 lane of the other families (driver 550+).
 onnxruntime-gpu[cuda,cudnn]>=1.21,<1.27
+# cuDNN 9.21 and later fail onnxruntime-gpu 1.26 at the first convolution ("Failed to initialize
+# CUDNN Frontend"), and ONNX Runtime then silently finishes on the CPU, about 20x slower.
+nvidia-cudnn-cu12<9.21
