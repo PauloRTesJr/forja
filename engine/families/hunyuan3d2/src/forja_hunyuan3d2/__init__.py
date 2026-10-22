@@ -58,7 +58,7 @@ class Hunyuan3D2Paint(Adapter):
         self.sizes: tuple[int, int] | None = None
 
     def capabilities(self) -> Capabilities:
-        return Capabilities(tasks=(StageType.TEXTURE,), devices=(Device.CUDA,), vram_bytes=10 * GB)
+        return Capabilities(tasks=(StageType.TEXTURE,), devices=(Device.CUDA,), vram_bytes=int(12.5 * GB))
 
     def load(self, device: Device, dtype: str = "fp16") -> None:
         import torch
@@ -71,7 +71,16 @@ class Hunyuan3D2Paint(Adapter):
         config = Hunyuan3DTexGenConfig(
             str(self.weights_dir / DELIGHT), str(self.weights_dir / PAINT_TURBO), PAINT_TURBO
         )
+        if self.offload:
+            # Build both diffusion pipelines in RAM: upstream moves them to config.device at
+            # construction, and that full load is what overflows a 12 GB card.
+            config.device = "cpu"
         self.pipe = Hunyuan3DPaintPipeline(config)
+        if self.offload:
+            for net in self.pipe.models.values():
+                net.device = "cuda"  # inputs go where the offload hooks run each model
+            self.pipe.enable_model_cpu_offload()
+            self.offloaded = True
         self.sizes = (config.render_size, config.texture_size)
 
     def unload(self) -> None:
