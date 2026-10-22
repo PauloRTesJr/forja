@@ -1,6 +1,7 @@
 .DEFAULT_GOAL := help
 SHELL := /bin/bash
 VERSION ?= 0.1.0-dev
+EXE := $(if $(filter Windows_NT,$(OS)),.exe)
 
 help: ## List targets
 	@grep -E '^[a-z-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-14s %s\n", $$1, $$2}'
@@ -11,7 +12,7 @@ setup: ## Install every toolchain dependency (uv, Go modules, pnpm)
 	cd apps/desktop && pnpm install
 
 core: ## Build the forja binary into core/bin
-	cd core && go build -ldflags "-X main.version=$(VERSION)" -o bin/forja ./cmd/forja
+	cd core && go build -ldflags "-X main.version=$(VERSION)" -o bin/forja$(EXE) ./cmd/forja
 
 core-all: ## Cross-compile forja for six OS/arch targets
 	cd core && for t in darwin/arm64 darwin/amd64 linux/amd64 linux/arm64 windows/amd64 windows/arm64; do \
