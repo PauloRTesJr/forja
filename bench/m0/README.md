@@ -77,9 +77,9 @@ change re-runs only paint, LODs and export.
 - Record the outcome and the measured budgets in the spec's section 10. A budget that proved
   unrealistic is revised once, in writing.
 
-If the normal map shows smeared or flat patches, the cage missed the high-poly there: the
-bake stage's `hit_ratio` drops below 1. Raise `--set bake.cage=0.04` (a fraction of the model's
-size). For darker or lighter AO, use `--set bake.ao_radius=0.1` (smaller means more local).
+If the normal map shows smeared or flat patches, the cage missed the high-poly there, and the
+engine log (`<data>/logs/engine.log`) warns when that happens on more than 5% of texels. Raise
+`--set bake.cage=0.04` (a fraction of the model's size). For darker or lighter AO, use `--set bake.ao_radius=0.1` (smaller means more local).
 
 Useful variations, each one a single flag:
 - `--set paint.resolution=2048`: a sharper texture, at the cost of VRAM.

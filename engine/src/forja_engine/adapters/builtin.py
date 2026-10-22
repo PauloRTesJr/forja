@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import shutil
 import subprocess
 
@@ -24,6 +25,7 @@ from forja_engine.sdk import (
 )
 
 CPU = (Device.CPU,)
+log = logging.getLogger(__name__)
 
 
 class Framing(Adapter):
@@ -98,6 +100,12 @@ class Bake(Adapter):
         )
         ctx.progress(2, 3)
         ctx.check_cancel()
+        if result.hit_ratio < 0.95:
+            log.warning(
+                "bake %s: the cage reached the high-poly for only %.0f%% of texels; raise bake.cage",
+                ctx.stage_id,
+                result.hit_ratio * 100,
+            )
         out = low.copy()
         out.visual = trimesh.visual.TextureVisuals(
             uv=mesh_ops.uvs_of(low),
