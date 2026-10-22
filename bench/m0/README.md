@@ -89,6 +89,11 @@ If the normal map shows smeared or flat patches, the cage missed the high-poly t
 engine log (`<data>/logs/engine.log`) warns when that happens on more than 5% of texels. Raise
 `--set bake.cage=0.04` (a fraction of the model's size). For darker or lighter AO, use `--set bake.ao_radius=0.1` (smaller means more local).
 
+`--preset m0-local-match` adds a `texture.match` stage after paint. It fits the camera the
+reference was drawn from, corrects the painted colors per material toward the reference (the
+back too), and blends the reference onto the surfaces facing that camera, which brings back
+detail like eyes and embroidery. `--set match.reproject=0` keeps only the color correction.
+
 Useful variations, each one a single flag:
 - `--set paint.resolution=2048`: a sharper texture, at the cost of VRAM.
 - `--set shape.steps=30`: a faster shape stage.

@@ -23,7 +23,8 @@ PIPELINE = [
         "params": {"resolution": 512},
         "inputs": ["stage:uv", "stage:frame"],
     },
-    {"id": "bake", "use": "bake", "params": {"ao_samples": 8}, "inputs": ["stage:paint", "stage:cleanup"]},
+    {"id": "match", "use": "texture.match", "inputs": ["stage:paint", "stage:frame"]},
+    {"id": "bake", "use": "bake", "params": {"ao_samples": 8}, "inputs": ["stage:match", "stage:cleanup"]},
     {"id": "lods", "use": "mesh.lods", "inputs": ["stage:bake"]},
     {"id": "export", "use": "export", "inputs": ["stage:lods"]},
 ]

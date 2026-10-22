@@ -13,6 +13,7 @@ from scipy.spatial import cKDTree
 
 from forja_engine.ops import bake
 from forja_engine.ops import image as img_ops
+from forja_engine.ops import match as match_ops
 from forja_engine.ops import mesh as mesh_ops
 from forja_engine.sdk import (
     Adapter,
@@ -70,6 +71,55 @@ class Unwrap(Adapter):
 def _factor(material: object, name: str, default: float) -> float:
     value = getattr(material, name, None)
     return default if value is None else float(value)
+
+
+class TextureMatch(Adapter):
+    """Pulls a painted base color back toward the reference it was painted from.
+
+    Inputs: the painted mesh and the framed reference. Geometry, UVs, roughness and metallic
+    pass through, so the bake stage after it works unchanged. See ops/match.py for the method.
+    """
+
+    def capabilities(self) -> Capabilities:
+        return Capabilities(tasks=(StageType.TEXTURE_MATCH,), devices=CPU)
+
+    def run(self, ctx: StageContext) -> list[StageOutput]:
+        mesh = mesh_ops.load(ctx.input(ArtifactKind.MESH_GLB).path)
+        material = getattr(mesh.visual, "material", None)
+        base = getattr(material, "baseColorTexture", None)
+        if base is None:
+            raise ValueError("texture.match needs a painted mesh with a base color texture")
+        ctx.progress(1, 3)
+        result = match_ops.match(
+            mesh,
+            base,
+            Image.open(ctx.input(ArtifactKind.IMAGE_PNG).path),
+            color=float(ctx.params.get("color", 1.0)),
+            lightness=float(ctx.params.get("lightness", 0.0)),
+            reproject=float(ctx.params.get("reproject", 1.0)),
+            min_iou=float(ctx.params.get("min_iou", 0.8)),
+            align=bool(ctx.params.get("align", True)),
+            yaw=float(ctx.params.get("yaw_degrees", 0.0)),
+            seed=ctx.seed,
+        )
+        ctx.progress(2, 3)
+        ctx.check_cancel()
+        if result.iou < float(ctx.params.get("min_iou", 0.8)):
+            log.warning(
+                "texture.match %s: the shape covers the reference silhouette at IoU %.2f only; "
+                "matched colors but skipped reprojection",
+                ctx.stage_id,
+                result.iou,
+            )
+        out = mesh_ops.textured(
+            mesh,
+            result.texture,
+            roughness=_factor(material, "roughnessFactor", 0.8),
+            metallic=_factor(material, "metallicFactor", 0.0),
+        )
+        path = mesh_ops.save(out, ctx.out_dir / "matched.glb")
+        ctx.progress(3, 3)
+        return [StageOutput(path, ArtifactKind.MESH_GLB)]
 
 
 class Bake(Adapter):
@@ -188,6 +238,7 @@ BUILTINS: dict[StageType, type[Adapter]] = {
     StageType.MESH_CLEANUP: Cleanup,
     StageType.MESH_DECIMATE: Decimate,
     StageType.MESH_UV: Unwrap,
+    StageType.TEXTURE_MATCH: TextureMatch,
     StageType.BAKE: Bake,
     StageType.MESH_LODS: Lods,
     StageType.EXPORT: Export,

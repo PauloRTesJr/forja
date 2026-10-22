@@ -16,6 +16,7 @@ class StageType(StrEnum):
     MESH_DECIMATE = "mesh.decimate"
     MESH_UV = "mesh.uv"
     TEXTURE = "texture"
+    TEXTURE_MATCH = "texture.match"
     BAKE = "bake"
     MESH_LODS = "mesh.lods"
     EXPORT = "export"

@@ -1,0 +1,17 @@
+id: m0-local-match
+name: M0 local + reference match
+description: m0-local plus texture.match, which pulls the painted texture back toward the reference (colors everywhere, detail on the front).
+stages:
+  - { id: bg, use: background-removal, model: birefnet, inputs: [input:image] }
+  - { id: frame, use: framing, params: { size: 1024 } }
+  - { id: shape, use: shape, model: triposg, params: { steps: 50, guidance_scale: 7.0 } }
+  - { id: cleanup, use: mesh.cleanup }
+  - { id: lowpoly, use: mesh.decimate, params: { target_tris: 5000 } }
+  # Paint the low-poly mesh directly; Hunyuan unwraps UVs itself, so no separate UV stage.
+  - { id: paint, use: texture, model: hunyuan3d2-paint, params: { resolution: 1024, render_size: 2048 }, inputs: [lowpoly, frame] }
+  # Fits the camera the reference was drawn from, matches colors per material, then blends the
+  # reference onto the surfaces that face that camera. --set match.reproject=0 keeps colors only.
+  - { id: match, use: texture.match, inputs: [paint, frame] }
+  - { id: bake, use: bake, inputs: [match, cleanup] }
+  - { id: lods, use: mesh.lods, params: { ratios: [0.5, 0.25] } }
+  - { id: export, use: export, params: { format: glb, compression: meshopt } }
