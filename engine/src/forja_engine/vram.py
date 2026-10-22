@@ -32,22 +32,33 @@ class VramManager:
     def __init__(self, budget_bytes: int, fit_mode: FitMode = FitMode.FIT_FIRST) -> None:
         self.budget = budget_bytes
         self.fit_mode = fit_mode
-        self.loaded: OrderedDict[str, int] = OrderedDict()  # least recently used first
+        # Bytes each loaded model holds on the device, least recently used first.
+        self.loaded: OrderedDict[str, int] = OrderedDict()
+        # What a model needs to run without offload; offloaded runs never lower it, or the
+        # next load would believe the model fits and overflow again.
         self.measured: dict[str, int] = {}
+        self.offloaded: set[str] = set()
+        self.device_measured: set[str] = set()
 
     def need(self, model: str, estimate: int) -> int:
         return self.measured.get(model, estimate)
 
-    def plan(self, model: str, estimate: int) -> LoadPlan:
+    def available(self, external: int = 0) -> int:
+        """Budget left for models once other applications' current use is taken out."""
+        return max(0, self.budget - external)
+
+    def plan(self, model: str, estimate: int, external: int = 0) -> LoadPlan:
+        """external: device bytes in use by other processes right now (desktop, games)."""
+        budget = self.available(external)
         if model in self.loaded:
-            return LoadPlan(evict=[], offload=self.loaded[model] > self.budget)
+            return LoadPlan(evict=[], offload=model in self.offloaded)
         need = self.need(model, estimate)
-        if need > self.budget:
+        if need > budget:
             if self.fit_mode is FitMode.QUALITY_FIRST:
-                raise DoesNotFit(model, need, self.budget)
+                raise DoesNotFit(model, need, budget)
             return LoadPlan(evict=list(self.loaded), offload=True)
         evict: list[str] = []
-        free = self.budget - sum(self.loaded.values())
+        free = budget - sum(self.loaded.values())
         for victim, size in self.loaded.items():
             if free >= need:
                 break
@@ -55,18 +66,34 @@ class VramManager:
             free += size
         return LoadPlan(evict=evict, offload=False)
 
-    def did_load(self, model: str, estimate: int) -> None:
-        self.loaded[model] = self.need(model, estimate)
+    def did_load(self, model: str, estimate: int, offloaded: bool = False) -> None:
+        self.loaded[model] = estimate if offloaded else self.need(model, estimate)
         self.loaded.move_to_end(model)
+        if offloaded:
+            self.offloaded.add(model)
+        else:
+            self.offloaded.discard(model)
 
     def did_unload(self, model: str) -> None:
         self.loaded.pop(model, None)
+        self.offloaded.discard(model)
 
     def touch(self, model: str) -> None:
         if model in self.loaded:
             self.loaded.move_to_end(model)
 
-    def record_peak(self, model: str, peak: int) -> None:
-        self.measured[model] = peak
+    def record_resident(self, model: str, resident: int) -> None:
+        """Bytes the model holds on the device between runs, as measured on the device."""
+        self.device_measured.add(model)
         if model in self.loaded:
-            self.loaded[model] = peak
+            self.loaded[model] = resident
+        if model not in self.offloaded:
+            self.measured[model] = max(self.measured.get(model, 0), resident)
+
+    def record_peak(self, model: str, peak: int) -> None:
+        """The runtime's own peak (torch); device measurements, when present, already cover it."""
+        if model in self.offloaded:
+            return
+        self.measured[model] = peak
+        if model in self.loaded and model not in self.device_measured:
+            self.loaded[model] = max(self.loaded[model], peak)

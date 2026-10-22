@@ -62,7 +62,12 @@ class Worker:
             raise WorkerCrashed(self.family, list(self.stderr_tail))
 
     async def load(
-        self, adapter: str, device: str, weights_dir: str | None = None, dtype: str = "fp16"
+        self,
+        adapter: str,
+        device: str,
+        weights_dir: str | None = None,
+        dtype: str = "fp16",
+        offload: bool = False,
     ) -> None:
         async with self._lock:
             await self._send(
@@ -72,6 +77,7 @@ class Worker:
                     "device": device,
                     "dtype": dtype,
                     "weights_dir": weights_dir,
+                    "offload": offload,
                 }
             )
             msg = await self._control_reply()

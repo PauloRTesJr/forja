@@ -18,6 +18,7 @@ from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass, field
 from typing import Any
 
+from forja_engine import gpumem
 from forja_engine.adapters.builtin import BUILTINS
 from forja_engine.registry import Manifest, instantiate
 from forja_engine.sdk import StageContext, StageType
@@ -28,6 +29,7 @@ from forja_engine.workers import StageFailed, WorkerCrashed, WorkerPool
 log = logging.getLogger(__name__)
 
 INTERACTIVE, BATCH = 0, 1
+GB = 1 << 30
 
 
 @dataclass
@@ -71,9 +73,17 @@ def _weights(m: Manifest) -> str | None:
 
 class DeviceLane:
     def __init__(
-        self, device: str, vram: VramManager, workers: WorkerPool, fairness_cap: int, in_process: bool
+        self,
+        device: str,
+        vram: VramManager,
+        workers: WorkerPool,
+        fairness_cap: int,
+        in_process: bool,
+        used: Callable[[], int] | None = None,
     ) -> None:
+        """`used` reads the device's bytes in use; None where it cannot be measured."""
         self.device = device
+        self.used = used
         self.vram = vram
         self.workers = workers
         self.fairness_cap = fairness_cap
@@ -87,6 +97,7 @@ class DeviceLane:
         self._task: asyncio.Task[None] | None = None
         self._in_process_adapters: dict[str, Any] = {}
         self._loaded: dict[str, Manifest] = {}
+        self._offload: dict[str, bool] = {}
 
     def start(self) -> None:
         self._task = asyncio.create_task(self._loop(), name=f"lane:{self.device}")
@@ -160,14 +171,29 @@ class DeviceLane:
             self.streak = 0
         self.streak += 1
         if m.id not in self.vram.loaded:
-            plan = self.vram.plan(m.id, estimate)
+            external = self._external()
+            plan = self.vram.plan(m.id, estimate, external)
             for victim in plan.evict:
                 await self._unload(victim)
             if plan.offload:
-                item.ctx.params.setdefault("offload", True)
+                log.warning(
+                    "%s needs %.1fGB but %s has %.1fGB for models (other applications use %.1fGB); "
+                    "loading it with offload",
+                    m.id,
+                    self.vram.need(m.id, estimate) / GB,
+                    self.device,
+                    self.vram.available(external) / GB,
+                    external / GB,
+                )
+            self._offload[m.id] = plan.offload
+            before = self._read()
             await self._load(m)
-            self.vram.did_load(m.id, estimate)
+            self.vram.did_load(m.id, estimate, offloaded=plan.offload)
+            if before is not None:
+                self.vram.record_resident(m.id, max(0, (self._read() or 0) - before))
             self.stats.swaps += 1
+        if self._offload.get(m.id):
+            item.ctx.params.setdefault("offload", True)
         self.vram.touch(m.id)
         self.current_model = m.id
         if self.in_process:
@@ -184,25 +210,39 @@ class DeviceLane:
         for attempt in (1, 2):
             worker = await self.workers.get(m.family, m.interpreter)
             if worker.adapter != m.adapter:
-                await worker.load(m.adapter, self.device, _weights(m))
+                await worker.load(m.adapter, self.device, _weights(m), offload=self._offload.get(m.id, False))
             try:
+                before = self._read()
                 result = await worker.run(item.key, item.ctx, item.on_progress)
                 if result.get("peak_vram_bytes"):
                     self.vram.record_peak(m.id, int(result["peak_vram_bytes"]))
+                if before is not None and m.id in self.vram.loaded:
+                    # Runtimes keep what a run grabbed (allocator caches, ONNX Runtime arenas).
+                    grown = (self._read() or 0) - before
+                    self.vram.record_resident(m.id, max(0, self.vram.loaded[m.id] + grown))
                 return result
             except WorkerCrashed:
                 self.vram.did_unload(m.id)
                 if attempt == 2:
                     raise
                 log.warning("worker %s crashed; restarting and retrying %s once", m.family, item.key)
-                self.vram.did_load(m.id, estimate)
+                self.vram.did_load(m.id, estimate, offloaded=self._offload.get(m.id, False))
         raise AssertionError("unreachable")
+
+    def _read(self) -> int | None:
+        return self.used() if self.used else None
+
+    def _external(self) -> int:
+        """Device bytes held by other processes: what is in use minus what our models hold."""
+        used = self._read()
+        return max(0, used - sum(self.vram.loaded.values())) if used is not None else 0
 
     async def _load(self, m: Manifest) -> None:
         self._loaded[m.id] = m
         if self.in_process:
             adapter = instantiate(m.adapter)
             adapter.weights_dir = m.weights_dir
+            adapter.offload = self._offload.get(m.id, False)
             adapter.load(adapter.capabilities().devices[0])
             self._in_process_adapters[m.id] = adapter
             return
@@ -212,7 +252,7 @@ class DeviceLane:
             if worker.adapter == other.adapter:
                 self.vram.did_unload(other.id)
                 self._loaded.pop(other.id, None)
-        await worker.load(m.adapter, self.device, _weights(m))
+        await worker.load(m.adapter, self.device, _weights(m), offload=self._offload.get(m.id, False))
 
     async def _unload(self, model: str) -> None:
         self.vram.did_unload(model)
@@ -241,7 +281,14 @@ class Scheduler:
         """
         self.workers = WorkerPool()
         self.lanes = {
-            dev: DeviceLane(dev, VramManager(budget, fit_mode), self.workers, fairness_cap, in_process)
+            dev: DeviceLane(
+                dev,
+                VramManager(budget, fit_mode),
+                self.workers,
+                fairness_cap,
+                in_process,
+                used=None if in_process else gpumem.reader(dev),
+            )
             for dev, budget in devices.items()
         }
         self.pool = ProcessPoolExecutor(max_workers=cpu_workers or max(1, (os.cpu_count() or 2) - 1))

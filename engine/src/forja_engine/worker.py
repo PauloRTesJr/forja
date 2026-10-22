@@ -4,7 +4,7 @@ Protocol: one JSON object per line. Requests on stdin, replies on stdout. Meshes
 never cross the pipe; only paths do. The adapter's own prints go to stderr, so they can never
 corrupt the protocol stream.
 
-    -> {"op": "load", "adapter": "pkg.mod:Class", "device": "cuda:0", "dtype": "fp16"}
+    -> {"op": "load", "adapter": "pkg.mod:Class", "device": "cuda:0", "dtype": "fp16", "offload": false}
     -> {"op": "run", "id": "...", "ctx": {...}}
     -> {"op": "cancel", "id": "..."}
     -> {"op": "unload"} / {"op": "exit"}
@@ -134,6 +134,7 @@ def main() -> None:
                 adapter = instantiate(msg["adapter"])
                 if msg.get("weights_dir"):
                     adapter.weights_dir = Path(msg["weights_dir"])
+                adapter.offload = bool(msg.get("offload"))
                 adapter.load(Device(msg["device"].split(":")[0]), msg.get("dtype", "fp16"))
                 out.send({"type": "loaded", "adapter": msg["adapter"]})
             except Exception as e:

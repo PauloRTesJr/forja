@@ -42,3 +42,38 @@ def test_measured_peak_replaces_estimate():
     vm.record_peak("shape", 10 * GB)
     vm.did_load("bg", 2 * GB)
     assert vm.plan("shape", 4 * GB).evict == ["bg"]
+
+
+def test_other_applications_shrink_the_budget():
+    vm = VramManager(11 * GB)
+    assert not vm.plan("shape", 9 * GB).offload
+    assert vm.plan("shape", 9 * GB, external=int(2.5 * GB)).offload  # desktop and a game hold 2.5GB
+
+
+def test_measured_footprint_evicts_a_model_that_declared_less():
+    vm = VramManager(10 * GB)
+    vm.did_load("bg", int(1.5 * GB))
+    vm.record_resident("bg", 7 * GB)  # an ONNX Runtime arena kept what its first run grabbed
+    assert vm.plan("shape", 8 * GB).evict == ["bg"]
+    assert vm.need("bg", int(1.5 * GB)) == 7 * GB
+
+
+def test_offloaded_runs_do_not_lower_the_need():
+    vm = VramManager(10 * GB)
+    vm.record_peak("paint", 12 * GB)
+    plan = vm.plan("paint", 10 * GB)
+    assert plan.offload
+    vm.did_load("paint", 10 * GB, offloaded=True)
+    vm.record_peak("paint", 3 * GB)
+    vm.record_resident("paint", 2 * GB)
+    vm.did_unload("paint")
+    assert vm.plan("paint", 10 * GB).offload
+
+
+def test_device_measurement_is_not_added_to_the_runtime_peak():
+    vm = VramManager(11 * GB)
+    vm.did_load("shape", 8 * GB)
+    vm.record_resident("shape", 3 * GB)  # weights and context after load
+    vm.record_peak("shape", int(7.5 * GB))  # torch's peak during the run
+    vm.record_resident("shape", int(8.5 * GB))  # what the device holds after the run
+    assert vm.loaded["shape"] == int(8.5 * GB) and vm.need("shape", 8 * GB) == int(8.5 * GB)
