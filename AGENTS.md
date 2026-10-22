@@ -49,6 +49,7 @@ Three processes; each owns exactly one thing.
 
 ## Working in this repo
 
+- This repo will be open source: every committed byte is public. Never commit credentials (API keys, tokens, passwords, cloud or HuggingFace secrets, `.env` files, private keys), private hostnames or IPs, or personal paths. Secrets are read at runtime from the core's secrets store or env vars; tests, fixtures, examples and logs use obvious fakes. Review `git diff --staged` before every commit.
 - Each change keeps all three test suites green: `make test`. CI-equivalent checks: `make check`.
 - Real models live in **model families** (`engine/families/<name>/`): `family.yaml` pins the Python version, lanes, upstream source (URL + sha256) and CUDA builds; `requirements/<lane>.txt` lists dependencies per torch lane; `src/forja_<name>/` is the adapter. `forja models install <id>` builds `<data>/envs/<family>` with uv and fetches weights pinned in the model's manifest (`engine/src/forja_engine/manifests/`). Pin every new upstream commit, weight revision and file hash; adapter tests run against fake upstream modules (`engine/tests/test_families.py`).
 - Stub models (`engine/src/forja_engine/adapters/stub/`) are deterministic and CPU-only; they stand in for real models in tests and on machines without a GPU. Keep them deterministic for a fixed seed.
