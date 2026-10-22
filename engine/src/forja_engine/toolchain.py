@@ -152,7 +152,8 @@ def build_env(torch_backend: str, log: Log) -> dict[str, str]:
     """Environment for compiling CUDA extensions against a torch built for torch_backend."""
     home, have = check_cuda(torch_cuda(torch_backend))
     log(f"nvcc {have[0]}.{have[1]} at {home}")
-    env = {"CUDA_HOME": str(home), "CUDA_PATH": str(home)}
+    # FORCE_CUDA: extensions such as diso otherwise decide by probing, and fall back to CPU.
+    env = {"CUDA_HOME": str(home), "CUDA_PATH": str(home), "FORCE_CUDA": "1"}
     if sys.platform == "win32":
         bat, toolset = find_msvc(max_msvc_toolset(have))
         log(f"MSVC {toolset} via {bat}")
