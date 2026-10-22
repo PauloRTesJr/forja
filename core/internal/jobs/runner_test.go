@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -151,7 +152,8 @@ func TestExportWritesGLBAndSidecar(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if st.Mode().Perm() != 0o644 {
+		// Windows has no Unix permission bits: every writable file reports 0666.
+		if runtime.GOOS != "windows" && st.Mode().Perm() != 0o644 {
 			t.Errorf("%s has mode %v", f, st.Mode().Perm())
 		}
 	}
