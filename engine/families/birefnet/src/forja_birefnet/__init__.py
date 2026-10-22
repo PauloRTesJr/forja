@@ -60,7 +60,7 @@ class BiRefNet(Adapter):
         return Capabilities(
             tasks=(StageType.BACKGROUND_REMOVAL,),
             devices=(Device.CUDA, Device.MPS, Device.CPU),
-            vram_bytes=int(1.5 * GB),
+            vram_bytes=8 * GB,
         )
 
     def load(self, device: Device, dtype: str = "fp16") -> None:

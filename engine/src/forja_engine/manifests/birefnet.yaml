@@ -4,7 +4,9 @@ family: birefnet
 adapter: forja_birefnet:BiRefNet
 tasks: [background-removal]
 license: { spdx: MIT, commercial: true }
-vram_gb: 1.5
+# Measured on an RTX 4070 Ti: the CUDA arena holds about 7 GB after a 1024x1024 pass,
+# because cuDNN's algorithm search sizes its workspace to the free memory.
+vram_gb: 8
 requirements:
   cuda: { status: supported }
   mps: { status: supported }

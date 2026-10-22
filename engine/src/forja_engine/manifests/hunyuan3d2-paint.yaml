@@ -7,7 +7,8 @@ license:
   spdx: LicenseRef-Tencent-Hunyuan-3D-2.0-Community
   commercial: true
   restrictions: [not licensed in the EU, UK or South Korea, separate license above 1M monthly active users]
-vram_gb: 10
+# Measured on an RTX 4070 Ti at render_size 2048: torch reserves 12.7 GB with both pipelines on the GPU.
+vram_gb: 12.5
 requirements:
   cuda: { status: supported, min_vram_gb: 10 }
   mps: { status: unsupported }
