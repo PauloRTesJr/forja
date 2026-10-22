@@ -17,8 +17,11 @@ weights:
   repo: tencent/Hunyuan3D-2
   revision: 9cd649ba6913f7a852e3286bad86bfa9a2d83dcf
   allow: ["hunyuan3d-delight-v2-0/*", "hunyuan3d-paint-v2-0-turbo/*"]
-  # The turbo UNet ships as both .bin (7.3 GB) and .safetensors; diffusers loads safetensors.
-  ignore: ["hunyuan3d-paint-v2-0-turbo/unet/diffusion_pytorch_model.bin"]
+  # Upstream loads the turbo UNet with torch.load from the fp32 .bin, strict. The .safetensors
+  # next to it is not a drop-in: it carries 36 extra IP-Adapter tensors.
+  ignore: ["hunyuan3d-paint-v2-0-turbo/unet/diffusion_pytorch_model.safetensors"]
+  files:
+    - { path: hunyuan3d-paint-v2-0-turbo/unet/diffusion_pytorch_model.bin, sha256: 24e7f1aea8a7c94cee627eb06f5265f19eeff4e19568636c5eaef050cc19ba3d, bytes: 7325432923 }
 params:
   resolution: { type: integer, default: 2048, enum: [1024, 2048] }
   render_size: { type: integer, default: 2048, enum: [1024, 2048] }
