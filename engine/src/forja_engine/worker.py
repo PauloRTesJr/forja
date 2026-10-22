@@ -111,10 +111,14 @@ def main() -> None:
                 out.send({"type": "error", "id": run_id, "error": "no adapter loaded", "cancelled": False})
                 continue
             ctx = ctx_from_json(msg["ctx"])
-            ctx.progress = lambda step, total, rid=run_id: out.send(
-                {"type": "progress", "id": rid, "step": step, "total": total}
-            )
-            ctx.cancelled = lambda rid=run_id: rid in cancelled
+
+            def progress(step: int, total: int, rid: str = run_id) -> None:
+                out.send({"type": "progress", "id": rid, "step": step, "total": total})
+
+            def is_cancelled(rid: str = run_id) -> bool:
+                return rid in cancelled
+
+            ctx.progress, ctx.cancelled = progress, is_cancelled
             started = time.perf_counter()
             try:
                 outputs = adapter.run(ctx)

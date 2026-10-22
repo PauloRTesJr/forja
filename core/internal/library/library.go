@@ -1,0 +1,343 @@
+// Package library is the core's durable state: jobs, their stages, the stage cache index,
+// and generated assets. SQLite in WAL mode, pure Go (no cgo).
+package library
+
+import (
+	"context"
+	"database/sql"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"path/filepath"
+	"time"
+
+	_ "modernc.org/sqlite"
+)
+
+var ErrNotFound = errors.New("not found")
+
+type Status string
+
+const (
+	Queued    Status = "queued"
+	Running   Status = "running"
+	Succeeded Status = "succeeded"
+	Failed    Status = "failed"
+	Cancelled Status = "cancelled"
+)
+
+func (s Status) Done() bool { return s == Succeeded || s == Failed || s == Cancelled }
+
+type Output struct {
+	Hash    string `json:"hash"`
+	Kind    string `json:"kind"`
+	Preview bool   `json:"preview,omitempty"`
+}
+
+type Stage struct {
+	ID       string   `json:"id"`
+	Use      string   `json:"use"`
+	Model    string   `json:"model,omitempty"`
+	Status   Status   `json:"status"`
+	Key      string   `json:"key"`
+	Cached   bool     `json:"cached"`
+	Provider string   `json:"provider,omitempty"`
+	Outputs  []Output `json:"outputs"`
+	Seconds  float64  `json:"seconds"`
+	Step     int      `json:"step"`
+	Total    int      `json:"total"`
+	Error    string   `json:"error,omitempty"`
+}
+
+type Job struct {
+	ID          string         `json:"id"`
+	Name        string         `json:"name"`
+	Preset      string         `json:"preset"`
+	Input       string         `json:"input"`
+	Project     string         `json:"project,omitempty"`
+	Priority    string         `json:"priority"`
+	Overrides   map[string]any `json:"overrides,omitempty"`
+	Status      Status         `json:"status"`
+	Error       string         `json:"error,omitempty"`
+	CreatedAt   time.Time      `json:"created_at"`
+	FinishedAt  *time.Time     `json:"finished_at,omitempty"`
+	AssetID     string         `json:"asset_id,omitempty"`
+	Stages      []Stage        `json:"stages"`
+	EstimateSec float64        `json:"estimate_seconds,omitempty"`
+}
+
+type Asset struct {
+	ID         string         `json:"id"`
+	JobID      string         `json:"job_id"`
+	Name       string         `json:"name"`
+	Preset     string         `json:"preset"`
+	GLB        string         `json:"glb"`
+	Input      string         `json:"input"`
+	Thumbnail  string         `json:"thumbnail,omitempty"`
+	Stats      map[string]any `json:"stats,omitempty"`
+	Project    string         `json:"project,omitempty"`
+	ExportPath string         `json:"export_path,omitempty"`
+	CreatedAt  time.Time      `json:"created_at"`
+}
+
+type DB struct {
+	sql *sql.DB
+}
+
+const schema = `
+CREATE TABLE IF NOT EXISTS jobs (
+	id TEXT PRIMARY KEY,
+	created_at INTEGER NOT NULL,
+	finished_at INTEGER,
+	status TEXT NOT NULL,
+	name TEXT NOT NULL,
+	preset TEXT NOT NULL,
+	input TEXT NOT NULL,
+	project TEXT NOT NULL DEFAULT '',
+	priority TEXT NOT NULL DEFAULT 'batch',
+	overrides TEXT NOT NULL DEFAULT '{}',
+	stages TEXT NOT NULL DEFAULT '[]',
+	asset_id TEXT NOT NULL DEFAULT '',
+	error TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS jobs_created ON jobs(created_at DESC);
+CREATE TABLE IF NOT EXISTS stage_cache (
+	key TEXT PRIMARY KEY,
+	outputs TEXT NOT NULL,
+	seconds REAL NOT NULL,
+	created_at INTEGER NOT NULL,
+	hits INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS stage_timings (
+	use TEXT NOT NULL,
+	model TEXT NOT NULL,
+	provider TEXT NOT NULL,
+	seconds REAL NOT NULL,
+	at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS stage_timings_lookup ON stage_timings(use, model, provider, at DESC);
+CREATE TABLE IF NOT EXISTS assets (
+	id TEXT PRIMARY KEY,
+	job_id TEXT NOT NULL,
+	name TEXT NOT NULL,
+	preset TEXT NOT NULL,
+	glb TEXT NOT NULL,
+	input TEXT NOT NULL,
+	thumbnail TEXT NOT NULL DEFAULT '',
+	stats TEXT NOT NULL DEFAULT '{}',
+	project TEXT NOT NULL DEFAULT '',
+	export_path TEXT NOT NULL DEFAULT '',
+	created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS assets_created ON assets(created_at DESC);
+`
+
+func Open(dataDir string) (*DB, error) {
+	dsn := "file:" + filepath.ToSlash(filepath.Join(dataDir, "library.db")) +
+		"?_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(ON)"
+	db, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		return nil, err
+	}
+	// One writer avoids SQLITE_BUSY churn; WAL keeps readers concurrent.
+	db.SetMaxOpenConns(1)
+	if _, err := db.Exec(schema); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("library schema: %w", err)
+	}
+	return &DB{sql: db}, nil
+}
+
+func (d *DB) Close() error { return d.sql.Close() }
+
+func (d *DB) SaveJob(ctx context.Context, j *Job) error {
+	overrides, _ := json.Marshal(j.Overrides)
+	stages, _ := json.Marshal(j.Stages)
+	var finished any
+	if j.FinishedAt != nil {
+		finished = j.FinishedAt.UnixMilli()
+	}
+	_, err := d.sql.ExecContext(ctx, `
+		INSERT INTO jobs (id, created_at, finished_at, status, name, preset, input, project, priority, overrides, stages, asset_id, error)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(id) DO UPDATE SET finished_at=excluded.finished_at, status=excluded.status,
+			stages=excluded.stages, asset_id=excluded.asset_id, error=excluded.error`,
+		j.ID, j.CreatedAt.UnixMilli(), finished, j.Status, j.Name, j.Preset, j.Input, j.Project, j.Priority,
+		string(overrides), string(stages), j.AssetID, j.Error)
+	return err
+}
+
+const jobColumns = `id, created_at, finished_at, status, name, preset, input, project, priority, overrides, stages, asset_id, error`
+
+func scanJob(row interface{ Scan(...any) error }) (*Job, error) {
+	var j Job
+	var created int64
+	var finished sql.NullInt64
+	var overrides, stages string
+	if err := row.Scan(&j.ID, &created, &finished, &j.Status, &j.Name, &j.Preset, &j.Input, &j.Project,
+		&j.Priority, &overrides, &stages, &j.AssetID, &j.Error); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	j.CreatedAt = time.UnixMilli(created)
+	if finished.Valid {
+		t := time.UnixMilli(finished.Int64)
+		j.FinishedAt = &t
+	}
+	_ = json.Unmarshal([]byte(overrides), &j.Overrides)
+	_ = json.Unmarshal([]byte(stages), &j.Stages)
+	return &j, nil
+}
+
+func (d *DB) Job(ctx context.Context, id string) (*Job, error) {
+	return scanJob(d.sql.QueryRowContext(ctx, `SELECT `+jobColumns+` FROM jobs WHERE id = ?`, id))
+}
+
+func (d *DB) Jobs(ctx context.Context, limit int, before time.Time) ([]*Job, error) {
+	rows, err := d.sql.QueryContext(ctx,
+		`SELECT `+jobColumns+` FROM jobs WHERE created_at < ? ORDER BY created_at DESC LIMIT ?`,
+		before.UnixMilli(), limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*Job
+	for rows.Next() {
+		j, err := scanJob(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, j)
+	}
+	return out, rows.Err()
+}
+
+// FailUnfinished marks jobs interrupted by a core restart.
+func (d *DB) FailUnfinished(ctx context.Context) error {
+	_, err := d.sql.ExecContext(ctx,
+		`UPDATE jobs SET status = 'failed', error = 'interrupted: the core stopped while this job ran', finished_at = ?
+		 WHERE status IN ('queued', 'running')`, time.Now().UnixMilli())
+	return err
+}
+
+// CacheGet returns the outputs recorded for a stage key.
+func (d *DB) CacheGet(ctx context.Context, key string) ([]Output, bool, error) {
+	var raw string
+	err := d.sql.QueryRowContext(ctx, `SELECT outputs FROM stage_cache WHERE key = ?`, key).Scan(&raw)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	var outs []Output
+	if err := json.Unmarshal([]byte(raw), &outs); err != nil {
+		return nil, false, err
+	}
+	_, _ = d.sql.ExecContext(ctx, `UPDATE stage_cache SET hits = hits + 1 WHERE key = ?`, key)
+	return outs, true, nil
+}
+
+func (d *DB) CachePut(ctx context.Context, key string, outs []Output, seconds float64) error {
+	raw, _ := json.Marshal(outs)
+	_, err := d.sql.ExecContext(ctx,
+		`INSERT INTO stage_cache (key, outputs, seconds, created_at) VALUES (?, ?, ?, ?)
+		 ON CONFLICT(key) DO UPDATE SET outputs = excluded.outputs`,
+		key, string(raw), seconds, time.Now().UnixMilli())
+	return err
+}
+
+// CacheForget drops a key whose artifact vanished from the object store.
+func (d *DB) CacheForget(ctx context.Context, key string) error {
+	_, err := d.sql.ExecContext(ctx, `DELETE FROM stage_cache WHERE key = ?`, key)
+	return err
+}
+
+func (d *DB) RecordTiming(ctx context.Context, use, model, provider string, seconds float64) error {
+	_, err := d.sql.ExecContext(ctx, `INSERT INTO stage_timings (use, model, provider, seconds, at) VALUES (?, ?, ?, ?, ?)`,
+		use, model, provider, seconds, time.Now().UnixMilli())
+	return err
+}
+
+// EstimateSeconds is the median of the last 20 timings for a stage on a provider; 0 if unknown.
+func (d *DB) EstimateSeconds(ctx context.Context, use, model, provider string) float64 {
+	rows, err := d.sql.QueryContext(ctx,
+		`SELECT seconds FROM stage_timings WHERE use = ? AND model = ? AND provider = ? ORDER BY at DESC LIMIT 20`,
+		use, model, provider)
+	if err != nil {
+		return 0
+	}
+	defer rows.Close()
+	var xs []float64
+	for rows.Next() {
+		var s float64
+		if rows.Scan(&s) == nil {
+			xs = append(xs, s)
+		}
+	}
+	if len(xs) == 0 {
+		return 0
+	}
+	for i := 1; i < len(xs); i++ {
+		for j := i; j > 0 && xs[j] < xs[j-1]; j-- {
+			xs[j], xs[j-1] = xs[j-1], xs[j]
+		}
+	}
+	return xs[len(xs)/2]
+}
+
+func (d *DB) SaveAsset(ctx context.Context, a *Asset) error {
+	stats, _ := json.Marshal(a.Stats)
+	_, err := d.sql.ExecContext(ctx, `
+		INSERT INTO assets (id, job_id, name, preset, glb, input, thumbnail, stats, project, export_path, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(id) DO UPDATE SET thumbnail = excluded.thumbnail, stats = excluded.stats,
+			export_path = excluded.export_path, name = excluded.name`,
+		a.ID, a.JobID, a.Name, a.Preset, a.GLB, a.Input, a.Thumbnail, string(stats), a.Project, a.ExportPath,
+		a.CreatedAt.UnixMilli())
+	return err
+}
+
+const assetColumns = `id, job_id, name, preset, glb, input, thumbnail, stats, project, export_path, created_at`
+
+func scanAsset(row interface{ Scan(...any) error }) (*Asset, error) {
+	var a Asset
+	var stats string
+	var created int64
+	if err := row.Scan(&a.ID, &a.JobID, &a.Name, &a.Preset, &a.GLB, &a.Input, &a.Thumbnail, &stats, &a.Project,
+		&a.ExportPath, &created); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	_ = json.Unmarshal([]byte(stats), &a.Stats)
+	a.CreatedAt = time.UnixMilli(created)
+	return &a, nil
+}
+
+func (d *DB) Asset(ctx context.Context, id string) (*Asset, error) {
+	return scanAsset(d.sql.QueryRowContext(ctx, `SELECT `+assetColumns+` FROM assets WHERE id = ?`, id))
+}
+
+func (d *DB) Assets(ctx context.Context, limit int, before time.Time, query string) ([]*Asset, error) {
+	rows, err := d.sql.QueryContext(ctx,
+		`SELECT `+assetColumns+` FROM assets WHERE created_at < ? AND (? = '' OR name LIKE '%' || ? || '%' OR preset = ?)
+		 ORDER BY created_at DESC LIMIT ?`,
+		before.UnixMilli(), query, query, query, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*Asset
+	for rows.Next() {
+		a, err := scanAsset(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}

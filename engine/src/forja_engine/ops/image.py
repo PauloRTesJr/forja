@@ -25,7 +25,7 @@ def alpha_bbox(img: Image.Image, threshold: int = 16) -> tuple[int, int, int, in
     ys, xs = np.nonzero(alpha > threshold)
     if len(xs) == 0:
         return 0, 0, img.width, img.height
-    return int(xs.min()), int(ys.min()), int(xs.max()) + 1, int(ys.max()) + 1
+    return int(np.min(xs)), int(np.min(ys)), int(np.max(xs)) + 1, int(np.max(ys)) + 1
 
 
 def frame(img: Image.Image, size: int, margin: float = 0.08) -> Image.Image:

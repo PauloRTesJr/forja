@@ -90,7 +90,7 @@ class Lods(Adapter):
             bary /= np.maximum(bary.sum(axis=1, keepdims=True), 1e-9)
             uv0 = mesh_ops.uvs_of(lod0)[lod0.faces[tri_ids]]
             uv = np.einsum("ij,ijk->ik", bary, uv0)
-            lod.visual = trimesh.visual.TextureVisuals(uv=uv, material=lod0.visual.material)
+            lod.visual = trimesh.visual.TextureVisuals(uv=uv, material=getattr(lod0.visual, "material", None))
             scene.add_geometry(lod, node_name=f"{name}_LOD{level}", geom_name=f"{name}_LOD{level}")
             ctx.progress(level, len(ratios))
         return [StageOutput(mesh_ops.save(scene, ctx.out_dir / "lods.glb"), ArtifactKind.MESH_GLB)]

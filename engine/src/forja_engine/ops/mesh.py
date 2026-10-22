@@ -38,7 +38,9 @@ def cleanup(mesh: trimesh.Trimesh, min_component_ratio: float = 0.01) -> trimesh
     if len(parts) > 1:
         areas = np.array([p.area for p in parts])
         keep = [p for p, a in zip(parts, areas, strict=True) if a >= areas.max() * min_component_ratio]
-        mesh = trimesh.util.concatenate(keep)
+        merged = trimesh.util.concatenate(keep)
+        assert isinstance(merged, trimesh.Trimesh)
+        mesh = merged
     trimesh.repair.fix_normals(mesh)
     return mesh
 

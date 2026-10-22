@@ -1,0 +1,13 @@
+id: mobile-prop
+name: Mobile prop
+description: 5k triangles, 1K base color, baked-light free, two LODs.
+stages:
+  - { id: bg, use: background-removal, model: stub-background, inputs: [input:image] }
+  - { id: frame, use: framing }
+  - { id: shape, use: shape, model: stub-shape }
+  - { id: cleanup, use: mesh.cleanup }
+  - { id: lowpoly, use: mesh.decimate, params: { target_tris: 5000 } }
+  - { id: uv, use: mesh.uv }
+  - { id: paint, use: texture, model: stub-paint, params: { resolution: 1024 }, inputs: [uv, frame] }
+  - { id: lods, use: mesh.lods, params: { ratios: [0.5, 0.25] } }
+  - { id: export, use: export, params: { format: glb, compression: meshopt } }

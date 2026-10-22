@@ -53,7 +53,7 @@ class StubShape(Adapter):
         ctx.progress(1, 4)
         ctx.check_cancel()
         dist = _distance(mask)
-        height = np.sqrt(dist / max(1.0, dist.max())) * depth
+        height = np.sqrt(dist / max(1.0, float(np.max(dist)))) * depth
         ctx.progress(2, 4)
         ctx.check_cancel()
         mesh = _inflate(mask, height)
