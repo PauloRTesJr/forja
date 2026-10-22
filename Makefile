@@ -32,7 +32,7 @@ test: ## Run every test suite
 
 check: ## Lint, type-check and test everything (what CI runs)
 	cd engine && uv run ruff check . && uv run ruff format --check . && uv run mypy src families/birefnet/src families/triposg/src families/hunyuan3d2/src && uv run pytest -q
-	cd core && gofmt -l . | (! grep .) && go vet ./... && go test -race ./...
+	cd core && gofmt -l . | (! grep .) && go vet ./... && go test $$([ "$$(go env CGO_ENABLED)" = 1 ] && echo -race) ./...
 	cd apps/desktop && pnpm lint && pnpm typecheck && pnpm test
 
 .PHONY: help setup core core-all engine desktop test check
