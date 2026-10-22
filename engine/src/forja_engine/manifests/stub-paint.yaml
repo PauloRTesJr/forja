@@ -1,0 +1,12 @@
+id: stub-paint
+name: Stub paint (front projection)
+family: stub
+adapter: forja_engine.adapters.stub:StubPaint
+tasks: [texture]
+license: { spdx: Apache-2.0, commercial: true }
+requirements:
+  cpu: { status: supported }
+params:
+  resolution: { type: integer, default: 1024, enum: [512, 1024, 2048] }
+  roughness: { type: number, default: 0.8, minimum: 0, maximum: 1 }
+  metallic: { type: number, default: 0.0, minimum: 0, maximum: 1 }

@@ -1,0 +1,10 @@
+id: stub-background
+name: Stub background removal
+family: stub
+adapter: forja_engine.adapters.stub:StubBackground
+tasks: [background-removal]
+license: { spdx: Apache-2.0, commercial: true }
+requirements:
+  cpu: { status: supported }
+params:
+  tolerance: { type: number, default: 0.12, minimum: 0.01, maximum: 0.5 }

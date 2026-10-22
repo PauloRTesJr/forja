@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+# Go
+/core/bin/
+# Node
+node_modules/
+dist/
+dist-electron/
+out/
+release/
+# Local data
+.forja/
+*.log
+.DS_Store

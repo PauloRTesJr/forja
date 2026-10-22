@@ -1,0 +1,12 @@
+id: stub-shape
+name: Stub shape (silhouette inflation)
+family: stub
+adapter: forja_engine.adapters.stub:StubShape
+tasks: [shape]
+license: { spdx: Apache-2.0, commercial: true }
+requirements:
+  cpu: { status: supported }
+params:
+  resolution: { type: integer, default: 96, minimum: 16, maximum: 256 }
+  depth: { type: number, default: 0.18, minimum: 0.01, maximum: 1.0 }
+  smooth: { type: integer, default: 8, minimum: 0, maximum: 50 }
