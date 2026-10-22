@@ -130,7 +130,7 @@ func TestTextureRerunHitsTheShapeCache(t *testing.T) {
 	if cached != 6 {
 		t.Fatalf("expected the 6 pre-texture stages cached, got %d", cached)
 	}
-	if last := fp.runs[len(fp.runs)-1]; strings.Join(last, ",") != "paint,lods,export" {
+	if last := fp.runs[len(fp.runs)-1]; strings.Join(last, ",") != "paint,bake,lods,export" {
 		t.Fatalf("second run executed %v", last)
 	}
 }

@@ -1,6 +1,6 @@
 id: hero-character
 name: Hero character
-description: 30k triangles, 2K base color. Rigging and FBX arrive in M6.
+description: 30k triangles, 2K base color with baked normal and AO maps. Rigging and FBX arrive in M6.
 stages:
   - { id: bg, use: background-removal, model: stub-background, inputs: [input:image] }
   - { id: frame, use: framing }
@@ -9,5 +9,6 @@ stages:
   - { id: lowpoly, use: mesh.decimate, params: { target_tris: 30000 } }
   - { id: uv, use: mesh.uv }
   - { id: paint, use: texture, model: stub-paint, params: { resolution: 2048 }, inputs: [uv, frame] }
+  - { id: bake, use: bake, inputs: [paint, cleanup] }
   - { id: lods, use: mesh.lods, params: { ratios: [0.5, 0.25] } }
   - { id: export, use: export, params: { format: glb, compression: meshopt } }

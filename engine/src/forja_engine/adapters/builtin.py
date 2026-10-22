@@ -10,6 +10,7 @@ import trimesh
 from PIL import Image
 from scipy.spatial import cKDTree
 
+from forja_engine.ops import bake
 from forja_engine.ops import image as img_ops
 from forja_engine.ops import mesh as mesh_ops
 from forja_engine.sdk import (
@@ -64,6 +65,58 @@ class Unwrap(Adapter):
         return [StageOutput(mesh_ops.save(mesh, ctx.out_dir / "uv.glb"), ArtifactKind.MESH_GLB)]
 
 
+def _factor(material: object, name: str, default: float) -> float:
+    value = getattr(material, name, None)
+    return default if value is None else float(value)
+
+
+class Bake(Adapter):
+    """Normal and AO maps from the high-poly onto the painted low-poly (docs/decisions.md, 6).
+
+    Inputs: the textured low-poly first, the high-poly second. Roughness and metallic stay
+    constant factors; the ORM map's G and B are white so those factors pass through.
+    """
+
+    def capabilities(self) -> Capabilities:
+        return Capabilities(tasks=(StageType.BAKE,), devices=CPU)
+
+    def run(self, ctx: StageContext) -> list[StageOutput]:
+        low = mesh_ops.load(ctx.input(ArtifactKind.MESH_GLB, 0).path)
+        high = mesh_ops.load(ctx.input(ArtifactKind.MESH_GLB, 1).path)
+        material = getattr(low.visual, "material", None)
+        base = getattr(material, "baseColorTexture", None)
+        size = int(ctx.params.get("resolution") or (base.size[0] if base is not None else 1024))
+        ctx.progress(1, 3)
+        result = bake.bake(
+            low,
+            high,
+            size,
+            cage=float(ctx.params.get("cage", 0.02)),
+            ao_samples=int(ctx.params.get("ao_samples", 24)),
+            ao_radius=float(ctx.params.get("ao_radius", 0.15)),
+            seed=ctx.seed,
+        )
+        ctx.progress(2, 3)
+        ctx.check_cancel()
+        out = low.copy()
+        out.visual = trimesh.visual.TextureVisuals(
+            uv=mesh_ops.uvs_of(low),
+            material=trimesh.visual.material.PBRMaterial(
+                baseColorTexture=base,
+                normalTexture=result.normal,
+                occlusionTexture=result.orm,
+                metallicRoughnessTexture=result.orm,
+                roughnessFactor=_factor(material, "roughnessFactor", 0.8),
+                metallicFactor=_factor(material, "metallicFactor", 0.0),
+            ),
+        )
+        out.vertex_normals = low.vertex_normals  # type: ignore[method-assign]  # trimesh property setter
+        out.metadata[mesh_ops.TANGENTS] = result.tangents
+        path = mesh_ops.save(out, ctx.out_dir / "baked.glb")
+        ctx.progress(3, 3)
+        return [StageOutput(path, ArtifactKind.MESH_GLB)]
+
+
 class Lods(Adapter):
     """LOD1..n by decimating LOD0's geometry and transferring UVs from LOD0's surface.
 
@@ -76,6 +129,10 @@ class Lods(Adapter):
     def run(self, ctx: StageContext) -> list[StageOutput]:
         lod0 = mesh_ops.load(ctx.input(ArtifactKind.MESH_GLB).path)
         name = str(ctx.params.get("name", "asset"))
+        normal_mapped = getattr(getattr(lod0.visual, "material", None), "normalTexture", None) is not None
+        if normal_mapped:
+            # Same mesh, same normals, same algorithm: the tangents the maps were baked with.
+            lod0.metadata[mesh_ops.TANGENTS] = mesh_ops.vertex_tangents(lod0, mesh_ops.uvs_of(lod0))
         scene = trimesh.Scene()
         scene.add_geometry(lod0, node_name=f"{name}_LOD0", geom_name=f"{name}_LOD0")
         ratios = ctx.params.get("ratios", [0.5, 0.25])
@@ -91,6 +148,8 @@ class Lods(Adapter):
             uv0 = mesh_ops.uvs_of(lod0)[lod0.faces[tri_ids]]
             uv = np.einsum("ij,ijk->ik", bary, uv0)
             lod.visual = trimesh.visual.TextureVisuals(uv=uv, material=getattr(lod0.visual, "material", None))
+            if normal_mapped:
+                lod.metadata[mesh_ops.TANGENTS] = mesh_ops.vertex_tangents(lod, uv)
             scene.add_geometry(lod, node_name=f"{name}_LOD{level}", geom_name=f"{name}_LOD{level}")
             ctx.progress(level, len(ratios))
         return [StageOutput(mesh_ops.save(scene, ctx.out_dir / "lods.glb"), ArtifactKind.MESH_GLB)]
@@ -121,6 +180,7 @@ BUILTINS: dict[StageType, type[Adapter]] = {
     StageType.MESH_CLEANUP: Cleanup,
     StageType.MESH_DECIMATE: Decimate,
     StageType.MESH_UV: Unwrap,
+    StageType.BAKE: Bake,
     StageType.MESH_LODS: Lods,
     StageType.EXPORT: Export,
 }

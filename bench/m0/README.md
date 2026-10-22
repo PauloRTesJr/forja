@@ -6,11 +6,15 @@ produce acceptable Mobile prop assets?** The gate and its outcomes are in
 why it is decided this way.
 
 Pipeline (`forja/presets/m0-local.yaml`): BiRefNet → framing → TripoSG → cleanup → 5k-triangle
-decimation → Hunyuan3D-2 Paint (turbo, 1K texture) → LODs → GLB.
+decimation → Hunyuan3D-2 Paint (turbo, 1K texture) → bake (normal + AO from the high-poly) →
+LODs → GLB.
+
+The GLB carries base color, a tangent-space normal map, and an ORM map (R = AO; G and B white,
+so roughness and metallic stay editable constant factors, decision 6). Vertex normals and
+tangents are written into the file, so Unity shades it exactly as it was baked.
 
 Not covered yet, and still part of the M0 milestone in the spec:
 - **Hunyuan3D 2.1 shape**, as a second shape model to compare.
-- **Normal and AO baking** from the high-poly mesh. Decision 6 assumes it, but no bake stage exists yet.
 - **The cloud arm**: Hunyuan3D 2.1 PBR and TRELLIS.2, which need 24 GB or more.
 
 ## 1. Machine setup (Ubuntu, once)
@@ -72,6 +76,10 @@ change re-runs only paint, LODs and export.
   `scores.csv` against the checklist, and count the passes.
 - Record the outcome and the measured budgets in the spec's section 10. A budget that proved
   unrealistic is revised once, in writing.
+
+If the normal map shows smeared or flat patches, the cage missed the high-poly there: the
+bake stage's `hit_ratio` drops below 1. Raise `--set bake.cage=0.04` (a fraction of the model's
+size). For darker or lighter AO, use `--set bake.ao_radius=0.1` (smaller means more local).
 
 Useful variations, each one a single flag:
 - `--set paint.resolution=2048`: a sharper texture, at the cost of VRAM.
