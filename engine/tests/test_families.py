@@ -152,7 +152,7 @@ def test_triposg_run(tmp_path, triposg):
     c = ctx(tmp_path, StageType.SHAPE, [(rgba_subject(tmp_path), ArtifactKind.IMAGE_PNG)], steps=4)
     c.progress = lambda i, n: steps.append((i, n))
     out = adapter.run(c)
-    assert seen["path"] == "/weights/triposg" and seen["dtype"] == "fp16" and seen["seed"] == 7
+    assert seen["path"] == str(Path("/weights/triposg")) and seen["dtype"] == "fp16" and seen["seed"] == 7
     assert steps == [(1, 4), (2, 4), (3, 4), (4, 4)]
     assert out[0].preview and mesh_ops.load(out[0].path).extents[1] == pytest.approx(2.0)
 
