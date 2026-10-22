@@ -47,7 +47,7 @@ func Execute(version string) int {
 	root.PersistentFlags().BoolVar(&a.json, "json", false, "print machine-readable JSON")
 	root.PersistentFlags().StringVar(&a.address, "socket", "", "core socket or pipe (default: per-user)")
 	root.AddCommand(a.daemonCmd(), a.generateCmd(), a.jobsCmd(), a.modelsCmd(), a.presetsCmd(),
-		a.configCmd(), a.engineCmd(), a.secretCmd(), a.infoCmd())
+		a.configCmd(), a.engineCmd(), a.secretCmd(), a.infoCmd(), a.socketCmd())
 	err := root.Execute()
 	if a.core != nil {
 		a.core.Stop()
@@ -533,5 +533,12 @@ func (a *app) infoCmd() *cobra.Command {
 			fmt.Println(string(raw))
 			return nil
 		},
+	}
+}
+
+func (a *app) socketCmd() *cobra.Command {
+	return &cobra.Command{
+		Use: "socket", Short: "Print the core's socket or pipe address (used by the desktop app)",
+		Run: func(*cobra.Command, []string) { fmt.Println(a.addr()) },
 	}
 }

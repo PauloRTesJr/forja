@@ -1,0 +1,38 @@
+:root {
+  color-scheme: light dark;
+  --font: ui-sans-serif, -apple-system, 'Segoe UI', 'Inter', system-ui, sans-serif;
+  --mono: ui-monospace, 'SF Mono', 'Cascadia Code', 'JetBrains Mono', monospace;
+
+  --bg: #f6f6f4;
+  --surface: #ffffff;
+  --surface-2: #f0f0ed;
+  --border: #e3e3df;
+  --text: #17181b;
+  --text-2: #5d6068;
+  --text-3: #8b8e95;
+  --accent: #e8622c; /* forge ember */
+  --accent-soft: color-mix(in oklab, var(--accent) 14%, transparent);
+  --ok: #2f9e6b;
+  --warn: #c98a1b;
+  --bad: #d64545;
+  --shadow: 0 1px 2px rgb(0 0 0 / 0.06), 0 8px 24px rgb(0 0 0 / 0.06);
+
+  --r-1: 6px;
+  --r-2: 10px;
+  --r-3: 16px;
+  --sidebar: 220px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0e0f12;
+    --surface: #16181d;
+    --surface-2: #1d2027;
+    --border: #272a33;
+    --text: #eceef2;
+    --text-2: #a3a7b1;
+    --text-3: #6c717c;
+    --accent: #ff7a3d;
+    --shadow: 0 1px 2px rgb(0 0 0 / 0.4), 0 12px 32px rgb(0 0 0 / 0.35);
+  }
+}

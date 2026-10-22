@@ -60,6 +60,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/artifacts/{ref}", s.artifactGet)
 	mux.HandleFunc("PUT /v1/artifacts", s.artifactPut)
 	mux.HandleFunc("GET /v1/events", s.eventsWS)
+	mux.HandleFunc("GET /v1/events/stream", s.eventsSSE)
 	mux.HandleFunc("POST /v1/shutdown", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusAccepted)
 		go s.Shutdown()
@@ -394,6 +395,45 @@ func (s *Server) artifactPut(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 201, map[string]string{"hash": ref})
+}
+
+// eventsSSE is the same stream as eventsWS for clients that cannot speak WebSocket over a
+// Unix socket or named pipe (the Electron main process).
+func (s *Server) eventsSSE(w http.ResponseWriter, r *http.Request) {
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		problem(w, 500, "streaming unsupported")
+		return
+	}
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.WriteHeader(200)
+	flusher.Flush()
+	ch, unsubscribe := s.Hub.Subscribe()
+	defer unsubscribe()
+	keepalive := time.NewTicker(15 * time.Second)
+	defer keepalive.Stop()
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case <-keepalive.C:
+			_, _ = io.WriteString(w, ": keepalive\n\n")
+			flusher.Flush()
+		case ev, ok := <-ch:
+			if !ok {
+				return
+			}
+			raw, err := json.Marshal(ev)
+			if err != nil {
+				continue
+			}
+			if _, err := io.WriteString(w, "data: "+string(raw)+"\n\n"); err != nil {
+				return
+			}
+			flusher.Flush()
+		}
+	}
 }
 
 func (s *Server) eventsWS(w http.ResponseWriter, r *http.Request) {

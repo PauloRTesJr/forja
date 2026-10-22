@@ -18,7 +18,7 @@ Every change is judged against four words. When two conflict, the order below de
    - Hot paths stay allocation-light: stream files, hash in parallel (BLAKE3), prepared SQLite statements, no polling loops.
 2. **Fluid.** Every step the user sees moves smoothly.
    - Every state change animates: job queued → running → stage progress → preview → done. Nothing pops in or jumps.
-   - Animate only `transform` and `opacity` (compositor-only), 150–300 ms, using the shared tokens in `apps/desktop/src/styles/motion.css`. Respect `prefers-reduced-motion`.
+   - Animate only `transform` and `opacity` (compositor-only), 150–300 ms, using the shared tokens in `apps/desktop/src/renderer/src/styles/motion.css`. Respect `prefers-reduced-motion`.
    - The renderer thread never blocks: decoding (GLB, meshopt, KTX2) runs in Web Workers, lists are virtualized, data arrives by push (WebSocket), never by polling.
    - The 3D viewer renders on demand (on interaction or data change), so it leaves the GPU to inference while still orbiting at 60 fps.
    - Show something early: skeletons over spinners, the untextured mesh as soon as the shape stage ends.

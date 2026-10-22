@@ -1,0 +1,22 @@
+appId: dev.forja.desktop
+productName: Forja
+directories:
+  output: release
+files:
+  - out/**
+extraResources:
+  # The Go core ships next to the app; `make core` builds it.
+  - from: ../../core/bin/
+    to: bin/
+    filter: ['forja', 'forja.exe']
+mac:
+  target: dmg
+  category: public.app-category.graphics-design
+win:
+  target: [nsis, zip]
+nsis:
+  perMachine: false
+  oneClick: true
+linux:
+  target: [AppImage, deb]
+  category: Graphics

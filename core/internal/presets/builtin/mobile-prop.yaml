@@ -1,6 +1,6 @@
 id: mobile-prop
 name: Mobile prop
-description: 5k triangles, 1K base color, baked-light free, two LODs.
+description: 5k triangles, 1K base color, two LODs.
 stages:
   - { id: bg, use: background-removal, model: stub-background, inputs: [input:image] }
   - { id: frame, use: framing }
