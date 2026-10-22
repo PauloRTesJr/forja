@@ -1,0 +1,16 @@
+# Hunyuan3D-2 Paint (texture). Code and weights: Tencent Hunyuan 3D 2.0 Community License,
+# which excludes the EU, UK and South Korea. Fetched at install time, never committed here.
+name: hunyuan3d2
+python: "3.11"
+lanes: [cuda]
+torch_backend: { cuda: cu124 }
+upstream:
+  url: https://codeload.github.com/Tencent-Hunyuan/Hunyuan3D-2/tar.gz/f8db63096c8282cb27354314d896feba5ba6ff8a
+  sha256: 52b7c9647e457f9b4055e3488e06e675117eae01d6c48b28d8ec1b869a697b2c
+  license: Tencent Hunyuan 3D 2.0 Community License
+  pythonpath: ["."]
+# The rasterizer is a CUDA extension: needs nvcc (CUDA toolkit 12.x) and a C++ compiler.
+# The mesh inpainting helper has a pure-Python fallback, so its C++ build is skipped.
+build:
+  - "{upstream}/hy3dgen/texgen/custom_rasterizer"
+smoke: "import custom_rasterizer, hy3dgen.texgen"

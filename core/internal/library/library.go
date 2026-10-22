@@ -44,6 +44,7 @@ type Stage struct {
 	Provider string   `json:"provider,omitempty"`
 	Outputs  []Output `json:"outputs"`
 	Seconds  float64  `json:"seconds"`
+	PeakVRAM int64    `json:"peak_vram_bytes,omitempty"`
 	Step     int      `json:"step"`
 	Total    int      `json:"total"`
 	Error    string   `json:"error,omitempty"`

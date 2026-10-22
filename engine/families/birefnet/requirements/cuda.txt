@@ -1,0 +1,5 @@
+# The cuda and cudnn extras install NVIDIA's runtime libraries from PyPI, so no system
+# CUDA or cuDNN install is needed; the adapter loads them with onnxruntime.preload_dlls().
+# Below 1.27: later releases need the CUDA 13 runtime (NVIDIA driver 580+); 1.21-1.26 use
+# CUDA 12, which matches the torch cu124 lane of the other families (driver 550+).
+onnxruntime-gpu[cuda,cudnn]>=1.21,<1.27

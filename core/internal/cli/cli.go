@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"text/tabwriter"
@@ -266,6 +267,9 @@ func (a *app) watch(ctx context.Context, c *Client, evs <-chan Event, jobs []*li
 						fmt.Printf("  %-10s %-20s running\n", j.Name, s.ID)
 					case s.Status == library.Succeeded && s.Cached:
 						fmt.Printf("  %-10s %-20s cached\n", j.Name, s.ID)
+					case s.Status == library.Succeeded && s.PeakVRAM > 0:
+						fmt.Printf("  %-10s %-20s done in %.2fs, peak %.1f GB VRAM\n", j.Name, s.ID, s.Seconds,
+							float64(s.PeakVRAM)/(1<<30))
 					case s.Status == library.Succeeded:
 						fmt.Printf("  %-10s %-20s done in %.2fs\n", j.Name, s.ID, s.Seconds)
 					case s.Status == library.Failed:
@@ -369,7 +373,18 @@ func (a *app) jobsCmd() *cobra.Command {
 }
 
 func (a *app) modelsCmd() *cobra.Command {
-	cmd := &cobra.Command{Use: "models", Short: "Inspect models"}
+	cmd := &cobra.Command{Use: "models", Short: "Install and inspect models"}
+	cmd.AddCommand(&cobra.Command{
+		Use:   "install <model>... [--lane cuda|mps|cpu] [--no-weights]",
+		Short: "Build a model's environment and fetch its pinned weights",
+		Long: "Builds the model family's isolated environment with uv, downloads pinned upstream code\n" +
+			"and weights, verifies them by sha256, and smoke-tests the device. Safe to re-run.",
+		DisableFlagParsing: true,
+		Args:               cobra.MinimumNArgs(1),
+		RunE: func(_ *cobra.Command, args []string) error {
+			return engineExec("install", args)
+		},
+	})
 	cmd.AddCommand(&cobra.Command{
 		Use: "ls", Short: "List models the local engine knows",
 		RunE: func(*cobra.Command, []string) error {
@@ -394,6 +409,28 @@ func (a *app) modelsCmd() *cobra.Command {
 		},
 	})
 	return cmd
+}
+
+// engineExec runs a forja-engine subcommand in the foreground against this core's data folder.
+func engineExec(sub string, args []string) error {
+	cfg, err := config.Load("", nil)
+	if err != nil {
+		return err
+	}
+	base, err := localengine.Command(cfg)
+	if err != nil {
+		return err
+	}
+	full := append(append([]string{}, base[1:]...), sub)
+	if !slices.Contains(args, "--store") {
+		full = append(full, "--store", filepath.Join(cfg.DataDir(), "store"))
+	}
+	for _, d := range cfg.Engine.ManifestDirs {
+		full = append(full, "--manifests", d)
+	}
+	c := exec.Command(base[0], append(full, args...)...)
+	c.Stdin, c.Stdout, c.Stderr = os.Stdin, os.Stdout, os.Stderr
+	return c.Run()
 }
 
 func (a *app) presetsCmd() *cobra.Command {
@@ -463,26 +500,7 @@ func (a *app) engineCmd() *cobra.Command {
 		Short:              "Run an engine for other machines (e.g. --host 0.0.0.0 --port 7860)",
 		DisableFlagParsing: true,
 		RunE: func(_ *cobra.Command, args []string) error {
-			cfg, err := config.Load("", nil)
-			if err != nil {
-				return err
-			}
-			base, err := localengine.Command(cfg)
-			if err != nil {
-				return err
-			}
-			hasStore := false
-			for _, arg := range args {
-				hasStore = hasStore || arg == "--store"
-			}
-			full := append(append([]string{}, base[1:]...), "serve")
-			if !hasStore {
-				full = append(full, "--store", filepath.Join(cfg.DataDir(), "store"))
-			}
-			full = append(full, args...)
-			c := exec.Command(base[0], full...)
-			c.Stdin, c.Stdout, c.Stderr = os.Stdin, os.Stdout, os.Stderr
-			return c.Run()
+			return engineExec("serve", args)
 		},
 	})
 	cmd.AddCommand(&cobra.Command{

@@ -76,6 +76,7 @@ class StageState:
     error: str | None = None
     step: int = 0
     total: int = 0
+    peak_vram_bytes: int | None = None
 
 
 @dataclass
@@ -127,6 +128,7 @@ class Run:
                     "error": st.error,
                     "step": st.step,
                     "total": st.total,
+                    "peak_vram_bytes": st.peak_vram_bytes,
                 }
                 for sid, st in self.stages.items()
             },
@@ -239,8 +241,14 @@ class RunManager:
                 state.outputs.append(entry)
                 await run.emit("artifact.ready", stage=spec.id, **entry)
             state.seconds = result["seconds"]
+            state.peak_vram_bytes = result.get("peak_vram_bytes")
             state.status = Status.SUCCEEDED
-            await run.emit("stage.finished", stage=spec.id, seconds=round(state.seconds, 3))
+            await run.emit(
+                "stage.finished",
+                stage=spec.id,
+                seconds=round(state.seconds, 3),
+                peak_vram_bytes=state.peak_vram_bytes,
+            )
             run._outputs[spec.id].set_result(state.outputs[0]["hash"])
         except BaseException as e:
             cancelled = isinstance(e, asyncio.CancelledError) or (isinstance(e, StageFailed) and e.cancelled)

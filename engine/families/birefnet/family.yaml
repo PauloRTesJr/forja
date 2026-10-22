@@ -1,0 +1,4 @@
+# BiRefNet background removal through ONNX Runtime: no torch, native acceleration per OS.
+name: birefnet
+python: "3.11"
+lanes: [cuda, mps, cpu]

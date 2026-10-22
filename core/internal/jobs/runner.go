@@ -404,6 +404,9 @@ func (r *Runner) runBatch(ctx context.Context, a *active, plan *planner.Plan, id
 		r.update(a, func(j *library.Job) {
 			js := &j.Stages[i]
 			js.Seconds, js.Error = seconds, errMsg
+			if st.PeakVRAMBytes != nil {
+				js.PeakVRAM = *st.PeakVRAMBytes
+			}
 			if outs != nil {
 				js.Outputs = outs
 			}

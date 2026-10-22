@@ -1,0 +1,27 @@
+id: hunyuan3d2-paint
+name: Hunyuan3D-2 Paint (turbo)
+family: hunyuan3d2
+adapter: forja_hunyuan3d2:Hunyuan3D2Paint
+tasks: [texture]
+license:
+  spdx: LicenseRef-Tencent-Hunyuan-3D-2.0-Community
+  commercial: true
+  restrictions: [not licensed in the EU, UK or South Korea, separate license above 1M monthly active users]
+vram_gb: 10
+requirements:
+  cuda: { status: supported, min_vram_gb: 10 }
+  mps: { status: unsupported }
+  cpu: { status: unsupported }
+weights:
+  hub: huggingface
+  repo: tencent/Hunyuan3D-2
+  revision: 9cd649ba6913f7a852e3286bad86bfa9a2d83dcf
+  allow: ["hunyuan3d-delight-v2-0/*", "hunyuan3d-paint-v2-0-turbo/*"]
+  # The turbo UNet ships as both .bin (7.3 GB) and .safetensors; diffusers loads safetensors.
+  ignore: ["hunyuan3d-paint-v2-0-turbo/unet/diffusion_pytorch_model.bin"]
+params:
+  resolution: { type: integer, default: 2048, enum: [1024, 2048] }
+  render_size: { type: integer, default: 2048, enum: [1024, 2048] }
+  roughness: { type: number, default: 0.8, minimum: 0, maximum: 1 }
+  metallic: { type: number, default: 0.0, minimum: 0, maximum: 1 }
+  yaw_degrees: { type: number, default: 0, description: Rotate before painting so the front view matches the image }

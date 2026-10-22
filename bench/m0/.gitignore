@@ -1,0 +1,6 @@
+refs/*
+!refs/README.md
+!refs/SOURCES.csv
+out/
+results/*.json
+results/*.csv

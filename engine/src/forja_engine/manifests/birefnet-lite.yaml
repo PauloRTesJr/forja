@@ -1,0 +1,19 @@
+id: birefnet-lite
+name: BiRefNet lite
+family: birefnet
+adapter: forja_birefnet:BiRefNet
+tasks: [background-removal]
+license: { spdx: MIT, commercial: true }
+vram_gb: 0.8
+requirements:
+  cuda: { status: supported }
+  mps: { status: supported }
+  cpu: { status: supported }
+weights:
+  hub: huggingface
+  repo: onnx-community/BiRefNet_lite-ONNX
+  revision: de15b22ba131738a16dff04aab8bdf8dc32e3ac1
+  files:
+    - { path: onnx/model.onnx, sha256: 5600024376f572a557870a5eb0afb1e5961636bef4e1e22132025467d0f03333, bytes: 224005088 }
+params:
+  keep_alpha: { type: boolean, default: true }

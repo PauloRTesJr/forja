@@ -124,6 +124,8 @@ class StubPaint(Adapter):
 
     def run(self, ctx: StageContext) -> list[StageOutput]:
         mesh = mesh_ops.load(ctx.input(ArtifactKind.MESH_GLB).path)
+        if getattr(mesh.visual, "uv", None) is None:
+            mesh = mesh_ops.unwrap(mesh)  # like the real painters, which unwrap for themselves
         img = Image.open(ctx.input(ArtifactKind.IMAGE_PNG).path).convert("RGBA")
         size = int(ctx.params.get("resolution", 1024))
         x0, y0, x1, y1 = img_ops.alpha_bbox(img)

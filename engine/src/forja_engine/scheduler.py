@@ -65,6 +65,10 @@ def _run_builtin(task: str, ctx_json: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _weights(m: Manifest) -> str | None:
+    return str(m.weights_dir) if m.weights_dir else None
+
+
 class DeviceLane:
     def __init__(
         self, device: str, vram: VramManager, workers: WorkerPool, fairness_cap: int, in_process: bool
@@ -151,7 +155,7 @@ class DeviceLane:
     async def _execute(self, item: WorkItem) -> dict[str, Any]:
         assert item.manifest is not None
         m = item.manifest
-        estimate = int(m.requirements.get("vram_bytes", 0))
+        estimate = m.vram_bytes
         if m.id != self.current_model:
             self.streak = 0
         self.streak += 1
@@ -180,9 +184,12 @@ class DeviceLane:
         for attempt in (1, 2):
             worker = await self.workers.get(m.family, m.interpreter)
             if worker.adapter != m.adapter:
-                await worker.load(m.adapter, self.device)
+                await worker.load(m.adapter, self.device, _weights(m))
             try:
-                return await worker.run(item.key, item.ctx, item.on_progress)
+                result = await worker.run(item.key, item.ctx, item.on_progress)
+                if result.get("peak_vram_bytes"):
+                    self.vram.record_peak(m.id, int(result["peak_vram_bytes"]))
+                return result
             except WorkerCrashed:
                 self.vram.did_unload(m.id)
                 if attempt == 2:
@@ -195,6 +202,7 @@ class DeviceLane:
         self._loaded[m.id] = m
         if self.in_process:
             adapter = instantiate(m.adapter)
+            adapter.weights_dir = m.weights_dir
             adapter.load(adapter.capabilities().devices[0])
             self._in_process_adapters[m.id] = adapter
             return
@@ -204,7 +212,7 @@ class DeviceLane:
             if worker.adapter == other.adapter:
                 self.vram.did_unload(other.id)
                 self._loaded.pop(other.id, None)
-        await worker.load(m.adapter, self.device)
+        await worker.load(m.adapter, self.device, _weights(m))
 
     async def _unload(self, model: str) -> None:
         self.vram.did_unload(model)
@@ -252,6 +260,10 @@ class Scheduler:
 
     def place(self, manifest: Manifest) -> str:
         """The device a model runs on here, by the order of preference in its requirements."""
+        if not manifest.installed:
+            raise StageFailed(
+                f"model {manifest.id} is not installed here; run: forja models install {manifest.id}", False
+            )
         req = manifest.requirements
         for dev in self.lanes:
             backend = dev.split(":")[0]

@@ -1,0 +1,19 @@
+id: birefnet
+name: BiRefNet (general)
+family: birefnet
+adapter: forja_birefnet:BiRefNet
+tasks: [background-removal]
+license: { spdx: MIT, commercial: true }
+vram_gb: 1.5
+requirements:
+  cuda: { status: supported }
+  mps: { status: supported }
+  cpu: { status: supported }
+weights:
+  hub: huggingface
+  repo: onnx-community/BiRefNet-ONNX
+  revision: 534d3c82d3bb8b2f0867db6dfbc3a525b8e42f67
+  files:
+    - { path: onnx/model.onnx, sha256: 58f621f00f5d756097615970a88a791584600dcf7c45b18a0a6267535a1ebd3c, bytes: 972666916 }
+params:
+  keep_alpha: { type: boolean, default: true, description: Use the image's own alpha when it has one }

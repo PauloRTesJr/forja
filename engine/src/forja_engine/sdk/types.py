@@ -88,6 +88,8 @@ class Adapter(abc.ABC):
 
     #: Bumped whenever the adapter's output changes for the same inputs; part of the cache key.
     version: str = "1"
+    #: Where install put this model's pinned weights. Set by the worker before `load`.
+    weights_dir: Path | None = None
 
     @abc.abstractmethod
     def capabilities(self) -> Capabilities: ...

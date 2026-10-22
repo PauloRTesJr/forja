@@ -63,6 +63,25 @@ class _Out:
             self._stream.flush()
 
 
+def _cuda() -> Any:
+    """torch.cuda when the adapter imported torch and a GPU is present; never imports torch itself."""
+    torch = sys.modules.get("torch")
+    if torch is None or not torch.cuda.is_available():
+        return None
+    return torch.cuda
+
+
+def _reset_peak_vram() -> None:
+    if cuda := _cuda():
+        cuda.reset_peak_memory_stats()
+
+
+def _peak_vram() -> int | None:
+    """Peak bytes held by PyTorch's allocator during the stage; None when not measurable here."""
+    cuda = _cuda()
+    return int(cuda.max_memory_reserved()) if cuda else None
+
+
 def main() -> None:
     # Keep the real stdout for the protocol; everything else printed goes to stderr.
     proto = os.fdopen(os.dup(sys.stdout.fileno()), "w", buffering=1)
@@ -97,6 +116,8 @@ def main() -> None:
 
             try:
                 adapter = instantiate(msg["adapter"])
+                if msg.get("weights_dir"):
+                    adapter.weights_dir = Path(msg["weights_dir"])
                 adapter.load(Device(msg["device"].split(":")[0]), msg.get("dtype", "fp16"))
                 out.send({"type": "loaded", "adapter": msg["adapter"]})
             except Exception as e:
@@ -119,6 +140,7 @@ def main() -> None:
                 return rid in cancelled
 
             ctx.progress, ctx.cancelled = progress, is_cancelled
+            _reset_peak_vram()
             started = time.perf_counter()
             try:
                 outputs = adapter.run(ctx)
@@ -127,6 +149,7 @@ def main() -> None:
                         "type": "result",
                         "id": run_id,
                         "seconds": time.perf_counter() - started,
+                        "peak_vram_bytes": _peak_vram(),
                         "outputs": [
                             {"path": str(o.path), "kind": str(o.kind), "preview": o.preview} for o in outputs
                         ],

@@ -34,6 +34,8 @@ type StageState struct {
 	Error   *string  `json:"error"`
 	Step    int      `json:"step"`
 	Total   int      `json:"total"`
+	// PeakVRAMBytes is PyTorch's reserved peak during the stage; nil when not measurable.
+	PeakVRAMBytes *int64 `json:"peak_vram_bytes"`
 }
 
 type Run struct {

@@ -38,6 +38,15 @@ class EngineConfig:
     max_upload_bytes: int = 2 * GB
     manifest_dirs: list[Path] = field(default_factory=list)
     in_process_models: bool = False
+    # Family environments and model weights; default to siblings of the store.
+    envs_dir: Path | None = None
+    models_dir: Path | None = None
+
+    def envs(self) -> Path:
+        return self.envs_dir or self.store_root.parent / "envs"
+
+    def models(self) -> Path:
+        return self.models_dir or self.store_root.parent / "models"
 
 
 def _problem(status: int, title: str, detail: str) -> JSONResponse:
@@ -51,7 +60,11 @@ def _problem(status: int, title: str, detail: str) -> JSONResponse:
 def create_app(cfg: EngineConfig) -> FastAPI:
     store = ArtifactStore(cfg.store_root)
     report = detect(cfg.store_root)
-    registry = Registry.load(cfg.manifest_dirs)
+
+    def load_registry() -> Registry:
+        return Registry.load(cfg.manifest_dirs).bind(cfg.envs(), cfg.models())
+
+    registry = load_registry()
     budgets = {d.id: max(0, d.vram_bytes - cfg.vram_reserve_bytes) for d in report.devices}
     scheduler = Scheduler(
         budgets, fit_mode=cfg.fit_mode, fairness_cap=cfg.fairness_cap, in_process=cfg.in_process_models
@@ -122,8 +135,15 @@ def create_app(cfg: EngineConfig) -> FastAPI:
             },
         }
 
+    def refresh() -> Registry:
+        # Picks up models installed since startup (a few small files), no restart needed.
+        nonlocal registry
+        registry = runs.registry = load_registry()
+        return registry
+
     @app.get("/v1/models", dependencies=guarded)
     async def models() -> list[dict[str, Any]]:
+        refresh()
         loaded = {m for lane in scheduler.lanes.values() for m in lane.vram.loaded}
         out = []
         for m in registry.models.values():
@@ -131,7 +151,8 @@ def create_app(cfg: EngineConfig) -> FastAPI:
                 device: str | None = scheduler.place(m)
             except Exception:
                 device = None
-            out.append({**m.to_json(), "status": "loaded" if m.id in loaded else "ready", "device": device})
+            status = "loaded" if m.id in loaded else "ready" if m.installed else "not-installed"
+            out.append({**m.to_json(), "status": status, "device": device})
         return out
 
     @app.post("/v1/models/unload-all", dependencies=guarded, status_code=204)
@@ -169,6 +190,7 @@ def create_app(cfg: EngineConfig) -> FastAPI:
     @app.post("/v1/runs", dependencies=guarded, status_code=202)
     async def run_create(req: RunRequest) -> dict[str, Any]:
         last_activity[0] = time.monotonic()
+        refresh()
         try:
             run = runs.submit(req)
         except KeyError as e:

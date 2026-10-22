@@ -1,0 +1,14 @@
+# TripoSG image-to-shape (MIT), VAST-AI-Research.
+name: triposg
+python: "3.11"
+lanes: [cuda]
+torch_backend: { cuda: cu124 }
+upstream:
+  url: https://codeload.github.com/VAST-AI-Research/TripoSG/tar.gz/fc5c40990181e2a756c4e0b1c2f4d6b5202faf8c
+  sha256: 3d06f11eb795bcabea7863e670e9cea02f96bfc6ec3e6db20e015e5710653682
+  license: MIT
+  pythonpath: ["."]
+# diso compiles a CUDA kernel against the installed torch: needs nvcc (CUDA toolkit 12.x).
+build:
+  - diso==0.1.4
+smoke: "import diso, triposg.pipelines.pipeline_triposg"

@@ -5,6 +5,8 @@ from __future__ import annotations
 import importlib.util
 import platform
 import shutil
+import subprocess
+import sys
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
@@ -38,7 +40,9 @@ class SystemReport:
 
 
 def detect(store_root: Path) -> SystemReport:
-    devices = _torch_devices()
+    # The supervisor's environment has no torch (torch lives in each family's environment),
+    # so GPUs are found through vendor tools first and torch only as a fallback.
+    devices = _nvidia_devices() or _apple_devices() or _torch_devices()
     mem = psutil.virtual_memory()
     devices.append(DeviceInfo("cpu", Device.CPU, platform.processor() or platform.machine(), mem.total))
     return SystemReport(
@@ -50,6 +54,53 @@ def detect(store_root: Path) -> SystemReport:
         disk_free_bytes=shutil.disk_usage(store_root).free,
         onnx_providers=_onnx_providers(),
     )
+
+
+_NVIDIA_QUERY = "index,name,memory.total,driver_version,compute_cap"
+
+
+def parse_nvidia_smi(output: str) -> list[DeviceInfo]:
+    found = []
+    for line in output.strip().splitlines():
+        parts = [p.strip() for p in line.split(",")]
+        if len(parts) < 5:
+            continue
+        index, name, mem_mib, driver, cap = parts[:5]
+        found.append(
+            DeviceInfo(
+                f"cuda:{index}",
+                Device.CUDA,
+                name,
+                int(float(mem_mib)) << 20,
+                compute_capability=cap,
+                driver=driver,
+            )
+        )
+    return found
+
+
+def _nvidia_devices() -> list[DeviceInfo]:
+    smi = shutil.which("nvidia-smi")
+    if not smi:
+        return []
+    try:
+        out = subprocess.run(
+            [smi, f"--query-gpu={_NVIDIA_QUERY}", "--format=csv,noheader,nounits"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=True,
+        ).stdout
+    except (OSError, subprocess.SubprocessError):
+        return []
+    return parse_nvidia_smi(out)
+
+
+def _apple_devices() -> list[DeviceInfo]:
+    if sys.platform != "darwin" or platform.machine() != "arm64":
+        return []
+    # Unified memory: report the recommended working set (about two thirds of RAM) as the budget.
+    return [DeviceInfo("mps", Device.MPS, "Apple GPU", psutil.virtual_memory().total * 2 // 3)]
 
 
 def _torch_devices() -> list[DeviceInfo]:

@@ -1,0 +1,5 @@
+# The M0 spike is a Forja project of its own: outputs land in ./out, presets in ./forja/presets.
+[project]
+name = "M0 spike"
+export_dir = "out"
+default_preset = "m0-local"

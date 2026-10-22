@@ -1,0 +1,20 @@
+id: triposg
+name: TripoSG
+family: triposg
+adapter: forja_triposg:TripoSG
+tasks: [shape]
+license: { spdx: MIT, commercial: true }
+vram_gb: 8
+requirements:
+  cuda: { status: supported, min_vram_gb: 8, dtypes: [fp16, bf16] }
+  mps: { status: unsupported }
+  cpu: { status: unsupported }
+weights:
+  hub: huggingface
+  repo: VAST-AI/TripoSG
+  revision: 2c1c516d22d58db486a058d98d31bb6177344e06
+params:
+  steps: { type: integer, default: 50, minimum: 8, maximum: 100 }
+  guidance_scale: { type: number, default: 7.0, minimum: 1.0, maximum: 15.0 }
+  octree_depth: { type: integer, default: 9, minimum: 7, maximum: 10 }
+  yaw_degrees: { type: number, default: 0, description: Rotate the output about Y if it faces the wrong way }

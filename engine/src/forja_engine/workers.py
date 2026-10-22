@@ -61,9 +61,19 @@ class Worker:
         if msg.get("type") != "ready":
             raise WorkerCrashed(self.family, list(self.stderr_tail))
 
-    async def load(self, adapter: str, device: str, dtype: str = "fp16") -> None:
+    async def load(
+        self, adapter: str, device: str, weights_dir: str | None = None, dtype: str = "fp16"
+    ) -> None:
         async with self._lock:
-            await self._send({"op": "load", "adapter": adapter, "device": device, "dtype": dtype})
+            await self._send(
+                {
+                    "op": "load",
+                    "adapter": adapter,
+                    "device": device,
+                    "dtype": dtype,
+                    "weights_dir": weights_dir,
+                }
+            )
             msg = await self._control_reply()
             if msg.get("type") != "loaded":
                 raise StageFailed(msg.get("error", "load failed"), cancelled=False)

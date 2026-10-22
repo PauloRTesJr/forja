@@ -27,7 +27,28 @@ def main(argv: list[str] | None = None) -> None:
     serve.add_argument("--tls-cert", type=Path)
     serve.add_argument("--tls-key", type=Path)
     serve.add_argument("--log-level", default="info")
+    serve.add_argument("--envs", type=Path, help="family environments (default: <store>/../envs)")
+    serve.add_argument("--models", type=Path, help="model weights (default: <store>/../models)")
+
+    inst = sub.add_parser("install", help="build a model's family environment and fetch its weights")
+    inst.add_argument("model", nargs="+")
+    inst.add_argument("--store", type=Path, required=True)
+    inst.add_argument("--envs", type=Path)
+    inst.add_argument("--models", type=Path)
+    inst.add_argument("--manifests", type=Path, action="append", default=[])
+    inst.add_argument("--lane", choices=["cuda", "rocm", "mps", "cpu"], help="default: detected")
+    inst.add_argument("--no-weights", action="store_true", help="build the environment only")
+
+    sub.add_parser("lane", help="print the torch lane detected on this machine")
     args = parser.parse_args(argv)
+    if args.cmd == "lane":
+        from forja_engine.families import detect_lane
+
+        print(detect_lane())
+        return
+    if args.cmd == "install":
+        install(args)
+        return
 
     token = os.environ.get("FORJA_ENGINE_TOKEN") or None
     loopback = _is_loopback(args.host)
@@ -42,6 +63,8 @@ def main(argv: list[str] | None = None) -> None:
         vram_reserve_bytes=int(args.vram_reserve_gb * (1 << 30)),
         idle_unload_seconds=args.idle_unload_minutes * 60,
         manifest_dirs=args.manifests,
+        envs_dir=args.envs,
+        models_dir=args.models,
     )
     config = uvicorn.Config(
         create_app(cfg),
@@ -54,6 +77,24 @@ def main(argv: list[str] | None = None) -> None:
     server = uvicorn.Server(config)
     _announce_port(server)
     server.run()
+
+
+def install(args: argparse.Namespace) -> None:
+    from forja_engine.install import Installer, InstallError
+    from forja_engine.registry import Registry
+
+    data = args.store.parent
+    installer = Installer(
+        Registry.load(args.manifests),
+        envs_dir=args.envs or data / "envs",
+        models_dir=args.models or data / "models",
+        log=lambda line: print(line, flush=True),
+    )
+    try:
+        for model in args.model:
+            installer.install(model, lane=args.lane, weights=not args.no_weights)
+    except InstallError as e:
+        sys.exit(f"install failed: {e}")
 
 
 def _is_loopback(host: str) -> bool:

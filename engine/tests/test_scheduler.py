@@ -37,3 +37,22 @@ async def test_interactive_jumps_the_queue():
     lane.ready += [_item("paint", 0), _item("shape", 1, INTERACTIVE)]
     assert lane.pick().seq == 1
     await asyncio.sleep(0)
+
+
+def test_nvidia_smi_parsing():
+    from forja_engine.devices import parse_nvidia_smi
+
+    devs = parse_nvidia_smi("0, NVIDIA GeForce RTX 4070 Ti, 12282, 560.35.03, 8.9\n")
+    assert (
+        devs[0].id == "cuda:0" and devs[0].vram_bytes == 12282 << 20 and devs[0].compute_capability == "8.9"
+    )
+
+
+def test_cuda_models_are_placed_on_the_gpu_lane():
+    from forja_engine.registry import Registry
+    from forja_engine.scheduler import Scheduler
+
+    reg = Registry.load()
+    s = Scheduler({"cuda:0": 11 << 30, "cpu": 8 << 30})
+    assert s.place(reg.models["triposg"]) == "cuda:0"
+    assert s.place(reg.models["stub-shape"]) == "cpu"
