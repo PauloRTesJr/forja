@@ -35,6 +35,7 @@ type Manager struct {
 	mu       sync.Mutex
 	stopping bool
 	cmd      *exec.Cmd
+	group    *procGroup
 	url      string
 	token    string
 	exit     chan struct{}
@@ -148,6 +149,16 @@ func (m *Manager) start(ctx context.Context) error {
 		logFile.Close()
 		return fmt.Errorf("starting engine: %w", err)
 	}
+	group, err := attach(cmd)
+	if group == nil {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+		logFile.Close()
+		return fmt.Errorf("starting engine: %w", err)
+	}
+	if err != nil {
+		m.log.Warn(err.Error())
+	}
 	m.log.Info("engine starting", "pid", cmd.Process.Pid, "cmd", strings.Join(base, " "))
 
 	portCh := make(chan int, 1)
@@ -168,6 +179,7 @@ func (m *Manager) start(ctx context.Context) error {
 	exit := make(chan struct{})
 	go func() {
 		err := cmd.Wait()
+		group.close()
 		logFile.Close()
 		if m.stopping {
 			m.log.Info("engine stopped")
@@ -183,7 +195,7 @@ func (m *Manager) start(ctx context.Context) error {
 	}
 	select {
 	case port := <-portCh:
-		m.cmd, m.exit, m.token = cmd, exit, token
+		m.cmd, m.group, m.exit, m.token = cmd, group, exit, token
 		m.url = "http://127.0.0.1:" + strconv.Itoa(port)
 		m.log.Info("engine ready", "url", m.url)
 		return nil
@@ -206,7 +218,7 @@ func (m *Manager) Stop() {
 		return
 	}
 	m.stopping = true
-	interrupt(m.cmd)
+	m.group.interrupt()
 	select {
 	case <-m.exit:
 	case <-time.After(10 * time.Second):

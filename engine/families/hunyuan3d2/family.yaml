@@ -13,4 +13,5 @@ upstream:
 # The mesh inpainting helper has a pure-Python fallback, so its C++ build is skipped.
 build:
   - "{upstream}/hy3dgen/texgen/custom_rasterizer"
-smoke: "import custom_rasterizer, hy3dgen.texgen"
+# torch first: on Windows the compiled rasterizer finds torch's DLLs only once torch is loaded.
+smoke: "import torch, custom_rasterizer, hy3dgen.texgen"

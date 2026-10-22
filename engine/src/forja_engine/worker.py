@@ -4,7 +4,7 @@ Protocol: one JSON object per line. Requests on stdin, replies on stdout. Meshes
 never cross the pipe; only paths do. The adapter's own prints go to stderr, so they can never
 corrupt the protocol stream.
 
-    -> {"op": "load", "adapter": "pkg.mod:Class", "device": "cuda:0", "dtype": "fp16"}
+    -> {"op": "load", "adapter": "pkg.mod:Class", "device": "cuda:0", "dtype": "fp16", "offload": false}
     -> {"op": "run", "id": "...", "ctx": {...}}
     -> {"op": "cancel", "id": "..."}
     -> {"op": "unload"} / {"op": "exit"}
@@ -82,17 +82,33 @@ def _peak_vram() -> int | None:
     return int(cuda.max_memory_reserved()) if cuda else None
 
 
-def main() -> None:
-    # Keep the real stdout for the protocol; everything else printed goes to stderr.
-    proto = os.fdopen(os.dup(sys.stdout.fileno()), "w", buffering=1)
+def _detach_stdio() -> tuple[TextIO, TextIO]:
+    """Move the protocol pipes off fds 0 and 1 and return them.
+
+    fd 0 becomes NUL: on Windows, a DLL loaded while the reader thread blocks on the stdin
+    pipe queries the standard input handle during CRT init and deadlocks behind that read.
+    fd 1 becomes stderr, so native code that prints cannot corrupt the protocol stream.
+    """
+    proto_in = os.fdopen(os.dup(0), "r", encoding="utf-8")
+    proto_out = os.fdopen(os.dup(1), "w", encoding="utf-8", buffering=1)
+    null = os.open(os.devnull, os.O_RDONLY)
+    os.dup2(null, 0)
+    os.close(null)
+    os.dup2(2, 1)
+    sys.stdin = open(os.devnull, encoding="utf-8")  # noqa: SIM115
     sys.stdout = sys.stderr
+    return proto_in, proto_out
+
+
+def main() -> None:
+    proto_in, proto = _detach_stdio()
     out = _Out(proto)
 
     requests: queue.Queue[dict[str, Any]] = queue.Queue()
     cancelled: set[str] = set()
 
     def reader() -> None:
-        for line in sys.stdin:
+        for line in proto_in:
             msg = json.loads(line)
             if msg.get("op") == "cancel":
                 cancelled.add(msg["id"])
@@ -118,6 +134,7 @@ def main() -> None:
                 adapter = instantiate(msg["adapter"])
                 if msg.get("weights_dir"):
                     adapter.weights_dir = Path(msg["weights_dir"])
+                adapter.offload = bool(msg.get("offload"))
                 adapter.load(Device(msg["device"].split(":")[0]), msg.get("dtype", "fp16"))
                 out.send({"type": "loaded", "adapter": msg["adapter"]})
             except Exception as e:

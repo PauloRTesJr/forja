@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from forja_engine import families, install
+from forja_engine import families, install, toolchain
 from forja_engine.registry import Registry
 
 
@@ -47,6 +47,7 @@ def test_install_plan(tmp_path, monkeypatch):
         install, "_run", lambda cmd, log, env=None, cwd=None: commands.append([str(c) for c in cmd])
     )
     monkeypatch.setattr(install, "uv_binary", lambda: "uv")
+    monkeypatch.setattr(install.toolchain, "build_env", lambda backend, log: {"CUDA_HOME": "/cuda"})
     monkeypatch.setattr(install, "fetch_verified", lambda url, sha, cache, log: Path("/cache") / sha)
     up = tmp_path / "envs" / "triposg" / "upstream"
     monkeypatch.setattr(install, "extract_tarball", lambda archive, dest: up)
@@ -81,3 +82,46 @@ def test_uninstalled_models_are_refused_at_placement(tmp_path):
     reg = Registry.load().bind(tmp_path / "envs", tmp_path / "models")
     with pytest.raises(StageFailed, match="forja models install triposg"):
         Scheduler({"cuda:0": 1 << 34}).place(reg.models["triposg"])
+
+
+def test_install_stops_before_building_anything_without_nvcc(tmp_path, monkeypatch):
+    commands = []
+    monkeypatch.setattr(
+        install, "_run", lambda cmd, log, env=None, cwd=None: commands.append([str(c) for c in cmd])
+    )
+    monkeypatch.setattr(install.toolchain, "cuda_home", lambda: None)
+    inst = install.Installer(Registry.load(), tmp_path / "envs", tmp_path / "models", log=lambda s: None)
+    with pytest.raises(install.InstallError, match="nvcc not found"):
+        inst.install("triposg", lane="cuda")
+    assert commands == []
+
+
+def test_torch_cuda_version():
+    assert toolchain.torch_cuda("cu124") == (12, 4)
+    assert toolchain.torch_cuda("cu128") == (12, 8)
+
+
+def test_nvcc_must_match_torch(monkeypatch, tmp_path):
+    monkeypatch.setattr(toolchain, "cuda_home", lambda: tmp_path)
+    for have, ok in (((12, 6), True), ((12, 4), True), ((12, 3), False), ((13, 0), False)):
+        monkeypatch.setattr(toolchain, "nvcc_version", lambda home, have=have: have)
+        if ok:
+            assert toolchain.check_cuda((12, 4)) == (tmp_path, have)
+        else:
+            with pytest.raises(toolchain.ToolchainError, match="cannot build"):
+                toolchain.check_cuda((12, 4))
+
+
+def test_msvc_toolset_nvcc_accepts_wins_over_newer_ones(tmp_path):
+    vs = tmp_path / "VS"
+    (vs / "VC" / "Auxiliary" / "Build").mkdir(parents=True)
+    (vs / "VC" / "Auxiliary" / "Build" / "vcvarsall.bat").write_text("")
+    for ver in ("14.51.36231", "14.44.35207", "14.38.33130"):
+        cl = vs / "VC" / "Tools" / "MSVC" / ver / "bin" / "Hostx64" / "x64"
+        cl.mkdir(parents=True)
+        (cl / "cl.exe").write_text("")
+    limit = toolchain.max_msvc_toolset((12, 6))
+    bat, toolset = toolchain.find_msvc(limit, installs=[vs])
+    assert toolset == "14.44.35207" and bat.name == "vcvarsall.bat"
+    with pytest.raises(toolchain.ToolchainError, match=r"VC\.14\.44"):
+        toolchain.find_msvc((14, 30), installs=[vs])

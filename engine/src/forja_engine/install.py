@@ -24,7 +24,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from forja_engine import families
+from forja_engine import families, toolchain
 from forja_engine.registry import Manifest, Registry
 
 Log = Callable[[str], None]
@@ -145,6 +145,12 @@ class Installer:
                 "Route this model to a remote provider instead."
             )
         started = time.monotonic()
+        build_env = dict(fam.env)
+        if fam.build and (backend := fam.torch_backend.get(lane, "")).startswith("cu"):
+            try:
+                build_env.update(toolchain.build_env(backend, self.log))
+            except toolchain.ToolchainError as e:
+                raise InstallError(f"{fam.name} compiles CUDA extensions: {e}") from e
         env_dir = self.envs_dir / fam.name
         python = self.environment(fam, lane, env_dir)
         if fam.upstream:
@@ -154,7 +160,7 @@ class Installer:
             _run(
                 [uv_binary(), "pip", "install", "--python", python, "--no-build-isolation", target],
                 self.log,
-                env=fam.env,
+                env=build_env,
             )
         if weights:
             self.weights(manifest)

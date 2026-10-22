@@ -1,6 +1,7 @@
 .DEFAULT_GOAL := help
 SHELL := /bin/bash
 VERSION ?= 0.1.0-dev
+EXE := $(if $(filter Windows_NT,$(OS)),.exe)
 
 help: ## List targets
 	@grep -E '^[a-z-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-14s %s\n", $$1, $$2}'
@@ -11,7 +12,7 @@ setup: ## Install every toolchain dependency (uv, Go modules, pnpm)
 	cd apps/desktop && pnpm install
 
 core: ## Build the forja binary into core/bin
-	cd core && go build -ldflags "-X main.version=$(VERSION)" -o bin/forja ./cmd/forja
+	cd core && go build -ldflags "-X main.version=$(VERSION)" -o bin/forja$(EXE) ./cmd/forja
 
 core-all: ## Cross-compile forja for six OS/arch targets
 	cd core && for t in darwin/arm64 darwin/amd64 linux/amd64 linux/arm64 windows/amd64 windows/arm64; do \
@@ -32,7 +33,7 @@ test: ## Run every test suite
 
 check: ## Lint, type-check and test everything (what CI runs)
 	cd engine && uv run ruff check . && uv run ruff format --check . && uv run mypy src families/birefnet/src families/triposg/src families/hunyuan3d2/src && uv run pytest -q
-	cd core && gofmt -l . | (! grep .) && go vet ./... && go test -race ./...
+	cd core && gofmt -l . | (! grep .) && go vet ./... && go test $$([ "$$(go env CGO_ENABLED)" = 1 ] && echo -race) ./...
 	cd apps/desktop && pnpm lint && pnpm typecheck && pnpm test
 
 .PHONY: help setup core core-all engine desktop test check

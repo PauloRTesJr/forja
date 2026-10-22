@@ -90,6 +90,10 @@ class Adapter(abc.ABC):
     version: str = "1"
     #: Where install put this model's pinned weights. Set by the worker before `load`.
     weights_dir: Path | None = None
+    #: Set by the worker before `load` when the model does not fit the device in fit-first
+    #: mode. Adapters with a low-memory path (CPU offload, tiling) take it in `load`, before
+    #: any weights reach the device; others may ignore it and run as usual.
+    offload: bool = False
 
     @abc.abstractmethod
     def capabilities(self) -> Capabilities: ...

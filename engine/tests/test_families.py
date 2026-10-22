@@ -152,7 +152,7 @@ def test_triposg_run(tmp_path, triposg):
     c = ctx(tmp_path, StageType.SHAPE, [(rgba_subject(tmp_path), ArtifactKind.IMAGE_PNG)], steps=4)
     c.progress = lambda i, n: steps.append((i, n))
     out = adapter.run(c)
-    assert seen["path"] == "/weights/triposg" and seen["dtype"] == "fp16" and seen["seed"] == 7
+    assert seen["path"] == str(Path("/weights/triposg")) and seen["dtype"] == "fp16" and seen["seed"] == 7
     assert steps == [(1, 4), (2, 4), (3, 4), (4, 4)]
     assert out[0].preview and mesh_ops.load(out[0].path).extents[1] == pytest.approx(2.0)
 
@@ -180,10 +180,17 @@ def hunyuan(monkeypatch, fake_torch):
         def __init__(self, delight, multiview, subfolder):
             log["paths"] = (delight, multiview, subfolder)
             self.render_size = self.texture_size = 2048
+            self.device = "cuda"
+
+    class Net:
+        def __init__(self, config):
+            self.device = config.device
 
     class Pipeline:
         def __init__(self, config):
             self.config = config
+            log["built_on"] = config.device
+            self.models = {"delight_model": Net(config), "multiview_model": Net(config)}
 
         def enable_model_cpu_offload(self):
             log["offload"] += 1
@@ -248,3 +255,17 @@ def test_hunyuan_offloads_once_and_yaw_round_trips(tmp_path, hunyuan):
     ext = mesh_ops.load(out[0].path).extents
     assert ext[0] == pytest.approx(1.0) and ext[2] == pytest.approx(0.2)  # rotated back after painting
     assert math.isclose(adapter.sizes[1], 2048)
+
+
+def test_hunyuan_offload_at_load_builds_in_ram(tmp_path, hunyuan):
+    from forja_hunyuan3d2 import Hunyuan3D2Paint
+
+    _, log = hunyuan
+    assert log["built_on"] == "cuda" and log["offload"] == 0
+    a = Hunyuan3D2Paint()
+    a.weights_dir, a.offload = Path("/w"), True
+    a.load(Device.CUDA)
+    assert log["built_on"] == "cpu" and log["offload"] == 1
+    assert {n.device for n in a.pipe.models.values()} == {"cuda"}
+    a.run(ctx(tmp_path, StageType.TEXTURE, paint_inputs(tmp_path), offload=True))
+    assert log["offload"] == 1  # not enabled a second time at run

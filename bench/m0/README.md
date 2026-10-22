@@ -30,8 +30,16 @@ CUDA code at install, so they need more than the NVIDIA driver:
 | uv, Go 1.25+, Node + pnpm | Forja itself | `make setup` |
 
 If `nvcc` is not on `PATH`, export `CUDA_HOME=/usr/local/cuda` before installing.
-Windows works the same way in principle, but it needs MSVC Build Tools plus the CUDA toolkit.
-Run M0 on Ubuntu first.
+
+On Windows, `build-essential` becomes three Visual Studio Installer components. CUDA 12 rejects
+the compilers that ship with Visual Studio 2026 (MSVC 14.5x), so the installer picks the newest
+toolset nvcc accepts, sets up its environment itself, and stops early if a piece is missing:
+
+| Need | Component or package |
+|---|---|
+| CUDA toolkit 12.6 | `winget install --id Nvidia.CUDA --version 12.6 -e` |
+| MSVC v143 build tools | `Microsoft.VisualStudio.Component.VC.14.44.17.14.x86.x64` |
+| Windows 11 SDK (C runtime headers) | `Microsoft.VisualStudio.Component.Windows11SDK.26100` |
 
 ## 2. Install the models (about 20 GB of weights, 15–30 min)
 
