@@ -336,6 +336,9 @@ export interface Spend {
 
 export const searchCatalog = (provider: string, q: string, cursor?: string): Promise<CatalogPage> =>
   api('GET', `/v1/providers/${provider}/catalog?q=${encodeURIComponent(q)}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`)
+/** A catalog picture, relayed by the core: the page loads images only from it. */
+export const thumbnailURL = (provider: string, url: string): string =>
+  `${CORE}/v1/providers/${provider}/thumbnail?url=${encodeURIComponent(url)}`
 export const addHubModel = (provider: string, model: string): Promise<void> => api('POST', `/v1/providers/${provider}/models`, { model })
 export const removeHubModel = (provider: string, model: string): Promise<void> =>
   api('DELETE', `/v1/providers/${provider}/models?model=${encodeURIComponent(model)}`)

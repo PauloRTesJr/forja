@@ -1,6 +1,6 @@
 import { useInfiniteQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react'
-import { addHubModel, connectHub, searchCatalog, type CatalogModel } from '../lib/api'
+import { addHubModel, connectHub, searchCatalog, thumbnailURL, type CatalogModel } from '../lib/api'
 import { keys } from '../lib/events'
 import { money } from '../lib/format'
 import { useToast } from '../lib/toast'
@@ -70,6 +70,18 @@ export function ConnectHub({ onClose }: { onClose: () => void }) {
   )
 }
 
+function Thumb({ provider, url }: { provider: string; url?: string }) {
+  const [failed, setFailed] = useState(false)
+  if (!url || failed) {
+    return (
+      <span className="catalog-thumb">
+        <D20 size={40} />
+      </span>
+    )
+  }
+  return <img src={thumbnailURL(provider, url)} alt="" loading="lazy" onError={() => setFailed(true)} />
+}
+
 const doesLabel = (tasks: string[]): string =>
   tasks.includes('shape') && tasks.includes('texture') ? 'Shape and texture' : tasks.includes('texture') ? 'Texture' : tasks.join(', ')
 
@@ -112,15 +124,10 @@ export function Catalog({ provider, label, onClose }: { provider: string; label:
       <div className="catalog">
         {models.map((m) => (
           <div key={m.id} className="catalog-item">
-            {m.thumbnail ? (
-              <img src={m.thumbnail} alt="" loading="lazy" referrerPolicy="no-referrer" />
-            ) : (
-              <span className="catalog-thumb">
-                <D20 size={40} />
-              </span>
-            )}
+            <Thumb provider={provider} url={m.thumbnail} />
             <div>
               <strong>{m.name}</strong>
+              <div className="muted mono">{m.id}</div>
               <div className="chips">
                 {m.recommended && <span className="chip recommended">Recommended</span>}
                 {!m.problem && <span className="chip">{doesLabel(m.tasks)}</span>}

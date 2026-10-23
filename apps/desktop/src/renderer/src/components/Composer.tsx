@@ -73,7 +73,9 @@ export function Composer({
   const pins = config.data?.models?.stages ?? {}
   const stubs = config.data?.models?.stubs ?? false
   const byStage = new Map(current.plan.map((p) => [p.stage, p]))
-  const rows = current.plan.filter((p) => p.model || p.missing || p.skipped)
+  const isOptional = new Set(current.stages.filter((s) => s.optional).map((s) => s.id))
+  // A skipped optional step just goes away with its switch; it has no model to stand in for.
+  const rows = current.plan.filter((p) => p.model || p.missing || (p.skipped && !isOptional.has(p.stage)))
   const optional = current.stages.filter((s) => s.optional && !byStage.get(s.id)?.skipped)
   const cost = estimate(current.plan)
 
