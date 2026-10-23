@@ -6,6 +6,7 @@ package provider
 
 import (
 	"context"
+	"io"
 	"slices"
 	"sync"
 
@@ -94,4 +95,14 @@ func (r *Registry) All() []Provider {
 		out = append(out, r.byID[id])
 	}
 	return out
+}
+
+// Hub is implemented by providers with a catalog to browse and add models from (fal.ai).
+type Hub interface {
+	Search(ctx context.Context, query, cursor string) (*engineapi.CatalogPage, error)
+	// Check describes one model before it is added; Problem is set when Forja cannot call it.
+	Check(ctx context.Context, model string) (engineapi.CatalogModel, error)
+	// Thumbnail fetches a catalog picture with its media type; it refuses URLs off the hub's
+	// own image hosts.
+	Thumbnail(ctx context.Context, url string) (io.ReadCloser, string, error)
 }

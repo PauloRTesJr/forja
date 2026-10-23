@@ -33,21 +33,41 @@ func AddProvider(path string, p Provider, validate func() error) error {
 	return rewrite(path, func(want map[string]any) {
 		list, _ := want["providers"].([]map[string]any)
 		want["providers"] = append(list, fields)
-	}, func(text string) (string, bool) {
-		var b strings.Builder
-		b.WriteString(strings.TrimRight(text, "\n"))
-		if b.Len() > 0 {
-			b.WriteString("\n\n")
-		}
-		b.WriteString("[[providers]]\n")
-		for _, k := range []string{"id", "label", "kind", "url", "secret", "fingerprint"} {
-			if v, ok := fields[k]; ok {
-				val, _ := encodeValue(v)
-				b.WriteString(k + " = " + val + "\n")
+	}, func(text string) (string, bool) { return appendProvider(text, fields), true }, validate)
+}
+
+// UpdateProvider rewrites the [[providers]] table with p's id; it moves to the end of the file.
+func UpdateProvider(path string, p Provider, validate func() error) error {
+	fields := providerFields(p)
+	return rewrite(path, func(want map[string]any) {
+		list, _ := want["providers"].([]map[string]any)
+		kept := []map[string]any{}
+		for _, q := range list {
+			if q["id"] != p.ID {
+				kept = append(kept, q)
 			}
 		}
-		return b.String(), true
+		want["providers"] = append(kept, fields)
+	}, func(text string) (string, bool) {
+		rest, ok := removeProviderLines(text, p.ID)
+		return appendProvider(rest, fields), ok
 	}, validate)
+}
+
+func appendProvider(text string, fields map[string]any) string {
+	var b strings.Builder
+	b.WriteString(strings.TrimRight(text, "\n"))
+	if b.Len() > 0 {
+		b.WriteString("\n\n")
+	}
+	b.WriteString("[[providers]]\n")
+	for _, k := range []string{"id", "label", "kind", "vendor", "url", "secret", "fingerprint", "paid", "models"} {
+		if v, ok := fields[k]; ok {
+			val, _ := encodeValue(v)
+			b.WriteString(k + " = " + val + "\n")
+		}
+	}
+	return b.String()
 }
 
 // RemoveProvider deletes the [[providers]] table with this id from a config file.
@@ -70,13 +90,21 @@ func RemoveProvider(path, id string, validate func() error) error {
 
 func providerFields(p Provider) map[string]any {
 	out := map[string]any{"id": p.ID, "kind": p.Kind}
-	for k, v := range map[string]string{"label": p.Label, "url": p.URL, "secret": p.Secret, "fingerprint": p.Fingerprint} {
+	for k, v := range map[string]string{"label": p.Label, "vendor": p.Vendor, "url": p.URL, "secret": p.Secret,
+		"fingerprint": p.Fingerprint} {
 		if v != "" {
 			out[k] = v
 		}
 	}
 	if p.Paid {
 		out["paid"] = true
+	}
+	if p.Models != nil {
+		models := make([]any, len(p.Models))
+		for i, m := range p.Models {
+			models[i] = m
+		}
+		out["models"] = models
 	}
 	return out
 }

@@ -132,3 +132,26 @@ func TestProvidersAreAddedAndRemovedWithoutTouchingTheRest(t *testing.T) {
 		t.Fatalf("got:\n%s", raw)
 	}
 }
+
+func TestAHubProviderKeepsItsModelList(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	os.WriteFile(path, []byte(handWritten), 0o644)
+	p := Provider{ID: "fal", Label: "fal.ai", Kind: "api", Vendor: "fal", Secret: "provider-fal", Paid: true,
+		Models: []string{"fal-ai/trellis-2"}}
+	if err := AddProvider(path, p, nil); err != nil {
+		t.Fatal(err)
+	}
+	p.Models = append(p.Models, "tripo3d/h3.1/image-to-3d")
+	if err := UpdateProvider(path, p, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(path + ".bak"); err == nil {
+		t.Fatal("updating a provider rewrote the whole file")
+	}
+	raw, _ := os.ReadFile(path)
+	got := string(raw)
+	if !strings.Contains(got, `models = ["fal-ai/trellis-2", "tripo3d/h3.1/image-to-3d"]`) || strings.Count(got, `id = "fal"`) != 1 ||
+		!strings.Contains(got, "# Point the app") || !strings.Contains(got, `vendor = "fal"`) || !strings.Contains(got, "paid = true") {
+		t.Fatalf("got:\n%s", got)
+	}
+}

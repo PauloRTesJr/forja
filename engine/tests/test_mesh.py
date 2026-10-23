@@ -64,3 +64,43 @@ def test_loading_drops_tangents_older_files_kept_in_extras(tmp_path):
     path = tmp_path / "old.glb"
     path.write_bytes(trimesh.exchange.gltf.export_glb(trimesh.Scene(mesh)))  # the old writer path
     assert m.TANGENTS not in m.load(path).metadata
+
+
+def test_cleanup_keeps_the_texture_of_a_mesh_with_floaters(tmp_path):
+    """A hosted model's textured mesh has UV seams; cleanup must neither crash nor drop colors."""
+    import trimesh
+    from PIL import Image
+
+    from forja_engine.ops import bake
+    from forja_engine.ops import mesh as m
+
+    body = m.unwrap(trimesh.creation.icosphere(subdivisions=3))
+    floater = m.unwrap(trimesh.creation.icosphere(subdivisions=1, radius=0.05))
+    floater.apply_translation([3, 0, 0])
+    material = trimesh.visual.material.PBRMaterial(baseColorTexture=Image.new("RGB", (16, 16), (200, 30, 30)))
+    for part in (body, floater):
+        part.visual = trimesh.visual.TextureVisuals(uv=part.visual.uv, material=material)
+    path = m.save(trimesh.util.concatenate([body, floater]), tmp_path / "in.glb")
+    clean = m.cleanup(m.load(path))
+    assert len(clean.faces) == len(body.faces)
+    assert bake.has_color(clean)
+
+
+def test_cleanup_turns_flipped_faces_of_a_textured_mesh_outward():
+    """Winding is fixed across UV seams, not island by island, and the UVs stay."""
+    import trimesh
+    from PIL import Image
+
+    from forja_engine.ops import bake
+
+    sphere = m.unwrap(trimesh.creation.icosphere(subdivisions=3))
+    material = trimesh.visual.material.PBRMaterial(baseColorTexture=Image.new("RGB", (16, 16), (200, 30, 30)))
+    sphere.visual = trimesh.visual.TextureVisuals(uv=sphere.visual.uv, material=material)
+    faces = sphere.faces.copy()
+    faces[::7] = faces[::7, ::-1]
+    sphere.faces = faces
+    clean = m.cleanup(sphere)
+    outward = np.einsum("ij,ij->i", clean.face_normals, clean.triangles_center)
+    assert (outward > 0).all()
+    assert bake.has_color(clean)
+    assert len(clean.visual.uv) == len(clean.vertices)

@@ -176,13 +176,19 @@ func (s *Server) newProviderID(label string) string {
 // The token goes to the keychain and the provider to the user's config.toml.
 func (s *Server) providerAdd(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Label string `json:"label"`
-		URL   string `json:"url"`
-		Token string `json:"token"`
-		Code  string `json:"code"`
+		Kind   string `json:"kind"`
+		Vendor string `json:"vendor"`
+		Label  string `json:"label"`
+		URL    string `json:"url"`
+		Token  string `json:"token"`
+		Code   string `json:"code"`
 	}
 	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&body); err != nil {
 		problem(w, 400, "invalid JSON: "+err.Error())
+		return
+	}
+	if body.Kind == string(provider.KindAPI) {
+		s.hubAdd(w, r, body.Vendor, strings.TrimSpace(body.Token))
 		return
 	}
 	u, err := engine.NormalizeURL(body.URL)

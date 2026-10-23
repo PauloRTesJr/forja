@@ -402,3 +402,105 @@ func TestOptionalStagesRunOnlyWhenSwitchedOn(t *testing.T) {
 		t.Fatalf("switching match on ran %q", got)
 	}
 }
+
+// hub fakes a paid model hub: one model that does shape and texture in one pass.
+type hub struct {
+	*fakeProvider
+	price float64
+}
+
+func (h *hub) ID() string          { return "hub" }
+func (h *hub) Kind() provider.Kind { return provider.KindAPI }
+func (h *hub) Paid() bool          { return true }
+func (h *hub) Info(context.Context) (*engineapi.Info, error) {
+	return &engineapi.Info{Stages: map[string]string{}}, nil
+}
+func (h *hub) Models(context.Context) ([]engineapi.Model, error) {
+	m := model("oneshot", "shape", 50)
+	m.Tasks = []string{"shape", "texture"}
+	m.Price = &engineapi.Price{Amount: h.price, Unit: "generation", Currency: "USD"}
+	return []engineapi.Model{m}, nil
+}
+
+func withHub(t *testing.T, r *Runner, fp *fakeProvider, price float64) {
+	t.Helper()
+	r.providers.Add(&hub{fakeProvider: fp, price: price})
+}
+
+func stageIDs(j *library.Job) string {
+	var ids []string
+	for _, s := range j.Stages {
+		ids = append(ids, s.ID)
+	}
+	return strings.Join(ids, ",")
+}
+
+func TestAOneShotModelSkipsTheTextureStageAndWhatRefinesIt(t *testing.T) {
+	r, fp, _, _, img := setup(t)
+	withHub(t, r, fp, 0.4)
+	project := t.TempDir()
+	os.WriteFile(filepath.Join(project, "forja.toml"), []byte(
+		"[models.stages]\nshape = \"oneshot\"\n[routing.stages]\nshape = \"hub\"\n"), 0o644)
+	j, err := r.Submit(context.Background(), SubmitRequest{Input: img, Preset: "mobile-prop", Project: project,
+		Overrides: map[string]any{"match.enabled": true}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := stageIDs(j); got != "bg,frame,shape,cleanup,lowpoly,bake,lods,export" {
+		t.Fatalf("stages %s", got)
+	}
+	if got := wait(t, r, j.ID); got.Status != library.Succeeded {
+		t.Fatalf("%s: %s", got.Status, got.Error)
+	}
+	all, _ := r.Presets(project)
+	plan, _ := r.Resolve(context.Background(), project, all["mobile-prop"])
+	match := false
+	for _, p := range plan {
+		if p.Stage == "paint" && (!p.Skipped || p.By != "shape") {
+			t.Fatalf("paint pick %+v", p)
+		}
+		// Off by default, but reported, so the app does not offer to turn it on.
+		match = match || p.Stage == "match" && p.Skipped
+		if p.Stage == "shape" && (!p.Paid || p.Price == nil || p.Price.Amount != 0.4) {
+			t.Fatalf("shape pick %+v", p)
+		}
+	}
+	if !match {
+		t.Fatalf("match is not reported skipped: %+v", plan)
+	}
+	spent, _ := r.db.Spent(context.Background(), time.Now().Add(-time.Hour))
+	if spent != 0.4 {
+		t.Fatalf("recorded spending %v", spent)
+	}
+}
+
+func TestSpendingLimitsRefuseJobsThatWouldPassThem(t *testing.T) {
+	r, fp, _, _, img := setup(t)
+	withHub(t, r, fp, 0.4)
+	project := t.TempDir()
+	pins := "[models.stages]\nshape = \"oneshot\"\n[routing.stages]\nshape = \"hub\"\n"
+	limit := func(budget string) {
+		os.WriteFile(filepath.Join(project, "forja.toml"), []byte(pins+"[routing.budget_usd]\n"+budget+"\n"), 0o644)
+	}
+	// Each seed is a new shape, so each job pays; a cached one would cost nothing.
+	submit := func(seed int) error {
+		j, err := r.Submit(context.Background(), SubmitRequest{Input: img, Preset: "draft", Project: project, Seed: &seed})
+		if err == nil {
+			wait(t, r, j.ID)
+		}
+		return err
+	}
+	limit("per_job = 0.3")
+	if err := submit(1); err == nil || !strings.Contains(err.Error(), "per image") {
+		t.Fatalf("per image: %v", err)
+	}
+	limit("per_day = 1.0")
+	for seed := 1; seed <= 2; seed++ {
+		if err := submit(seed); err != nil {
+			t.Fatalf("seed %d: %v", seed, err)
+		}
+	}
+	if err := submit(3); err == nil || !strings.Contains(err.Error(), "daily limit") {
+		t.Fatalf("daily: %v", err)
+	}
+}

@@ -104,3 +104,51 @@ def test_bake_stage_writes_pbr_glb(tmp_path):
     mat = out.visual.material
     assert mat.normalTexture.size == (256, 256) and mat.occlusionTexture.size == (256, 256)
     assert mat.roughnessFactor == pytest.approx(0.6) and mat.metallicFactor == pytest.approx(0.1)
+
+
+def test_colors_of_a_textured_high_poly_are_baked_into_the_low_poly():
+    """A model that does shape and texture in one pass hands bake a textured high-poly."""
+    high = plane(16)
+    tex = np.zeros((64, 64, 3), dtype=np.uint8)
+    tex[:, :32] = (255, 0, 0)  # left half red (image left = -X)
+    tex[:, 32:] = (0, 0, 255)  # right half blue
+    high.visual = trimesh.visual.TextureVisuals(
+        uv=np.asarray(high.visual.uv),
+        material=trimesh.visual.material.PBRMaterial(baseColorTexture=Image.fromarray(tex)),
+    )
+    low = plane(2)
+    r = bake.bake(low, high, 64, ao_samples=2, color=True)
+    rgb = np.asarray(r.color)
+    assert rgb[32, 8].tolist() == [255, 0, 0] and rgb[32, 56].tolist() == [0, 0, 255]
+
+
+def test_vertex_colors_bake_too():
+    high = trimesh.creation.icosphere(subdivisions=3)
+    green = np.tile([0, 200, 0, 255], (len(high.vertices), 1))
+    high.visual = trimesh.visual.ColorVisuals(high, vertex_colors=green)
+    low = m.unwrap(trimesh.creation.icosphere(subdivisions=2))
+    r = bake.bake(low, high, 64, ao_samples=2, color=True)
+    assert r.color is not None and np.asarray(r.color)[..., 1].mean() > 150
+    plain = trimesh.creation.icosphere(subdivisions=3)
+    assert bake.bake(low, plain, 32, ao_samples=2, color=True).color is None
+
+
+def test_bake_stage_unwraps_and_colors_an_unpainted_low_poly(tmp_path):
+    from forja_engine.adapters.builtin import Bake
+    from forja_engine.sdk import ArtifactKind, StageContext, StageInput, StageType
+
+    high = trimesh.creation.icosphere(subdivisions=4)
+    blue = np.tile([10, 20, 230, 255], (len(high.vertices), 1))
+    high.visual = trimesh.visual.ColorVisuals(high, vertex_colors=blue)
+    low = trimesh.creation.icosphere(subdivisions=2)  # as decimated: no UVs, no texture
+    paths = [m.save(low, tmp_path / "low.glb"), m.save(high, tmp_path / "high.glb")]
+    ctx = StageContext(
+        "bake",
+        StageType.BAKE,
+        [StageInput(p, ArtifactKind.MESH_GLB, "") for p in paths],
+        {"resolution": 64, "ao_samples": 2},
+        0,
+        tmp_path,
+    )
+    base = m.load(Bake().run(ctx)[0].path).visual.material.baseColorTexture
+    assert base is not None and np.asarray(base.convert("RGB"))[..., 2].mean() > 150

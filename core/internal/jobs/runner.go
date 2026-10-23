@@ -154,22 +154,29 @@ func (r *Runner) Submit(ctx context.Context, req SubmitRequest) (*library.Job, e
 	if err != nil {
 		return nil, err
 	}
-	preset := withOverrides.Active()
 	seed := 42
 	if req.Seed != nil {
 		seed = *req.Seed
 	}
-	picks, err := r.resolve(ctx, cfg, preset)
+	picks, preset, err := r.resolve(ctx, cfg, withOverrides.Active())
 	if err != nil {
 		return nil, err
 	}
 	if err := missingError(picks); err != nil {
 		return nil, err
 	}
+	if err := r.withinBudget(ctx, cfg, picks); err != nil {
+		return nil, err
+	}
+	byStage := map[string]Pick{}
+	for _, p := range picks {
+		byStage[p.Stage] = p
+	}
 	routes := map[string]string{}
 	for i := range preset.Stages {
-		preset.Stages[i].Model = picks[i].Model
-		routes[preset.Stages[i].ID] = picks[i].Provider
+		p := byStage[preset.Stages[i].ID]
+		preset.Stages[i].Model = p.Model
+		routes[preset.Stages[i].ID] = p.Provider
 	}
 	priority := req.Priority
 	if priority != "interactive" {
@@ -499,6 +506,9 @@ func (r *Runner) runBatch(ctx context.Context, a *active, plan *planner.Plan, id
 			outputs[s.ID] = outs[0].Hash
 			_ = r.db.CachePut(ctx, s.Key, outs, seconds)
 			_ = r.db.RecordTiming(ctx, s.Use, s.Model, p.ID(), seconds)
+			if p.Paid() && s.Model != "" {
+				r.recordCost(ctx, a.job.ID, s.ID, p.ID(), s.Model)
+			}
 		}
 	}
 	r.hub.Publish(EvJobUpdated, snapshot(a))

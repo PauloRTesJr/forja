@@ -88,6 +88,42 @@ type Model struct {
 	RunsOn      *string `json:"runs_on"`
 	Fit         string  `json:"fit"`
 	Task        *string `json:"task"`
+	// Hosted models (a model hub such as fal.ai): what one generation costs, whether Forja
+	// recommends it, and a picture for the catalog.
+	Price       *Price `json:"price,omitempty"`
+	Recommended bool   `json:"recommended,omitempty"`
+	Thumbnail   string `json:"thumbnail,omitempty"`
+}
+
+// Price is what a hosted model charges per Unit. PerCall is the unit for one generation, the
+// only price a job's cost can be added up from before it runs; any other unit (a second, a
+// vendor's compute unit) is shown as is.
+type Price struct {
+	Amount   float64 `json:"amount"`
+	Unit     string  `json:"unit"`
+	Currency string  `json:"currency"`
+}
+
+const PerCall = "generation"
+
+// CatalogPage is one page of a model hub's catalog, as Forja can use it.
+type CatalogPage struct {
+	Models     []CatalogModel `json:"models"`
+	NextCursor string         `json:"next_cursor,omitempty"`
+}
+
+type CatalogModel struct {
+	ID          string   `json:"id"`
+	Name        string   `json:"name"`
+	Description string   `json:"description"`
+	Thumbnail   string   `json:"thumbnail,omitempty"`
+	License     License  `json:"license"`
+	Price       *Price   `json:"price,omitempty"`
+	Tasks       []string `json:"tasks"`
+	// Problem says why Forja cannot call the model (no single image input, no mesh output).
+	Problem     string `json:"problem,omitempty"`
+	Added       bool   `json:"added"`
+	Recommended bool   `json:"recommended"`
 }
 
 // Ready reports whether the model can run on the provider now.

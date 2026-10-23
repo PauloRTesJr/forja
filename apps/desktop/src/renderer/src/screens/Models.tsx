@@ -4,17 +4,30 @@ import { CheckList, FitBadge, LicenseLine, TaskProgress, taskFor, useChecks, use
 import { PauseMoon, TaskSigil } from '../components/icons'
 import { ScreenHead, SectionHead } from '../components/ScreenHead'
 import { Setup } from '../components/Setup'
-import { api, fetchModels, installModel, removeModel, taskDone, pinModel, type Model, type Setup as SetupView } from '../lib/api'
+import { Catalog, ConnectHub } from '../components/Hub'
+import {
+  api,
+  fetchModels,
+  installModel,
+  pinModel,
+  removeHubModel,
+  removeModel,
+  taskDone,
+  type Model,
+  type ProviderRow,
+  type Setup as SetupView,
+} from '../lib/api'
 import { keys } from '../lib/events'
-import { stageLabel, taskNoun } from '../lib/format'
+import { money, stageLabel, taskNoun } from '../lib/format'
 import { useToast } from '../lib/toast'
 
+const UNUSABLE = 'unusable'
 const ORDER = ['background-removal', 'shape', 'texture']
 
 function groupsOf(models: Model[]): [string, Model[]][] {
   const by = new Map<string, Model[]>()
   for (const m of models) {
-    const use = m.tasks[0] ?? 'other'
+    const use = m.tasks[0] ?? UNUSABLE
     by.set(use, [...(by.get(use) ?? []), m])
   }
   const rank = (use: string): number => (ORDER.includes(use) ? ORDER.indexOf(use) : ORDER.length)
@@ -33,6 +46,10 @@ export function Models() {
     onSuccess: () => toast('Engine paused: all GPU memory freed'),
     onError: (e: Error) => toast(e.message, true),
   })
+  const providers = useQuery({ queryKey: keys.providers, queryFn: () => api<ProviderRow[]>('GET', '/v1/providers') })
+  const [connecting, setConnecting] = useState(false)
+  const [browsing, setBrowsing] = useState(false)
+  const hub = providers.data?.find((p) => p.kind === 'api')
   const stubs = config.data?.models?.stubs ?? false
   const visible = models.data?.filter((m) => stubs || !m.stub) ?? []
 
@@ -62,15 +79,44 @@ export function Models() {
       {models.error && <div className="error">{(models.error as Error).message}</div>}
       {groupsOf(visible).map(([use, list]) => (
         <div className="section" key={use}>
-          <SectionHead>{stageLabel(use)}</SectionHead>
+          <SectionHead>{use === UNUSABLE ? 'Cannot be used' : stageLabel(use)}</SectionHead>
           <div className="model-grid">
             {list.map((m, i) => (
-              <ModelCard key={m.id} model={m} i={i} onInstall={() => setInstalling(m)} />
+              <ModelCard key={`${m.provider}|${m.id}`} model={m} i={i} onInstall={() => setInstalling(m)} />
             ))}
           </div>
         </div>
       ))}
+
+      {hub ? (
+        <div className="hub-cta">
+          <div>
+            <strong>More hosted models on {hub.label}</strong>
+            <span>Search {hub.label}'s image-to-3D catalog and add the models you want to pick from.</span>
+          </div>
+          <button className="btn" onClick={() => setBrowsing(true)}>
+            Add models…
+          </button>
+        </div>
+      ) : (
+        providers.data && (
+          <div className="hub-cta">
+            <div>
+              <strong>Hosted models</strong>
+              <span>
+                Connect fal.ai for Hunyuan3D 3.1 Pro, TRELLIS 2, Tripo, Meshy, Rodin and more with one API key. Paid per
+                generation, used only when you pick them.
+              </span>
+            </div>
+            <button className="btn primary" onClick={() => setConnecting(true)}>
+              Connect fal.ai
+            </button>
+          </div>
+        )
+      )}
       {installing && <InstallDialog model={installing} onClose={() => setInstalling(undefined)} />}
+      {connecting && <ConnectHub onClose={() => setConnecting(false)} />}
+      {browsing && hub && <Catalog provider={hub.id} label={hub.label} onClose={() => setBrowsing(false)} />}
     </div>
   )
 }
@@ -83,23 +129,28 @@ function ModelCard({ model: m, i, onInstall }: { model: Model; i: number; onInst
   const busy = task !== undefined && !taskDone(task)
   const [confirm, setConfirm] = useState(false)
   const installed = m.status === 'ready' || m.status === 'loaded'
-  const use = m.tasks[0]!
-  const usedFor = m.uses.find((u) => u.use === use)
+  const hosted = m.fit === 'hosted'
+  // A hosted model Forja cannot call has no stage; its description says why.
+  const use = m.tasks[0] as string | undefined
+  const usedFor = use ? m.uses.find((u) => u.use === use) : undefined
   const runnable = m.fit === 'fits' || m.fit === 'offload'
 
   const pick = useMutation({
-    mutationFn: (model: string) => pinModel(use, model),
+    mutationFn: (model: string) => pinModel(use!, model, model ? m.provider : undefined),
     onSuccess: () => void qc.invalidateQueries({ queryKey: keys.models }),
     onError: (e: Error) => toast(e.message, true),
   })
-  const remove = useMutation({ mutationFn: () => removeModel(m.id), onError: (e: Error) => toast(e.message, true) })
+  const remove = useMutation({
+    mutationFn: () => (hosted ? removeHubModel(m.provider, m.id) : removeModel(m.id).then(() => undefined)),
+    onError: (e: Error) => toast(e.message, true),
+  })
   const repair = useMutation({ mutationFn: () => installModel(m.id, false), onError: (e: Error) => toast(e.message, true) })
 
   return (
     <article className={`model-card enter ${installed ? 'installed' : ''}`} style={{ '--i': i } as CSSProperties}>
       <div className="model-cell">
         <span className={`sigil-badge ${m.status}`}>
-          <TaskSigil task={use} />
+          <TaskSigil task={use ?? 'shape'} />
         </span>
         <div>
           <strong>{m.name}</strong>
@@ -107,17 +158,48 @@ function ModelCard({ model: m, i, onInstall }: { model: Model; i: number; onInst
         </div>
         <span className={`status ${m.status}`}>
           <i aria-hidden />
-          {m.status === 'loaded' ? 'in VRAM' : installed ? `ready on ${m.device}` : 'not installed'}
+          {m.status === 'loaded'
+            ? 'in VRAM'
+            : hosted
+              ? use
+                ? `on ${m.provider_label}`
+                : 'cannot be used'
+              : installed
+                ? `ready on ${m.provider === 'local' ? m.device : m.provider_label}`
+                : 'not installed'}
         </span>
       </div>
       {m.description && <p className="model-desc">{m.description}</p>}
       <div className="chips">
-        <FitBadge fit={m.fit} />
+        {m.recommended && <span className="chip recommended">Recommended</span>}
+        {hosted ? <span className="chip paid">{money(m.price)}</span> : <FitBadge fit={m.fit} />}
         {m.disk_gb ? <span className="chip">{m.disk_gb.toFixed(1)} GB</span> : null}
-        {usedFor && <span className="chip used">{usedFor.pinned ? `Chosen for ${taskNoun(use)}` : `In use for ${taskNoun(use)}`}</span>}
+        {hosted && m.tasks.length > 1 && <span className="chip">Shape and texture in one pass</span>}
+        {usedFor && use && <span className="chip used">{usedFor.pinned ? `Chosen for ${taskNoun(use)}` : `In use for ${taskNoun(use)}`}</span>}
       </div>
       <LicenseLine license={m.license} />
-      {busy ? (
+      {hosted ? (
+        <div className="row model-actions">
+          {use && !usedFor && (
+            <button className="btn" onClick={() => pick.mutate(m.id)} disabled={pick.isPending}>
+              Use for {taskNoun(use)}
+            </button>
+          )}
+          {usedFor?.pinned && (
+            <button className="btn ghost" onClick={() => pick.mutate('')} disabled={pick.isPending}>
+              Pick automatically
+            </button>
+          )}
+          <button
+            className={`btn ghost ${confirm ? 'danger' : ''}`}
+            onClick={() => (confirm ? remove.mutate() : setConfirm(true))}
+            onBlur={() => setConfirm(false)}
+            disabled={remove.isPending}
+          >
+            {confirm ? 'Remove from Forja?' : 'Remove'}
+          </button>
+        </div>
+      ) : busy ? (
         <TaskProgress task={task} />
       ) : (
         <div className="row model-actions">
@@ -127,7 +209,7 @@ function ModelCard({ model: m, i, onInstall }: { model: Model; i: number; onInst
             </button>
           )}
           {!installed && !runnable && <span className="muted">Runs only on another computer or a cloud GPU.</span>}
-          {installed && !usedFor && (
+          {installed && use && !usedFor && (
             <button className="btn" onClick={() => pick.mutate(m.id)} disabled={pick.isPending}>
               Use for {taskNoun(use)}
             </button>

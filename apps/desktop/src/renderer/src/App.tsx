@@ -2,6 +2,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { lazy, Suspense, useCallback, useEffect, useState, type CSSProperties } from 'react'
 import { Anvil, BrandMark, Eye, Grimoire, Hourglass, MoonPhases, SidebarSky, Sun } from './components/icons'
 import { useInstalls } from './components/Install'
+import { ScreenBoundary } from './components/ScreenBoundary'
 import { api, taskDone, type Job } from './lib/api'
 import { keys, useCoreEvents } from './lib/events'
 import { isActive } from './lib/jobs'
@@ -98,14 +99,16 @@ export function App() {
           </div>
         </nav>
         <main className="main" key={route.screen === 'asset' ? `asset-${route.id}` : route.screen}>
-          <Suspense fallback={<div className="screen" />}>
-            {route.screen === 'generate' && <Generate />}
-            {route.screen === 'queue' && <Queue />}
-            {route.screen === 'library' && <Library />}
-            {route.screen === 'asset' && <AssetDetail id={route.id} />}
-            {route.screen === 'models' && <Models />}
-            {route.screen === 'settings' && <Settings />}
-          </Suspense>
+          <ScreenBoundary>
+            <Suspense fallback={<div className="screen" />}>
+              {route.screen === 'generate' && <Generate />}
+              {route.screen === 'queue' && <Queue />}
+              {route.screen === 'library' && <Library />}
+              {route.screen === 'asset' && <AssetDetail id={route.id} />}
+              {route.screen === 'models' && <Models />}
+              {route.screen === 'settings' && <Settings />}
+            </Suspense>
+          </ScreenBoundary>
         </main>
       </div>
     </NavContext.Provider>

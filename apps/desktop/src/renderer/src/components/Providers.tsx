@@ -10,17 +10,22 @@ import {
   type ProviderRow,
   type Setting,
   type ShareView,
+  type Spend,
 } from '../lib/api'
 import { keys } from '../lib/events'
 import { useToast } from '../lib/toast'
-import { Choices, Row } from './Controls'
+import { Choices, NumberInput, Row } from './Controls'
+import { ConnectHub } from './Hub'
 import { SectionHead } from './ScreenHead'
 
 /** Where models run: this computer, other computers, and sharing this one's GPU. */
 export function Providers({ settings, onSet }: { settings: Map<string, Setting>; onSet: (key: string, value: unknown) => void }) {
   const providers = useQuery({ queryKey: keys.providers, queryFn: () => api<ProviderRow[]>('GET', '/v1/providers') })
   const [adding, setAdding] = useState(false)
+  const [connecting, setConnecting] = useState(false)
   const paid = providers.data?.some((p) => p.paid) ?? false
+  const hub = providers.data?.some((p) => p.kind === 'api') ?? false
+  const spend = useQuery({ queryKey: keys.spend, queryFn: () => api<Spend>('GET', '/v1/spend'), enabled: paid })
   return (
     <div className="section">
       <SectionHead>Where models run</SectionHead>
@@ -37,7 +42,12 @@ export function Providers({ settings, onSet }: { settings: Map<string, Setting>;
           <button className="btn" onClick={() => setAdding(true)}>
             Add another computer
           </button>
-          <span className="muted">Stages use it for models this computer cannot run.</span>
+          {!hub && (
+            <button className="btn" onClick={() => setConnecting(true)}>
+              Connect fal.ai
+            </button>
+          )}
+          <span className="muted">Stages use them for models this computer cannot run, or when you pick one.</span>
         </div>
         <ShareCard />
         <Row setting={settings.get('routing.policy')} label="Which computer a stage uses" onReset={onSet}>
@@ -63,8 +73,26 @@ export function Providers({ settings, onSet }: { settings: Map<string, Setting>;
             )}
           </Row>
         )}
+        {paid && (
+          <>
+            {(
+              [
+                ['routing.budget_usd.per_job', 'Spending limit per image', 'A job whose paid steps would cost more is refused.'],
+                ['routing.budget_usd.per_day', 'Spending limit per day', spend.data ? `Spent today: $${spend.data.today.toFixed(2)}.` : ''],
+                ['routing.budget_usd.per_month', 'Spending limit per month', spend.data ? `Spent this month: $${spend.data.month.toFixed(2)}.` : ''],
+              ] as const
+            ).map(([key, label, help]) => (
+              <Row key={key} setting={settings.get(key)} label={label} help={`${help} 0 means no limit.`} onReset={onSet}>
+                {(s, locked) => (
+                  <NumberInput value={Number(s.value ?? 0)} unit="USD" min={0} step={0.5} disabled={locked} onCommit={(v) => onSet(s.key, v)} />
+                )}
+              </Row>
+            ))}
+          </>
+        )}
       </div>
       {adding && <AddComputer onClose={() => setAdding(false)} />}
+      {connecting && <ConnectHub onClose={() => setConnecting(false)} />}
     </div>
   )
 }

@@ -2082,3 +2082,187 @@ select.input {
 .dialog .field .input {
   width: 100%;
 }
+
+/* Composer: quality and the model of each step, below the drop zone. */
+.composer {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 18px 20px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-3);
+  background: var(--surface);
+}
+.composer-row {
+  display: grid;
+  grid-template-columns: 170px 1fr;
+  align-items: center;
+  gap: 16px;
+}
+.composer-label {
+  font-family: var(--display);
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+.composer-note {
+  margin: -4px 0 4px 186px;
+  color: var(--text-2);
+  font-size: 15px;
+}
+.composer-select {
+  width: 100%;
+  max-width: 520px;
+}
+.composer-skip {
+  color: var(--text-2);
+  font-size: 15px;
+  font-style: italic;
+}
+.composer .options {
+  margin: 4px 0 0 186px;
+}
+.composer-cost {
+  margin: 4px 0 0 186px;
+  color: var(--warn);
+  font-size: 14.5px;
+}
+.quality {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.quality-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 42px;
+  padding: 0 14px 0 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-2);
+  background: var(--bg-deep);
+  color: var(--text);
+  font-family: var(--display);
+  font-size: 12.5px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: transform var(--dur-1) var(--ease-out);
+}
+.quality-option:active {
+  transform: scale(0.97);
+}
+.quality-option[aria-checked='true'] {
+  border-color: var(--accent);
+  background: var(--surface-2);
+  color: #f3dcb0;
+}
+.quality-option.unready {
+  opacity: 0.6;
+}
+.quality-emblem {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  color: #a88a5c;
+}
+.quality-emblem svg {
+  width: 26px;
+  height: 26px;
+}
+.quality-option[aria-checked='true'] .quality-emblem {
+  color: var(--accent-hi);
+}
+@media (max-width: 900px) {
+  .composer-row {
+    grid-template-columns: 1fr;
+    gap: 6px;
+  }
+  .composer-note,
+  .composer .options,
+  .composer-cost {
+    margin-left: 0;
+  }
+}
+
+/* Hosted models: provider and price on a card, and the catalog to add more from. */
+.chip.paid {
+  border-color: #6b5236;
+  color: var(--warn);
+}
+.chip.recommended {
+  border-color: var(--frame);
+  color: var(--accent-hi);
+}
+.hub-cta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  margin-top: 28px;
+  padding: 16px 20px;
+  border: 1px dashed var(--frame);
+  border-radius: var(--r-3);
+}
+.hub-cta strong {
+  display: block;
+  font-family: var(--display);
+  font-size: 14px;
+  letter-spacing: 0.08em;
+  color: #f3dcb0;
+}
+.hub-cta span {
+  color: var(--text-2);
+  font-size: 15px;
+}
+.catalog {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 52vh;
+  overflow-y: auto;
+}
+.catalog-item {
+  display: grid;
+  grid-template-columns: 56px 1fr auto;
+  align-items: center;
+  gap: 14px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r-1);
+  background: var(--surface);
+}
+.catalog-item img,
+.catalog-thumb {
+  width: 56px;
+  height: 56px;
+  border-radius: 6px;
+  background: var(--bg-deep);
+  object-fit: cover;
+}
+.catalog-item strong {
+  color: #f3e6cc;
+  font-size: 15.5px;
+}
+.catalog-item p {
+  margin: 2px 0 0;
+  color: var(--text-2);
+  font-size: 14px;
+  line-height: 1.35;
+}
+.catalog-item .problem {
+  color: var(--text-3);
+  font-style: italic;
+}
+.dialog-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.grow {
+  flex: 1;
+}

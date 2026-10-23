@@ -1,11 +1,11 @@
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { useState, type DragEvent } from 'react'
-import { Corners, DropSigil, Folder, PresetEmblem, Sparkle } from '../components/icons'
+import { Composer } from '../components/Composer'
+import { Corners, DropSigil, Folder } from '../components/icons'
 import { ScreenHead, SectionHead } from '../components/ScreenHead'
 import { Setup } from '../components/Setup'
 import { api, submitJobs, type Preset } from '../lib/api'
 import { keys } from '../lib/events'
-import { listOf, roman, taskNoun } from '../lib/format'
 import { transition, useNavigate } from '../lib/nav'
 import { useToast } from '../lib/toast'
 
@@ -37,16 +37,6 @@ function storedOptions(): Record<string, boolean> {
   } catch {
     return {}
   }
-}
-
-/** The models a preset will use, in pipeline order, each once. */
-function modelsOf(p: Preset): string[] {
-  const names = p.plan.filter((s) => s.model).map((s) => s.model_name || s.model!)
-  return [...new Set(names)]
-}
-
-function missingOf(p: Preset): string[] {
-  return [...new Set(p.plan.filter((s) => s.missing).map((s) => taskNoun(s.use)))]
 }
 
 export function Generate() {
@@ -150,48 +140,11 @@ export function Generate() {
       </div>
 
       <div className="section">
-        <SectionHead>Preset</SectionHead>
-        <div className="presets">
-          {presets.isPending && [0, 1, 2, 3].map((i) => <div key={i} className="skeleton" style={{ height: 196 }} />)}
-          {presets.error && <div className="error">{(presets.error as Error).message}</div>}
-          {presets.data?.map((p, i) => (
-            <button
-              key={p.id}
-              className={`preset enter ${p.ready ? '' : 'unready'}`}
-              style={{ '--i': i } as React.CSSProperties}
-              aria-pressed={preset === p.id}
-              onClick={() => setPreset(p.id)}
-            >
-              <span className="frame" aria-hidden />
-              <span className="tarot-num" aria-hidden>
-                {roman(i + 1)}
-              </span>
-              <span className="emblem">
-                <PresetEmblem id={p.id} />
-              </span>
-              <strong>{p.name}</strong>
-              <small>{p.description}</small>
-              {p.ready ? (
-                <span className="preset-models">{modelsOf(p).join(' · ')}</span>
-              ) : (
-                <span className="preset-needs">Needs {p.error ? 'the engine' : `a ${listOf(missingOf(p))} model`}</span>
-              )}
-              <Sparkle size={12} className="chosen" />
-            </button>
-          ))}
-        </div>
-        {optional.length > 0 && (
-          <div className="options">
-            {optional.map((s) => {
-              const on = isOn(s.id, s.optional!.default)
-              return (
-                <button key={s.id} className="switch" role="switch" aria-checked={on} onClick={() => toggle(s.id, !on)}>
-                  <span className="switch-track" aria-hidden />
-                  {s.optional!.label}
-                </button>
-              )
-            })}
-          </div>
+        <SectionHead>How to make it</SectionHead>
+        {presets.isPending && <div className="skeleton" style={{ height: 220 }} />}
+        {presets.error && <div className="error">{(presets.error as Error).message}</div>}
+        {presets.data && (
+          <Composer presets={presets.data} preset={preset} onPreset={setPreset} isOn={isOn} onToggle={toggle} />
         )}
       </div>
 
