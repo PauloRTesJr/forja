@@ -19,6 +19,7 @@ dependencies = [
     "scipy>=1.14",
     "huggingface-hub>=0.27",
     "embreex>=4.4 ; (platform_machine == 'x86_64' and sys_platform == 'linux') or sys_platform == 'darwin' or sys_platform == 'win32'",
+    "networkx>=3.4",
 ]
 
 [project.scripts]

@@ -135,16 +135,25 @@ def cleanup(mesh: trimesh.Trimesh, min_component_ratio: float = 0.01) -> trimesh
     mesh.merge_vertices()  # keeps UV seams, so a textured mesh keeps its texture
     mesh.update_faces(mesh.nondegenerate_faces())
     mesh.remove_unreferenced_vertices()
-    # Parts are found on a copy welded by position only: UV seams must not split a textured
-    # mesh into islands. Floaters are then dropped by face, which leaves the texture alone.
+    # Parts and winding are worked out on a copy welded by position only: UV seams must not
+    # split a textured mesh into islands, each turned its own way. Both then apply by face,
+    # which leaves the texture alone.
     welded = trimesh.Trimesh(mesh.vertices, mesh.faces, process=False)
     welded.merge_vertices(merge_tex=True, merge_norm=True)
     labels = trimesh.graph.connected_component_labels(welded.face_adjacency, node_count=len(welded.faces))
     if len(labels) and labels.max() > 0:
         areas = np.bincount(labels, weights=welded.area_faces)
-        mesh.update_faces((areas >= areas.max() * min_component_ratio)[labels])
+        keep = (areas >= areas.max() * min_component_ratio)[labels]
+        mesh.update_faces(keep)
         mesh.remove_unreferenced_vertices()
-    trimesh.repair.fix_normals(mesh)
+        welded.update_faces(keep)
+    before = welded.faces.copy()
+    trimesh.repair.fix_normals(welded)
+    flipped = (welded.faces != before).any(axis=1)
+    if flipped.any():
+        faces = mesh.faces.copy()
+        faces[flipped] = faces[flipped, ::-1]
+        mesh.faces = faces
     return mesh
 
 

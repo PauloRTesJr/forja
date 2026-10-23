@@ -84,3 +84,23 @@ def test_cleanup_keeps_the_texture_of_a_mesh_with_floaters(tmp_path):
     clean = m.cleanup(m.load(path))
     assert len(clean.faces) == len(body.faces)
     assert bake.has_color(clean)
+
+
+def test_cleanup_turns_flipped_faces_of_a_textured_mesh_outward():
+    """Winding is fixed across UV seams, not island by island, and the UVs stay."""
+    import trimesh
+    from PIL import Image
+
+    from forja_engine.ops import bake
+
+    sphere = m.unwrap(trimesh.creation.icosphere(subdivisions=3))
+    material = trimesh.visual.material.PBRMaterial(baseColorTexture=Image.new("RGB", (16, 16), (200, 30, 30)))
+    sphere.visual = trimesh.visual.TextureVisuals(uv=sphere.visual.uv, material=material)
+    faces = sphere.faces.copy()
+    faces[::7] = faces[::7, ::-1]
+    sphere.faces = faces
+    clean = m.cleanup(sphere)
+    outward = np.einsum("ij,ij->i", clean.face_normals, clean.triangles_center)
+    assert (outward > 0).all()
+    assert bake.has_color(clean)
+    assert len(clean.visual.uv) == len(clean.vertices)
