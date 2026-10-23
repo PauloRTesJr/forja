@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
@@ -35,6 +36,10 @@ type fakeProvider struct {
 	// extra models it lists besides background, shape and paint; drop hides listed ones.
 	extra []engineapi.Model
 	drop  map[string]bool
+	// sheet is what views.detect reports; specs are the stages it was sent, by id.
+	sheet     string
+	specs     map[string]engineapi.StageSpec
+	clientIDs map[string]bool
 }
 
 var cpu = "cpu"
@@ -92,6 +97,17 @@ func (f *fakeProvider) Download(context.Context, string) error { return nil }
 func (f *fakeProvider) Cancel(context.Context, string) error   { return nil }
 
 func (f *fakeProvider) Run(_ context.Context, req engineapi.RunRequest, evs chan<- engineapi.Event) (*engineapi.Run, error) {
+	// A real engine answers a repeated client id with the run it already has.
+	f.mu.Lock()
+	if f.clientIDs == nil {
+		f.clientIDs = map[string]bool{}
+	}
+	reused := f.clientIDs[req.ClientRunID]
+	f.clientIDs[req.ClientRunID] = true
+	f.mu.Unlock()
+	if reused {
+		return nil, fmt.Errorf("client run id %s was sent twice; the engine would replay the first run", req.ClientRunID)
+	}
 	ids := []string{}
 	run := &engineapi.Run{ID: "r", Status: "succeeded", Stages: map[string]engineapi.StageState{}}
 	produced := map[string]string{}
@@ -104,17 +120,50 @@ func (f *fakeProvider) Run(_ context.Context, req engineapi.RunRequest, evs chan
 			}
 			inputs = append(inputs, in)
 		}
-		ref, _ := f.st.PutBytes([]byte(s.ID + s.Model + strings.Join(inputs, ",") + fmtParams(s.Params)))
-		produced[s.ID] = ref
+		blob := s.ID + s.Model + strings.Join(inputs, ",") + strings.Join(s.Views, ",") + fmtParams(s.Params)
+		outs := []engineapi.Output{{Kind: "mesh/glb"}}
+		switch s.Use {
+		case "views.detect":
+			f.mu.Lock()
+			blob = f.sheet
+			f.mu.Unlock()
+			if blob == "" {
+				blob = `{"sheet": false, "size": [100, 100], "parts": [{"box": [10, 10, 90, 90], "kind": "figure", "view": ""}]}`
+			}
+			outs[0].Kind = "application/json"
+		case "views.split":
+			views, _ := s.Params["views"].([]map[string]any)
+			outs = nil
+			for _, v := range views {
+				ref, _ := f.st.PutBytes([]byte(blob + fmt.Sprint(v["view"])))
+				outs = append(outs, engineapi.Output{Hash: ref, Kind: "image/png"})
+			}
+		}
+		ref, _ := f.st.PutBytes([]byte(blob))
+		if outs[0].Hash == "" {
+			outs[0].Hash = ref
+		}
+		produced[s.ID] = outs[0].Hash
 		secs := 0.01
 		evs <- engineapi.Event{Type: "stage.started", Data: map[string]any{"stage": s.ID}}
-		run.Stages[s.ID] = engineapi.StageState{Status: "succeeded", Seconds: &secs,
-			Outputs: []engineapi.Output{{Hash: ref, Kind: "mesh/glb"}}}
+		run.Stages[s.ID] = engineapi.StageState{Status: "succeeded", Seconds: &secs, Outputs: outs}
+		f.mu.Lock()
+		if f.specs == nil {
+			f.specs = map[string]engineapi.StageSpec{}
+		}
+		f.specs[s.ID] = s
+		f.mu.Unlock()
 	}
 	f.mu.Lock()
 	f.runs = append(f.runs, ids)
 	f.mu.Unlock()
 	return run, nil
+}
+
+func (f *fakeProvider) spec(id string) engineapi.StageSpec {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.specs[id]
 }
 
 func fmtParams(p map[string]any) string {
@@ -133,7 +182,8 @@ func setup(t *testing.T) (*Runner, *fakeProvider, *events.Hub, *store.Store, str
 	}
 	t.Cleanup(func() { db.Close() })
 	builtins := map[string]string{}
-	for _, use := range []string{"framing", "mesh.cleanup", "mesh.decimate", "mesh.uv", "texture.match", "bake", "mesh.lods", "export"} {
+	for _, use := range []string{"framing", "mesh.cleanup", "mesh.decimate", "mesh.uv", "texture.match", "bake", "mesh.lods",
+		"export", "views.detect", "views.split"} {
 		builtins[use] = "1"
 	}
 	shape := model("stub-shape", "shape", 1)
@@ -371,7 +421,7 @@ func TestAPresetWithoutAModelForAStageIsRefused(t *testing.T) {
 		t.Fatalf("draft needs no texture model: %v", err)
 	}
 	all, _ := r.Presets("")
-	plan, err := r.Resolve(context.Background(), "", all["mobile-prop"])
+	plan, err := r.Resolve(context.Background(), "", all["mobile-prop"], nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -453,7 +503,7 @@ func TestAOneShotModelSkipsTheTextureStageAndWhatRefinesIt(t *testing.T) {
 		t.Fatalf("%s: %s", got.Status, got.Error)
 	}
 	all, _ := r.Presets(project)
-	plan, _ := r.Resolve(context.Background(), project, all["mobile-prop"])
+	plan, _ := r.Resolve(context.Background(), project, all["mobile-prop"], nil)
 	match := false
 	for _, p := range plan {
 		if p.Stage == "paint" && (!p.Skipped || p.By != "shape") {

@@ -40,15 +40,24 @@ class StubBackground(Adapter):
 
 
 class StubShape(Adapter):
-    """Inflates the subject's silhouette into a closed, pillow-like mesh."""
+    """Inflates the subject's silhouette into a closed, pillow-like mesh.
+
+    Given a side view, the side silhouette's width sets the thickness instead of `depth`.
+    """
 
     def capabilities(self) -> Capabilities:
         return Capabilities(tasks=(StageType.SHAPE,), devices=(Device.CPU,), vram_bytes=2048 * MB)
 
     def run(self, ctx: StageContext) -> list[StageOutput]:
         res = int(ctx.params.get("resolution", 96))
+        views = ctx.views()
         depth = float(ctx.params.get("depth", 0.18))
-        img = Image.open(ctx.input(ArtifactKind.IMAGE_PNG).path).convert("RGBA")
+        for side in ("left", "right"):
+            if side in views:
+                x0, y0, x1, y1 = img_ops.alpha_bbox(Image.open(views[side].path).convert("RGBA"))
+                depth = 0.5 * (x1 - x0) / max(1, y1 - y0)
+                break
+        img = Image.open(views["front"].path).convert("RGBA")
         mask = np.asarray(img.getchannel("A").resize((res, res), Image.Resampling.BILINEAR)) > 127
         ctx.progress(1, 4)
         ctx.check_cancel()

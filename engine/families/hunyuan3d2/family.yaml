@@ -1,5 +1,6 @@
-# Hunyuan3D-2 Paint (texture). Code and weights: Tencent Hunyuan 3D 2.0 Community License,
-# which excludes the EU, UK and South Korea. Fetched at install time, never committed here.
+# Hunyuan3D-2 Paint (texture) and 2mv (shape). Code and weights: Tencent Hunyuan 3D 2.0
+# Community License, which excludes the EU, UK and South Korea. Fetched at install time, never
+# committed here.
 name: hunyuan3d2
 python: "3.11"
 lanes: [cuda]
@@ -14,4 +15,4 @@ upstream:
 build:
   - "{upstream}/hy3dgen/texgen/custom_rasterizer"
 # torch first: on Windows the compiled rasterizer finds torch's DLLs only once torch is loaded.
-smoke: "import torch, custom_rasterizer, hy3dgen.texgen"
+smoke: "import torch, custom_rasterizer, hy3dgen.texgen, hy3dgen.shapegen"

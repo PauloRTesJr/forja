@@ -151,8 +151,8 @@ func (a *app) daemonCmd() *cobra.Command {
 }
 
 func (a *app) generateCmd() *cobra.Command {
-	var preset, project, priority string
-	var sets []string
+	var preset, project, priority, sheet string
+	var sets, views []string
 	var noWait bool
 	cmd := &cobra.Command{
 		Use:   "generate <image>...",
@@ -179,6 +179,25 @@ func (a *app) generateCmd() *cobra.Command {
 				}
 				paths[i] = abs
 			}
+			viewPaths := map[string]string{}
+			for _, v := range views {
+				name, path, ok := strings.Cut(v, "=")
+				if !ok {
+					return fmt.Errorf("--view %q: want left=<image>, back=<image> or right=<image>", v)
+				}
+				abs, err := filepath.Abs(path)
+				if err != nil {
+					return err
+				}
+				viewPaths[name] = abs
+			}
+			if len(viewPaths) > 0 && len(paths) > 1 {
+				return errors.New("--view gives other views of one subject: pass a single front image")
+			}
+			// Asking would leave the job waiting for an answer no terminal gives.
+			if sheet != library.SheetKeep && sheet != library.SheetSplit {
+				return fmt.Errorf("--sheet %q: want keep or split", sheet)
+			}
 			if project == "" {
 				if wd, err := os.Getwd(); err == nil {
 					project = config.FindProject(wd)
@@ -196,7 +215,11 @@ func (a *app) generateCmd() *cobra.Command {
 			}
 			var created []*library.Job
 			body := map[string]any{"paths": paths, "preset": preset, "project": project, "priority": priority,
-				"overrides": overrides}
+				"overrides": overrides, "sheet": sheet}
+			if len(viewPaths) > 0 {
+				delete(body, "paths")
+				body["path"], body["views"] = paths[0], viewPaths
+			}
 			if err := c.Do(ctx, "POST", "/v1/jobs", body, &created); err != nil {
 				return err
 			}
@@ -216,6 +239,9 @@ func (a *app) generateCmd() *cobra.Command {
 	cmd.Flags().StringVar(&priority, "priority", "interactive", "interactive or batch")
 	cmd.Flags().StringArrayVar(&sets, "set", nil, "override a preset value, e.g. --set lowpoly.target_tris=3000")
 	cmd.Flags().BoolVar(&noWait, "no-wait", false, "submit and print job ids without waiting")
+	cmd.Flags().StringArrayVar(&views, "view", nil, "another view of the same subject, e.g. --view back=back.png (left, back, right)")
+	cmd.Flags().StringVar(&sheet, "sheet", library.SheetKeep,
+		"when an image shows several views of its subject side by side: keep it whole, or split it into those views")
 	return cmd
 }
 
@@ -314,6 +340,15 @@ func (a *app) report(j *library.Job) {
 		fmt.Printf("✓ %s (%s) in %.1fs  job %s\n", j.Name, j.Preset, total, j.ID)
 	default:
 		fmt.Printf("✗ %s %s: %s  job %s\n", j.Name, j.Status, j.Error, j.ID)
+	}
+	if sh := j.Sheet; sh != nil && sh.Found && sh.Answer == library.SheetKeep {
+		views := 0
+		for _, p := range sh.Parts {
+			if p.View != "" {
+				views++
+			}
+		}
+		fmt.Printf("  %s looks like %d views of one subject; --sheet split builds from them\n", j.Name, views)
 	}
 }
 

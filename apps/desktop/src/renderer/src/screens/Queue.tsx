@@ -3,20 +3,23 @@ import { useState } from 'react'
 import { Empty } from '../components/Empty'
 import { Alert, Chevron } from '../components/icons'
 import { ScreenHead } from '../components/ScreenHead'
+import { SheetCard } from '../components/SheetCard'
 import { StageList, StageTrack } from '../components/StageTrack'
 import { api, artifactURL, cancelJob, type Job } from '../lib/api'
 import { keys } from '../lib/events'
 import { relative, seconds } from '../lib/format'
-import { isActive, summarize } from '../lib/jobs'
+import { isActive, needsAnswer, summarize } from '../lib/jobs'
 import { transition, useNavigate } from '../lib/nav'
 import { useToast } from '../lib/toast'
 
 export function Queue() {
   const jobs = useQuery({ queryKey: keys.jobs, queryFn: () => api<Job[]>('GET', '/v1/jobs?limit=100') })
-  const active = jobs.data?.filter(isActive).length ?? 0
+  const asking = jobs.data?.filter(needsAnswer).length ?? 0
+  const active = (jobs.data?.filter(isActive).length ?? 0) - asking
+  const sub = [active && `${active} running or queued`, asking && `${asking} ${asking === 1 ? 'needs' : 'need'} you`].filter(Boolean)
   return (
     <div className="screen">
-      <ScreenHead eyebrow={['Arcanum II', 'The Hourglass']} title="Queue" sub={active ? `${active} running or waiting` : 'Nothing running'} />
+      <ScreenHead eyebrow={['Arcanum II', 'The Hourglass']} title="Queue" sub={sub.length ? sub.join(' · ') : 'Nothing running'} />
       {jobs.isPending && (
         <div className="jobs">
           {[0, 1, 2].map((i) => (
@@ -65,6 +68,7 @@ function JobRow({ job, index }: { job: Job; index: number }) {
             {job.status === 'running' && ran > 0 && ` · ${seconds(ran)} so far`}
           </span>
         </div>
+        {needsAnswer(job) && <SheetCard job={job} />}
         <StageTrack stages={job.stages} />
         {error && (
           <div className="error">
@@ -99,6 +103,7 @@ function JobRow({ job, index }: { job: Job; index: number }) {
 function when(job: Job): string {
   switch (job.status) {
     case 'queued':
+    case 'waiting':
       return `queued ${relative(job.created_at)}`
     case 'running':
       return `started ${relative(job.created_at)}`

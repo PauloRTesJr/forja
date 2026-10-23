@@ -38,10 +38,12 @@ type Stage struct {
 }
 
 type Plan struct {
-	Preset string  `json:"preset"`
-	Input  string  `json:"input"`
-	Seed   int     `json:"seed"`
-	Stages []Stage `json:"stages"`
+	Preset string `json:"preset"`
+	// Input is the front image; Inputs holds it and the job's other views, by input name.
+	Input  string            `json:"input"`
+	Inputs map[string]string `json:"inputs"`
+	Seed   int               `json:"seed"`
+	Stages []Stage           `json:"stages"`
 }
 
 func (p *Plan) Index(id string) int {
@@ -53,10 +55,14 @@ func (p *Plan) Index(id string) int {
 	return -1
 }
 
-// Build keys every stage of preset for one input image.
-func Build(preset *presets.Preset, input string, seed int, fingerprints Fingerprints) (*Plan, error) {
-	plan := &Plan{Preset: preset.ID, Input: input, Seed: seed}
-	keys := map[string]string{presets.InputImage: input}
+// Build keys every stage of preset. inputs holds the content hash of each job input the stages
+// read: presets.InputImage, and presets.InputView of each other view.
+func Build(preset *presets.Preset, inputs map[string]string, seed int, fingerprints Fingerprints) (*Plan, error) {
+	plan := &Plan{Preset: preset.ID, Input: inputs[presets.InputImage], Inputs: map[string]string{}, Seed: seed}
+	keys := make(map[string]string, len(inputs)+len(preset.Stages))
+	for name, ref := range inputs {
+		keys[name], plan.Inputs[name] = ref, ref
+	}
 	for _, s := range preset.Stages {
 		inputs := make([]string, len(s.Inputs))
 		for i, in := range s.Inputs {
@@ -90,7 +96,9 @@ func stageKey(s presets.Stage, seed int, fp Fingerprint, inputs []string) (strin
 		Seed   int            `json:"seed"`
 		Runs   Fingerprint    `json:"runs"`
 		Inputs []string       `json:"inputs"`
-	}{keyVersion, s.Use, s.Model, s.Params, seed, fp, inputs})
+		// Left out when empty, so stages that read one view keep the keys they had.
+		Views []string `json:"views,omitempty"`
+	}{keyVersion, s.Use, s.Model, s.Params, seed, fp, inputs, s.Views})
 	if err != nil {
 		return "", fmt.Errorf("stage %s: params are not serializable: %w", s.ID, err)
 	}

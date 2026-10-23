@@ -15,6 +15,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
@@ -25,6 +26,14 @@ import (
 var builtin embed.FS
 
 const InputImage = "input:image"
+
+// InputView names a job's image of another view of the subject (left, back, right); the front
+// is InputImage.
+func InputView(view string) string { return "input:view:" + view }
+
+// prepares are the stage types that turn the reference image into what models read. Each other
+// view of the subject goes through its own copy of them.
+var prepares = map[string]bool{"background-removal": true, "framing": true}
 
 type Stage struct {
 	ID       string         `yaml:"id" json:"id"`
@@ -37,6 +46,9 @@ type Stage struct {
 	// off hands its first input to the stages that read it.
 	Optional *Option `yaml:"optional,omitempty" json:"optional,omitempty"`
 	Off      bool    `yaml:"-" json:"off,omitempty"`
+	// Views says which view of the subject each input shows ("" for none). Only WithViews sets
+	// it, for the stages whose model reads several views.
+	Views []string `yaml:"-" json:"views,omitempty"`
 }
 
 // Option is how the UI offers an optional stage: a labelled switch with a default.
@@ -167,6 +179,72 @@ func (p *Preset) Active() *Preset {
 			inputs[i] = resolve(in)
 		}
 		s.Inputs = inputs
+		cp.Stages = append(cp.Stages, s)
+	}
+	return &cp
+}
+
+// WithViews hands a job's other views of the subject to the stages whose model reads them.
+// Each view goes through its own copy of the stages that prepare the reference image
+// (background removal, then framing: "bg-left", "frame-left"), and joins the inputs of each
+// stage that reads the prepared front, tagged with its view. reads says which of views a
+// stage's model takes. Views come in the order given; nothing changes when no stage reads one.
+func (p *Preset) WithViews(views []string, reads func(Stage) []string) *Preset {
+	chain, ref := 0, InputImage
+	for _, s := range p.Stages {
+		if !prepares[s.Use] || len(s.Inputs) != 1 || s.Inputs[0] != ref {
+			break
+		}
+		chain, ref = chain+1, s.ID
+	}
+	takes := map[string][]string{}
+	needed := map[string]bool{}
+	for _, s := range p.Stages[chain:] {
+		if !slices.Contains(s.Inputs, ref) {
+			continue
+		}
+		var got []string
+		for _, v := range reads(s) {
+			if v != "front" && slices.Contains(views, v) {
+				got = append(got, v)
+				needed[v] = true
+			}
+		}
+		if len(got) > 0 {
+			takes[s.ID] = got
+		}
+	}
+	if len(takes) == 0 {
+		return p
+	}
+	cp := *p
+	cp.Stages = append([]Stage(nil), p.Stages[:chain]...)
+	prepared := map[string]string{}
+	for _, v := range views {
+		if !needed[v] {
+			continue
+		}
+		in := InputView(v)
+		for _, s := range p.Stages[:chain] {
+			s.ID, s.Inputs, s.Params = s.ID+"-"+v, []string{in}, cloneMap(s.Params)
+			cp.Stages = append(cp.Stages, s)
+			in = s.ID
+		}
+		prepared[v] = in
+	}
+	for _, s := range p.Stages[chain:] {
+		if got, ok := takes[s.ID]; ok {
+			s.Views = make([]string, len(s.Inputs), len(s.Inputs)+len(got))
+			for i, in := range s.Inputs {
+				if in == ref {
+					s.Views[i] = "front"
+				}
+			}
+			s.Inputs = slices.Clone(s.Inputs)
+			for _, v := range got {
+				s.Inputs, s.Views = append(s.Inputs, prepared[v]), append(s.Views, v)
+			}
+		}
 		cp.Stages = append(cp.Stages, s)
 	}
 	return &cp

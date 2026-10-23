@@ -1,7 +1,33 @@
 // Typed access to the core API. Every request goes through forja://core, proxied by main.
 export const CORE = 'forja://core'
 
-export type Status = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled'
+/** `waiting`: the job needs the user's answer (its image holds several views of its subject). */
+export type Status = 'queued' | 'running' | 'waiting' | 'succeeded' | 'failed' | 'cancelled'
+
+/** The views a reference image can show. `left` faces the image's left edge. */
+export type View = 'front' | 'left' | 'back' | 'right'
+
+/** One region of a sheet of views: a figure, or a close-up cut by its frame. */
+export interface SheetPart {
+  /** x0, y0, x1, y1 in the cut-out's pixels. */
+  box: [number, number, number, number]
+  kind?: 'figure' | 'detail'
+  /** The view it shows, or '' to leave it out. */
+  view: View | ''
+}
+
+/** What the core found when the job's image looked like several views of one subject. */
+export interface Sheet {
+  mode: 'ask' | 'split' | 'keep'
+  checked: boolean
+  found: boolean
+  /** The background-removal output the boxes are in, and its size. */
+  cutout?: string
+  size: [number, number]
+  parts?: SheetPart[]
+  answer?: 'split' | 'keep'
+  chosen?: SheetPart[]
+}
 
 export interface Output {
   hash: string
@@ -29,6 +55,9 @@ export interface Job {
   name: string
   preset: string
   input: string
+  /** Images of the subject by view; a `front` cut out of a sheet stands in for `input`. */
+  views?: Partial<Record<View, string>>
+  sheet?: Sheet
   project?: string
   priority: string
   status: Status
@@ -75,6 +104,10 @@ export interface Pick {
   by?: string
   paid?: boolean
   price?: Price
+  /** The views of the subject the model reads; absent when it takes the front alone. */
+  views?: View[]
+  /** Views it cannot run without that the job lacks. */
+  needs_views?: View[]
 }
 
 export interface Preset {
@@ -276,7 +309,13 @@ export const artifactURL = (hash: string, type?: string): string =>
   `${CORE}/v1/artifacts/${hash}${type ? `?type=${encodeURIComponent(type)}` : ''}`
 
 export interface SubmitBody {
-  paths: string[]
+  /** Several images, one job each; or one front image as `input` (a store ref) with its `views`. */
+  paths?: string[]
+  input?: string
+  name?: string
+  views?: Partial<Record<View, string>>
+  /** What to do when an image holds several views of its subject: the app asks the user. */
+  sheet?: 'ask' | 'split' | 'keep'
   preset: string
   project?: string
   priority?: 'interactive' | 'batch'
@@ -285,6 +324,15 @@ export interface SubmitBody {
 
 export const submitJobs = (body: SubmitBody): Promise<Job[]> => api('POST', '/v1/jobs', body)
 export const cancelJob = (id: string): Promise<void> => api('DELETE', `/v1/jobs/${id}`)
+/** The views to cut out of a job's sheet, or `keep` to use the image whole. */
+export const answerSheet = (id: string, body: { views: SheetPart[] } | { keep: true }): Promise<Job> =>
+  api('POST', `/v1/jobs/${id}/sheet`, body)
+/** Copies a picked file into the core's store and returns its ref. */
+export const importImage = async (path: string): Promise<string> =>
+  (await api<{ hash: string }>('POST', '/v1/artifacts/import', { path })).hash
+/** Presets resolved for a job that also brings these views, so the app sees which model reads them. */
+export const fetchPresets = (views?: View[]): Promise<Preset[]> =>
+  api('GET', views?.length ? `/v1/presets?views=${views.join(',')}` : '/v1/presets')
 
 /** Models as the provider reports them now; asking may start the local engine. */
 export const fetchModels = (): Promise<Model[]> => api('GET', '/v1/models?all=1&fresh=1')

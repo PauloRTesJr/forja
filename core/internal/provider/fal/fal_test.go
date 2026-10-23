@@ -138,12 +138,18 @@ func (f *fakeFal) serve(w http.ResponseWriter, r *http.Request) {
 			if id == "fal-ai/fake-video" {
 				out = props("video", fileRef)
 			}
+			in := map[string]any{"type": "object", "required": []any{"image_url"},
+				"properties": props("image_url", str, "seed", seed, "texture", boolean)}
+			if id == "fal-ai/fake-mv" {
+				// Like Hunyuan3D's multi-view endpoint: a field per view, two of them required.
+				in = map[string]any{"type": "object", "required": []any{"front_image_url", "back_image_url"},
+					"properties": props("front_image_url", str, "back_image_url", str, "left_image_url", str)}
+			}
 			models = append(models, map[string]any{"endpoint_id": id, "metadata": map[string]any{"display_name": "Fake " + id, "license_type": "commercial"},
-				"openapi": schema(id, map[string]any{"type": "object", "required": []any{"image_url"},
-					"properties": props("image_url", str, "seed", seed, "texture", boolean)}, map[string]any{"type": "object", "properties": out})})
+				"openapi": schema(id, in, map[string]any{"type": "object", "properties": out})})
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"models": models, "has_more": false})
-	case r.Method == http.MethodPost && r.URL.Path == "/fal-ai/fake-3d":
+	case r.Method == http.MethodPost && (r.URL.Path == "/fal-ai/fake-3d" || r.URL.Path == "/fal-ai/fake-mv"):
 		f.mu.Lock()
 		_ = json.NewDecoder(r.Body).Decode(&f.body)
 		f.mu.Unlock()

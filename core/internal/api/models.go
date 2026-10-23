@@ -339,7 +339,7 @@ func (s *Server) setup(w http.ResponseWriter, r *http.Request) {
 		if !ok {
 			continue
 		}
-		plan, err := s.Runner.Resolve(ctx, "", p)
+		plan, err := s.Runner.Resolve(ctx, "", p, nil)
 		if err != nil {
 			problem(w, 502, err.Error())
 			return

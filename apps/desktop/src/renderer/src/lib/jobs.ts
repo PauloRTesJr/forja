@@ -47,7 +47,11 @@ export function previewOf(job: Job): string | undefined {
   return undefined
 }
 
-export const isActive = (j: Job): boolean => j.status === 'queued' || j.status === 'running'
+/** Not finished: running, queued, or waiting for the user. */
+export const isActive = (j: Job): boolean => j.status === 'queued' || j.status === 'running' || j.status === 'waiting'
+
+/** Waiting for the user to check the views found in its image. */
+export const needsAnswer = (j: Job): boolean => j.status === 'waiting' && !!j.sheet?.found
 
 export type PhaseId = 'prepare' | 'shape' | 'paint' | 'finish'
 export interface Phase {
@@ -113,6 +117,10 @@ export function summarize(job: Job): Summary {
     }
     case 'queued':
       return { headline: 'Waiting to start', note: done ? `${n - done} of ${n} stages left to run` : `${n} stages to run` }
+    case 'waiting': {
+      const views = job.sheet?.parts?.filter((p) => p.view).length ?? 0
+      return { headline: 'Several views found', note: `${views} views of one subject · check them to go on` }
+    }
     case 'succeeded':
       return {
         headline: ran > 0 ? `Finished in ${seconds(ran)}` : 'Finished from cache',

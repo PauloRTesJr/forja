@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import shutil
 import subprocess
@@ -15,7 +16,9 @@ from forja_engine.ops import bake
 from forja_engine.ops import image as img_ops
 from forja_engine.ops import match as match_ops
 from forja_engine.ops import mesh as mesh_ops
+from forja_engine.ops import views as views_ops
 from forja_engine.sdk import (
+    VIEWS,
     Adapter,
     ArtifactKind,
     Capabilities,
@@ -251,6 +254,44 @@ class Export(Adapter):
         return [StageOutput(out, ArtifactKind.MESH_GLB)]
 
 
+class ViewsDetect(Adapter):
+    """Says whether the cut-out is a sheet of several views of one subject (ops/views.py)."""
+
+    def capabilities(self) -> Capabilities:
+        return Capabilities(tasks=(StageType.VIEWS_DETECT,), devices=CPU)
+
+    def run(self, ctx: StageContext) -> list[StageOutput]:
+        cutout = img_ops.normalize(Image.open(ctx.input(ArtifactKind.IMAGE_PNG).path))
+        out = ctx.out_dir / "sheet.json"
+        out.write_text(json.dumps(views_ops.detect(cutout), sort_keys=True), encoding="utf-8")
+        return [StageOutput(out, ArtifactKind.JSON)]
+
+
+class ViewsSplit(Adapter):
+    """Cuts the chosen views out of a sheet: inputs are the original and its cut-out.
+
+    `views` lists {"view", "box"} in the cut-out's pixels; outputs come in the same order.
+    """
+
+    def capabilities(self) -> Capabilities:
+        return Capabilities(tasks=(StageType.VIEWS_SPLIT,), devices=CPU)
+
+    def run(self, ctx: StageContext) -> list[StageOutput]:
+        wanted = ctx.params.get("views") or []
+        names = [w.get("view") for w in wanted]
+        if "front" not in names or len(set(names)) != len(names) or not set(names) <= set(VIEWS):
+            raise ValueError(f"views.split needs a front and each view at most once, got {names}")
+        original = img_ops.normalize(Image.open(ctx.input(ArtifactKind.IMAGE_PNG, 0).path))
+        cutout = img_ops.normalize(Image.open(ctx.input(ArtifactKind.IMAGE_PNG, 1).path))
+        boxes = [(int(x0), int(y0), int(x1), int(y1)) for x0, y0, x1, y1 in (w["box"] for w in wanted)]
+        outputs = []
+        for name, img in zip(names, views_ops.split(original, cutout, boxes), strict=True):
+            path = ctx.out_dir / f"{name}.png"
+            img.save(path, optimize=False)
+            outputs.append(StageOutput(path, ArtifactKind.IMAGE_PNG))
+        return outputs
+
+
 BUILTINS: dict[StageType, type[Adapter]] = {
     StageType.FRAMING: Framing,
     StageType.MESH_CLEANUP: Cleanup,
@@ -260,4 +301,6 @@ BUILTINS: dict[StageType, type[Adapter]] = {
     StageType.BAKE: Bake,
     StageType.MESH_LODS: Lods,
     StageType.EXPORT: Export,
+    StageType.VIEWS_DETECT: ViewsDetect,
+    StageType.VIEWS_SPLIT: ViewsSplit,
 }

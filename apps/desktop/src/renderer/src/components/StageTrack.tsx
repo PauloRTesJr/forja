@@ -1,6 +1,6 @@
 import type { CSSProperties } from 'react'
 import type { Stage } from '../lib/api'
-import { stageLabel } from '../lib/format'
+import { stageName } from '../lib/format'
 import { phaseState, phasesOf, stageFraction, stageTime } from '../lib/jobs'
 import { Star } from './icons'
 
@@ -14,8 +14,10 @@ export function StageTrack({ stages }: { stages: Stage[] }) {
         const state = phaseState(p)
         const done = p.stages.filter((s) => s.status === 'succeeded').length
         const fraction = p.stages.reduce((t, s) => t + stageFraction(s), 0) / p.stages.length
+        // Sized by its kinds of step: another view's copies of them share the phase's room.
+        const size = new Set(p.stages.map((s) => s.use)).size
         return (
-          <div key={p.stages[0]!.id} className={`phase ${state}`} style={{ '--size': p.stages.length, '--p': fraction } as CSSProperties}>
+          <div key={p.stages[0]!.id} className={`phase ${state}`} style={{ '--size': size, '--p': fraction } as CSSProperties}>
             <div className="phase-head">
               <span className="phase-name">{p.label}</span>
               <span className="phase-tally">{state === 'failed' ? 'stopped' : `${done} of ${p.stages.length}`}</span>
@@ -25,7 +27,7 @@ export function StageTrack({ stages }: { stages: Stage[] }) {
             </div>
             <div className="phase-stars">
               {p.stages.map((s) => (
-                <span key={s.id} className={starClass(s)} title={`${stageLabel(s.use)}: ${s.cached ? 'cached' : s.status}`}>
+                <span key={s.id} className={starClass(s)} title={`${stageName(s)}: ${s.cached ? 'cached' : s.status}`}>
                   <Star />
                 </span>
               ))}
@@ -44,7 +46,7 @@ export function StageList({ stages }: { stages: Stage[] }) {
       {stages.map((s) => (
         <li key={s.id} className={`${s.status} ${s.cached ? 'cached' : ''}`}>
           <Star size={13} />
-          <span className="stage-name">{stageLabel(s.use)}</span>
+          <span className="stage-name">{stageName(s)}</span>
           <span className="stage-model">{s.model ?? 'built-in'}</span>
           <span className="stage-time">{stageTime(s)}</span>
         </li>

@@ -4,16 +4,24 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+
+	"forja/internal/engineapi"
 )
 
 // Spec is how Forja calls one fal endpoint, read from its OpenAPI schema: which input fields
 // take the image (and the mesh, for retexturing), which output field holds the mesh, and the
 // switches set so the model returns a textured GLB. No endpoint needs code of its own.
 type Spec struct {
-	Endpoint  string
+	Endpoint string
+	// Image takes the front view; with ImageList it is a list, and the other views follow the
+	// front in it.
 	Image     string
 	ImageList bool
-	Mesh      string
+	// Views are the fields of the other views it reads ("back" -> "back_image_url"), and
+	// ViewsRequired the ones it cannot run without.
+	Views         map[string]string
+	ViewsRequired []string
+	Mesh          string
 	// Output is a dotted path to a File in the result: "model_glb", "model_urls.glb".
 	Output string
 	Seed   string
@@ -45,7 +53,7 @@ func MapSchema(endpoint string, api map[string]any) Spec {
 	props, _ := input["properties"].(map[string]any)
 	required := stringsOf(input["required"])
 
-	for _, name := range imageFields {
+	for _, name := range append(slices.Clone(imageFields), "front_image_url") {
 		if t := typeOf(props[name], schemas); t == "string" {
 			spec.Image = name
 			break
@@ -58,17 +66,34 @@ func MapSchema(endpoint string, api map[string]any) Spec {
 		spec.Problem = "it does not take a single image"
 		return spec
 	}
+	// Multi-view endpoints name a field per view: front_image_url, back_image_url and so on.
+	views := map[string]string{} // field -> view
+	for _, v := range engineapi.Views[1:] {
+		if name := v + "_image_url"; typeOf(props[name], schemas) == "string" {
+			if spec.Views == nil {
+				spec.Views = map[string]string{}
+			}
+			spec.Views[v], views[name] = name, v
+		}
+	}
 	for name := range props {
 		if meshField.MatchString(name) && typeOf(props[name], schemas) == "string" {
 			spec.Mesh = name
 		}
 	}
 	for _, name := range required {
-		if name != spec.Image && name != spec.Mesh {
+		switch {
+		case name == spec.Image || name == spec.Mesh:
+		case views[name] != "":
+			spec.ViewsRequired = append(spec.ViewsRequired, views[name])
+		default:
 			spec.Problem = "it needs " + name + ", which Forja cannot fill"
 			return spec
 		}
 	}
+	slices.SortFunc(spec.ViewsRequired, func(a, b string) int {
+		return slices.Index(engineapi.Views, a) - slices.Index(engineapi.Views, b)
+	})
 	for _, name := range []string{"seed", "model_seed"} {
 		if typeOf(props[name], schemas) == "integer" {
 			spec.Seed = name

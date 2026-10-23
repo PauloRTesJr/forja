@@ -10,6 +10,9 @@ accelerate
 einops
 omegaconf
 opencv-python-headless
+# The 2mv shape pipeline: marching cubes, and mesh helpers imported with the package.
+scikit-image
+pymeshlab
 pygltflib
 xatlas
 tqdm

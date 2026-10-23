@@ -30,6 +30,8 @@ export function App() {
   const [route, setRoute] = useState<Route>({ screen: 'generate' })
   const jobs = useQuery({ queryKey: keys.jobs, queryFn: () => api<Job[]>('GET', '/v1/jobs?limit=100') })
   const running = jobs.data?.filter(isActive).length ?? 0
+  // Jobs waiting for an answer count on the badge, but nothing is generating for them.
+  const generating = jobs.data?.some((j) => j.status === 'running' || j.status === 'queued') ?? false
   const installs = useInstalls()
   const install = installs.data?.find((t) => t.kind === 'install' && !taskDone(t))
   const installPct = install?.progress?.total ? Math.round((install.progress.done / install.progress.total) * 100) : undefined
@@ -87,10 +89,10 @@ export function App() {
           <div className="sidebar-foot">
             <MoonPhases />
             <div className="conn">
-              <span className={`dot ${!connected ? '' : running || install ? 'live' : 'ok'}`} />
+              <span className={`dot ${!connected ? '' : generating || install ? 'live' : 'ok'}`} />
               {!connected
                 ? 'Reconnecting to core…'
-                : running
+                : generating
                   ? 'Generating'
                   : install
                     ? `Installing ${install.target}${installPct !== undefined ? ` · ${installPct}%` : ''}`

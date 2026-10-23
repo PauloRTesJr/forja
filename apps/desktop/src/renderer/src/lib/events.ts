@@ -9,6 +9,8 @@ export const keys = {
   assets: (q = '') => ['assets', q] as const,
   asset: (id: string) => ['asset', id] as const,
   presets: ['presets'] as const,
+  // Under presets, so whatever refreshes the presets refreshes this too.
+  presetsWithViews: ['presets', 'views'] as const,
   models: ['models'] as const,
   providers: ['providers'] as const,
   info: ['info'] as const,

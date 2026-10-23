@@ -28,6 +28,10 @@ type Pick struct {
 	Paid  bool             `json:"paid,omitempty"`
 	Price *engineapi.Price `json:"price,omitempty"`
 	Tasks []string         `json:"-"`
+	// Views are the views of the subject the model reads (empty: the front alone). NeedsViews
+	// are views it cannot run without that the job lacks.
+	Views      []string `json:"views,omitempty"`
+	NeedsViews []string `json:"needs_views,omitempty"`
 }
 
 // MissingError is a job that cannot run until models are installed for some stage types.
@@ -51,9 +55,10 @@ func missingError(picks []Pick) error {
 	return nil
 }
 
-// Resolve says how a preset would run in project right now, without submitting anything.
-// The picks cover every stage of the active preset, skipped ones included.
-func (r *Runner) Resolve(ctx context.Context, project string, p *presets.Preset) ([]Pick, error) {
+// Resolve says how a preset would run in project right now, without submitting anything, for
+// a job with the given other views of its subject. The picks cover every stage of the active
+// preset, skipped ones included.
+func (r *Runner) Resolve(ctx context.Context, project string, p *presets.Preset, views []string) ([]Pick, error) {
 	cfg, err := r.config(project)
 	if err != nil {
 		return nil, err
@@ -63,7 +68,7 @@ func (r *Runner) Resolve(ctx context.Context, project string, p *presets.Preset)
 			return nil, err
 		}
 	}
-	picks, _, err := r.resolve(ctx, cfg, p.Active())
+	picks, _, err := r.resolve(ctx, cfg, p.Active(), ordered(views))
 	if err != nil {
 		return nil, err
 	}
@@ -87,13 +92,14 @@ func (r *Runner) Resolve(ctx context.Context, project string, p *presets.Preset)
 	return picks, nil
 }
 
-// resolve picks a provider and a model for every stage (docs/decisions.md, decision 12), then
-// skips the stages a picked model already does. It returns the picks for every stage and the
-// preset that runs: skipped stages left out, and whatever read them reading their input.
-func (r *Runner) resolve(ctx context.Context, cfg *config.Loaded, preset *presets.Preset) ([]Pick, *presets.Preset, error) {
+// resolve picks a provider and a model for every stage (docs/decisions.md, decisions 12 and
+// 17), then skips the stages a picked model already does. It returns the picks for every stage
+// and the preset that runs: skipped stages left out, and whatever read them reading their input.
+func (r *Runner) resolve(ctx context.Context, cfg *config.Loaded, preset *presets.Preset, views []string,
+) ([]Pick, *presets.Preset, error) {
 	picks := make([]Pick, 0, len(preset.Stages))
 	for _, s := range preset.Stages {
-		pick, err := r.pick(ctx, cfg, s)
+		pick, err := r.pick(ctx, cfg, s, views)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -136,9 +142,10 @@ func (r *Runner) resolve(ctx context.Context, cfg *config.Loaded, preset *preset
 }
 
 // pick chooses the provider and model of one stage: a model named by the preset or the job,
-// then `[models.stages]`, then the highest-ranked model ready on the first provider in routing
-// order that has one. Paid providers are in routing order only when allowed.
-func (r *Runner) pick(ctx context.Context, cfg *config.Loaded, s presets.Stage) (Pick, error) {
+// then `[models.stages]`, then the best model ready on the first provider in routing order
+// that has one. Paid providers are in routing order only when allowed. views are the job's
+// views besides the front; see best.
+func (r *Runner) pick(ctx context.Context, cfg *config.Loaded, s presets.Stage, views []string) (Pick, error) {
 	pick := Pick{Stage: s.ID, Use: s.Use, Model: s.Model}
 	if pick.Model == "" {
 		pick.Model = cfg.Models.Stages[s.Use]
@@ -156,6 +163,7 @@ func (r *Runner) pick(ctx context.Context, cfg *config.Loaded, s presets.Stage) 
 			pick.Missing = !ok || !m.Ready()
 			if ok {
 				r.describe(&pick, &m)
+				pick.NeedsViews = m.Lacks(views)
 			}
 		}
 		return pick, nil
@@ -175,7 +183,7 @@ func (r *Runner) pick(ctx context.Context, cfg *config.Loaded, s presets.Stage) 
 			pick.Provider = cands[0]
 			break
 		}
-		if m := best(e.Models, s.Use, cfg.Models.Stubs); m != nil {
+		if m := best(e.Models, s.Use, cfg.Models.Stubs, views); m != nil {
 			pick.Model, pick.Provider = m.ID, id
 			r.describe(&pick, m)
 			break
@@ -189,7 +197,7 @@ func (r *Runner) pick(ctx context.Context, cfg *config.Loaded, s presets.Stage) 
 }
 
 func (r *Runner) describe(pick *Pick, m *engineapi.Model) {
-	pick.ModelName, pick.Tasks, pick.Price = m.Name, m.Tasks, m.Price
+	pick.ModelName, pick.Tasks, pick.Price, pick.Views = m.Name, m.Tasks, m.Price, m.Views
 	if p, ok := r.providers.Get(pick.Provider); ok {
 		pick.Paid = p.Paid()
 	}
@@ -200,15 +208,21 @@ func builtin(e *catalog.Entry, use string) bool {
 	return ok
 }
 
-// best is the highest-ranked model ready for a stage type; stubs only when allowed.
-func best(models []engineapi.Model, use string, stubs bool) *engineapi.Model {
+// best is the model ready for a stage type that reads the most of the job's other views, then
+// the highest-ranked; stubs only when allowed. Models that need views the job lacks are out.
+func best(models []engineapi.Model, use string, stubs bool, views []string) *engineapi.Model {
 	var out *engineapi.Model
 	for i := range models {
 		m := &models[i]
-		if !m.Does(use) || !m.Ready() || (m.Stub && !stubs) {
+		if !m.Does(use) || !m.Ready() || (m.Stub && !stubs) || len(m.Lacks(views)) > 0 {
 			continue
 		}
-		if out == nil || m.Rank > out.Rank || (m.Rank == out.Rank && m.ID < out.ID) {
+		if out == nil {
+			out = m
+			continue
+		}
+		mine, theirs := len(m.Reads(views)), len(out.Reads(views))
+		if mine > theirs || (mine == theirs && (m.Rank > out.Rank || (m.Rank == out.Rank && m.ID < out.ID))) {
 			out = m
 		}
 	}
@@ -217,7 +231,7 @@ func best(models []engineapi.Model, use string, stubs bool) *engineapi.Model {
 
 // BestModel is the model a preset stage of this type gets on a provider when nothing pins one.
 func BestModel(models []engineapi.Model, use string, stubs bool) *engineapi.Model {
-	return best(models, use, stubs)
+	return best(models, use, stubs, nil)
 }
 
 // Pick says which provider and model a stage of this type gets in project right now.
@@ -226,5 +240,5 @@ func (r *Runner) Pick(ctx context.Context, project, use string) (Pick, error) {
 	if err != nil {
 		return Pick{}, err
 	}
-	return r.pick(ctx, cfg, presets.Stage{ID: use, Use: use})
+	return r.pick(ctx, cfg, presets.Stage{ID: use, Use: use}, nil)
 }
