@@ -393,7 +393,7 @@ func (a *app) modelsCmd() *cobra.Command {
 				return err
 			}
 			var models []map[string]any
-			if err := c.Do(context.Background(), "GET", "/v1/models", nil, &models); err != nil {
+			if err := c.Do(context.Background(), "GET", "/v1/models?fresh=1", nil, &models); err != nil {
 				return err
 			}
 			a.print(models, func() {
@@ -443,14 +443,29 @@ func (a *app) presetsCmd() *cobra.Command {
 				return err
 			}
 			var list []map[string]any
-			if err := c.Do(context.Background(), "GET", "/v1/presets", nil, &list); err != nil {
+			if err := c.Do(context.Background(), "GET", "/v1/presets?fresh=1", nil, &list); err != nil {
 				return err
 			}
 			a.print(list, func() {
 				tw := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)
-				fmt.Fprintln(tw, "ID\tNAME\tSOURCE\tDESCRIPTION")
+				fmt.Fprintln(tw, "ID\tNAME\tREADY\tMODELS\tSOURCE")
 				for _, p := range list {
-					fmt.Fprintf(tw, "%v\t%v\t%v\t%v\n", p["id"], p["name"], p["source"], p["description"])
+					var models []string
+					plan, _ := p["plan"].([]any)
+					for _, s := range plan {
+						pick, _ := s.(map[string]any)
+						switch {
+						case pick["missing"] == true:
+							models = append(models, fmt.Sprintf("%v: none ready", pick["use"]))
+						case pick["model"] != nil:
+							models = append(models, fmt.Sprint(pick["model"]))
+						}
+					}
+					ready := "yes"
+					if p["ready"] != true {
+						ready = "no"
+					}
+					fmt.Fprintf(tw, "%v\t%v\t%v\t%v\t%v\n", p["id"], p["name"], ready, strings.Join(models, ", "), p["source"])
 				}
 				tw.Flush()
 			})

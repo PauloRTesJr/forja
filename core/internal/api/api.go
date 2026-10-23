@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"sort"
 	"strconv"
 	"sync"
 	"time"
@@ -15,14 +16,19 @@ import (
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
 
+	"forja/internal/catalog"
 	"forja/internal/config"
 	"forja/internal/events"
 	"forja/internal/jobs"
 	"forja/internal/library"
 	"forja/internal/localengine"
+	"forja/internal/presets"
 	"forja/internal/provider"
 	"forja/internal/store"
 )
+
+// EvModelsChanged tells clients that a provider's models changed: re-read models and presets.
+const EvModelsChanged = "models.changed"
 
 type Server struct {
 	Version   string
@@ -32,6 +38,7 @@ type Server struct {
 	Hub       *events.Hub
 	Runner    *jobs.Runner
 	Providers *provider.Registry
+	Catalog   *catalog.Catalog
 	Engine    *localengine.Manager
 	Config    func(project string) (*config.Loaded, error)
 	Shutdown  func()
@@ -114,21 +121,71 @@ func (s *Server) configEffective(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, cfg)
 }
 
+// presetView is a preset plus how it would run right now: the model and provider per stage.
+type presetView struct {
+	*presets.Preset
+	Builtin bool        `json:"builtin"`
+	Plan    []jobs.Pick `json:"plan"`
+	Ready   bool        `json:"ready"`
+	Error   string      `json:"error,omitempty"`
+}
+
+// fresh is ?fresh=1: ask providers now, even if that starts the local engine, instead of
+// answering from what they said last.
+func fresh(r *http.Request) bool { return r.URL.Query().Get("fresh") == "1" }
+
+// askAll asks every provider what it runs, in parallel; the catalog keeps the answers.
+func (s *Server) askAll(ctx context.Context) {
+	var wg sync.WaitGroup
+	for _, p := range s.Providers.All() {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, _ = s.Catalog.Ask(ctx, p.ID())
+		}()
+	}
+	wg.Wait()
+}
+
 func (s *Server) presets(w http.ResponseWriter, r *http.Request) {
-	all, err := s.Runner.Presets(r.URL.Query().Get("project"))
+	project := r.URL.Query().Get("project")
+	all, err := s.Runner.Presets(project)
 	if err != nil {
 		problem(w, 422, err.Error())
 		return
 	}
-	list := make([]any, 0, len(all))
+	ordered := make([]*presets.Preset, 0, len(all))
 	for _, id := range []string{"draft", "mobile-prop", "environment-piece", "hero-character"} {
 		if p, ok := all[id]; ok {
-			list = append(list, p)
+			ordered = append(ordered, p)
 			delete(all, id)
 		}
 	}
+	rest := make([]*presets.Preset, 0, len(all))
 	for _, p := range all {
-		list = append(list, p)
+		rest = append(rest, p)
+	}
+	sort.Slice(rest, func(i, j int) bool { return rest[i].Name < rest[j].Name })
+	ordered = append(ordered, rest...)
+
+	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+	defer cancel()
+	if fresh(r) {
+		s.askAll(ctx)
+	}
+	list := make([]presetView, len(ordered))
+	for i, p := range ordered {
+		v := presetView{Preset: p, Builtin: p.Builtin(), Plan: []jobs.Pick{}}
+		plan, err := s.Runner.Resolve(ctx, project, p)
+		if err != nil {
+			v.Error = err.Error()
+		} else {
+			v.Plan, v.Ready = plan, true
+			for _, pick := range plan {
+				v.Ready = v.Ready && !pick.Missing
+			}
+		}
+		list[i] = v
 	}
 	writeJSON(w, 200, list)
 }
@@ -175,17 +232,20 @@ func (s *Server) models(w http.ResponseWriter, r *http.Request) {
 	if id == "" {
 		id = jobs.LocalProvider
 	}
-	p, ok := s.Providers.Get(id)
-	if !ok {
+	if _, ok := s.Providers.Get(id); !ok {
 		problem(w, 404, "no provider "+id)
 		return
 	}
-	models, err := p.Models(r.Context())
+	get := s.Catalog.Get
+	if fresh(r) {
+		get = s.Catalog.Ask
+	}
+	e, err := get(r.Context(), id)
 	if err != nil {
 		problem(w, 502, err.Error())
 		return
 	}
-	writeJSON(w, 200, models)
+	writeJSON(w, 200, e.Models)
 }
 
 // engineUnload frees all VRAM now, for the "pause engine" toggle while gaming or in Unity.

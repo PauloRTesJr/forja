@@ -27,6 +27,7 @@ type Config struct {
 	Routing   Routing                   `toml:"routing" json:"routing"`
 	Providers []Provider                `toml:"providers" json:"providers"`
 	Project   Project                   `toml:"project" json:"project"`
+	Models    Models                    `toml:"models" json:"models"`
 	Presets   map[string]PresetOverride `toml:"presets" json:"presets"`
 }
 
@@ -80,6 +81,14 @@ type Project struct {
 	CommercialSafeOnly bool   `toml:"commercial_safe_only" json:"commercial_safe_only"`
 	// Root is the folder holding forja.toml; set by the loader, never by a file.
 	Root string `toml:"-" json:"root"`
+}
+
+// Models picks the model for preset stages that leave it open (docs/decisions.md, decision 12).
+type Models struct {
+	// Stages maps a stage type to a model id, e.g. shape = "triposg".
+	Stages map[string]string `toml:"stages" json:"stages"`
+	// Stubs lets the deterministic stub models be picked: tests, CI, UI work without a GPU.
+	Stubs bool `toml:"stubs" json:"stubs"`
 }
 
 // PresetOverride maps "stage.param" to a value, e.g. "lowpoly.target_tris" = 3000.

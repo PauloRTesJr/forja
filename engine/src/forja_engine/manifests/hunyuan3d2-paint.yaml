@@ -3,6 +3,7 @@ name: Hunyuan3D-2 Paint (turbo)
 family: hunyuan3d2
 adapter: forja_hunyuan3d2:Hunyuan3D2Paint
 tasks: [texture]
+rank: 10
 license:
   spdx: LicenseRef-Tencent-Hunyuan-3D-2.0-Community
   commercial: true

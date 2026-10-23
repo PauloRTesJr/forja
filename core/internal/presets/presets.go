@@ -3,8 +3,9 @@
 // Stages run in listed order. A stage without `inputs` reads the previous stage; inputs name
 // earlier stage ids or `input:image`. Later layers replace earlier presets with the same id.
 //
-// Built-in presets point at the deterministic stub models until real adapters land (M1).
-// Swap a model per project with an override: "shape.model" = "triposg".
+// Built-in presets set budgets and stage types, never models: a stage without `model` gets
+// one when the job is submitted (docs/decisions.md, decision 12). Pin one per project with
+// an override: "shape.model" = "triposg".
 package presets
 
 import (
@@ -32,6 +33,16 @@ type Stage struct {
 	Params   map[string]any `yaml:"params,omitempty" json:"params,omitempty"`
 	Inputs   []string       `yaml:"inputs,omitempty" json:"inputs,omitempty"`
 	Provider string         `yaml:"provider,omitempty" json:"provider,omitempty"`
+	// Optional stages can be switched off per job with "<id>.enabled" = false. A stage that is
+	// off hands its first input to the stages that read it.
+	Optional *Option `yaml:"optional,omitempty" json:"optional,omitempty"`
+	Off      bool    `yaml:"-" json:"off,omitempty"`
+}
+
+// Option is how the UI offers an optional stage: a labelled switch with a default.
+type Option struct {
+	Label   string `yaml:"label" json:"label"`
+	Default bool   `yaml:"default" json:"default"`
 }
 
 type Preset struct {
@@ -41,6 +52,8 @@ type Preset struct {
 	Stages      []Stage `yaml:"stages" json:"stages"`
 	Source      string  `yaml:"-" json:"source"`
 }
+
+func (p *Preset) Builtin() bool { return p.Source == "builtin" }
 
 // Load returns presets by id from built-ins, then each dir in order.
 func Load(dirs ...string) (map[string]*Preset, error) {
@@ -115,9 +128,48 @@ func (p *Preset) normalize() error {
 				return fmt.Errorf("stage %s reads %q, which is not an earlier stage", s.ID, in)
 			}
 		}
+		if s.Optional != nil {
+			if s.Optional.Label == "" {
+				return fmt.Errorf("stage %s: an optional stage needs a label", s.ID)
+			}
+			s.Off = !s.Optional.Default
+		}
 		seen[s.ID] = true
 	}
+	if p.Stages[len(p.Stages)-1].Optional != nil {
+		return errors.New("the last stage cannot be optional")
+	}
 	return nil
+}
+
+// Active returns the stages that run: optional stages that are off are dropped, and whatever
+// read them reads their first input instead.
+func (p *Preset) Active() *Preset {
+	cp := *p
+	cp.Stages = nil
+	through := map[string]string{}
+	resolve := func(in string) string {
+		for {
+			next, ok := through[in]
+			if !ok {
+				return in
+			}
+			in = next
+		}
+	}
+	for _, s := range p.Stages {
+		if s.Off {
+			through[s.ID] = s.Inputs[0]
+			continue
+		}
+		inputs := make([]string, len(s.Inputs))
+		for i, in := range s.Inputs {
+			inputs[i] = resolve(in)
+		}
+		s.Inputs = inputs
+		cp.Stages = append(cp.Stages, s)
+	}
+	return &cp
 }
 
 // WithOverrides returns a copy with "stage.param" (or "stage.model"/"stage.provider") values applied.
@@ -153,6 +205,15 @@ func (p *Preset) WithOverrides(overrides map[string]any) (*Preset, error) {
 			st.Model = fmt.Sprint(overrides[key])
 		case "provider":
 			st.Provider = fmt.Sprint(overrides[key])
+		case "enabled":
+			if st.Optional == nil {
+				return nil, fmt.Errorf("override %q: stage %s is not optional", key, stageID)
+			}
+			on, err := truthy(overrides[key])
+			if err != nil {
+				return nil, fmt.Errorf("override %q: %w", key, err)
+			}
+			st.Off = !on
 		default:
 			if st.Params == nil {
 				st.Params = map[string]any{}
@@ -161,6 +222,28 @@ func (p *Preset) WithOverrides(overrides map[string]any) (*Preset, error) {
 		}
 	}
 	return &cp, nil
+}
+
+// truthy accepts booleans and the strings and numbers that `--set` and env vars produce.
+func truthy(v any) (bool, error) {
+	switch x := v.(type) {
+	case bool:
+		return x, nil
+	case string:
+		switch strings.ToLower(x) {
+		case "true", "1", "on", "yes":
+			return true, nil
+		case "false", "0", "off", "no":
+			return false, nil
+		}
+	case int:
+		return x != 0, nil
+	case int64:
+		return x != 0, nil
+	case float64:
+		return x != 0, nil
+	}
+	return false, fmt.Errorf("want true or false, got %v", v)
 }
 
 func cloneMap(m map[string]any) map[string]any {

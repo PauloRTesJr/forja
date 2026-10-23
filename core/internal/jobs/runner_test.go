@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"forja/internal/catalog"
 	"forja/internal/config"
 	"forja/internal/engineapi"
 	"forja/internal/events"
@@ -31,6 +32,16 @@ type fakeProvider struct {
 	stages map[string]string
 	shape  engineapi.Model
 	down   bool
+	// extra models it lists besides background, shape and paint; drop hides listed ones.
+	extra []engineapi.Model
+	drop  map[string]bool
+}
+
+var cpu = "cpu"
+
+// model is a fake model that is installed and runnable.
+func model(id, task string, rank int) engineapi.Model {
+	return engineapi.Model{ID: id, Name: id, Tasks: []string{task}, Status: "ready", Device: &cpu, AdapterVersion: "1", Rank: rank}
 }
 
 func (f *fakeProvider) ID() string                   { return LocalProvider }
@@ -57,11 +68,15 @@ func (f *fakeProvider) Models(context.Context) ([]engineapi.Model, error) {
 	if f.down {
 		return nil, errors.New("connection refused")
 	}
-	return []engineapi.Model{
-		{ID: "stub-background", AdapterVersion: "1"},
-		f.shape,
-		{ID: "stub-paint", AdapterVersion: "1"},
-	}, nil
+	var out []engineapi.Model
+	for _, m := range append([]engineapi.Model{
+		model("stub-background", "background-removal", 1), f.shape, model("stub-paint", "texture", 1),
+	}, f.extra...) {
+		if !f.drop[m.ID] {
+			out = append(out, m)
+		}
+	}
+	return out, nil
 }
 
 func (f *fakeProvider) set(fn func(f *fakeProvider)) {
@@ -117,14 +132,25 @@ func setup(t *testing.T) (*Runner, *fakeProvider, *events.Hub, *store.Store, str
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { db.Close() })
-	fp := &fakeProvider{st: st, stages: map[string]string{"bake": "1"}, shape: engineapi.Model{
-		ID: "stub-shape", License: engineapi.License{SPDX: "Apache-2.0"}, AdapterVersion: "1",
-	}}
+	builtins := map[string]string{}
+	for _, use := range []string{"framing", "mesh.cleanup", "mesh.decimate", "mesh.uv", "texture.match", "bake", "mesh.lods", "export"} {
+		builtins[use] = "1"
+	}
+	shape := model("stub-shape", "shape", 1)
+	shape.License = engineapi.License{SPDX: "Apache-2.0"}
+	fp := &fakeProvider{st: st, stages: builtins, shape: shape, drop: map[string]bool{}}
 	reg := provider.NewRegistry()
 	reg.Add(fp)
 	hub := events.NewHub()
 	cfg := func(project string) (*config.Loaded, error) { return config.Load(project, nil) }
-	r := NewRunner(db, st, hub, reg, cfg, slog.New(slog.NewTextHandler(io.Discard, nil)), "test", 4)
+	cat := catalog.New(reg, db, nil, nil)
+	r := NewRunner(db, st, hub, reg, cat, cfg, slog.New(slog.NewTextHandler(io.Discard, nil)), "test", 4)
+	// Jobs a test did not wait for still write to the temp folder; let them end first.
+	t.Cleanup(func() {
+		for deadline := time.Now().Add(5 * time.Second); r.Busy() && time.Now().Before(deadline); {
+			time.Sleep(5 * time.Millisecond)
+		}
+	})
 	img, _ := st.PutBytes([]byte("fake image"))
 	return r, fp, hub, st, img
 }
@@ -162,8 +188,8 @@ func TestTextureRerunHitsTheShapeCache(t *testing.T) {
 			cached++
 		}
 	}
-	if cached != 6 {
-		t.Fatalf("expected the 6 pre-texture stages cached, got %d", cached)
+	if cached != 5 {
+		t.Fatalf("expected the 5 pre-texture stages cached, got %d", cached)
 	}
 	if last := fp.runs[len(fp.runs)-1]; strings.Join(last, ",") != "paint,bake,lods,export" {
 		t.Fatalf("second run executed %v", last)
@@ -242,7 +268,7 @@ func TestNewVersionsOnTheProviderRecomputeFromTheStageThatChanged(t *testing.T) 
 	fp.set(func(f *fakeProvider) { f.shape.Weights.Revision = "next" })
 	n = fp.count()
 	submit()
-	if got := fp.executed(n); got != "shape,cleanup,lowpoly,uv,paint,bake,lods,export" {
+	if got := fp.executed(n); got != "shape,cleanup,lowpoly,paint,bake,lods,export" {
 		t.Fatalf("after new shape weights the provider ran %q", got)
 	}
 	if first.Stages[0].Key == "" {
@@ -254,12 +280,12 @@ func TestAnUnreachableProviderKeysWithItsLastAnswer(t *testing.T) {
 	r, fp, _, _, img := setup(t)
 	ctx := context.Background()
 	fp.set(func(f *fakeProvider) { f.down = true })
-	j, _ := r.Submit(ctx, SubmitRequest{Input: img, Preset: "mobile-prop"})
-	if got := wait(t, r, j.ID); got.Status != library.Failed || !strings.Contains(got.Error, "did not say what it runs") {
-		t.Fatalf("with no answer ever: %s %q", got.Status, got.Error)
+	if _, err := r.Submit(ctx, SubmitRequest{Input: img, Preset: "mobile-prop"}); err == nil ||
+		!strings.Contains(err.Error(), "did not say what it runs") {
+		t.Fatalf("with no answer ever: %v", err)
 	}
 	fp.set(func(f *fakeProvider) { f.down = false })
-	j, _ = r.Submit(ctx, SubmitRequest{Input: img, Preset: "mobile-prop"})
+	j, _ := r.Submit(ctx, SubmitRequest{Input: img, Preset: "mobile-prop"})
 	if got := wait(t, r, j.ID); got.Status != library.Succeeded {
 		t.Fatalf("first answered job: %s %s", got.Status, got.Error)
 	}
@@ -271,5 +297,108 @@ func TestAnUnreachableProviderKeysWithItsLastAnswer(t *testing.T) {
 	}
 	if got := fp.executed(n); got != "" {
 		t.Fatalf("a fully cached job ran %q", got)
+	}
+}
+
+// stageModels maps stage id to the model a submitted job uses.
+func stageModels(j *library.Job) map[string]string {
+	out := map[string]string{}
+	for _, s := range j.Stages {
+		out[s.ID] = s.Model
+	}
+	return out
+}
+
+func TestOpenStagesGetTheBestReadyModel(t *testing.T) {
+	r, fp, _, _, img := setup(t)
+	notReady := model("shape-big", "shape", 30)
+	notReady.Status = "not-installed"
+	stub := model("shape-stub", "shape", 40)
+	stub.Stub = true
+	fp.set(func(f *fakeProvider) {
+		f.extra = []engineapi.Model{model("shape-a", "shape", 5), model("shape-b", "shape", 10), notReady, stub}
+	})
+	j, err := r.Submit(context.Background(), SubmitRequest{Input: img, Preset: "draft"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := stageModels(j); got["shape"] != "shape-b" || got["bg"] != "stub-background" || got["frame"] != "" {
+		t.Fatalf("picked %v", got)
+	}
+
+	project := t.TempDir()
+	os.WriteFile(filepath.Join(project, "forja.toml"), []byte("[models]\nstubs = true\n"), 0o644)
+	j, _ = r.Submit(context.Background(), SubmitRequest{Input: img, Preset: "draft", Project: project})
+	if got := stageModels(j)["shape"]; got != "shape-stub" {
+		t.Fatalf("with stubs allowed the shape stage got %q", got)
+	}
+}
+
+func TestConfigAndOverridesPinModels(t *testing.T) {
+	r, fp, _, _, img := setup(t)
+	fp.set(func(f *fakeProvider) {
+		f.extra = []engineapi.Model{model("shape-a", "shape", 5), model("shape-b", "shape", 10)}
+	})
+	project := t.TempDir()
+	os.WriteFile(filepath.Join(project, "forja.toml"), []byte("[models.stages]\nshape = \"shape-a\"\n"), 0o644)
+	j, err := r.Submit(context.Background(), SubmitRequest{Input: img, Preset: "draft", Project: project})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := stageModels(j)["shape"]; got != "shape-a" {
+		t.Fatalf("config pin ignored: %q", got)
+	}
+	j, _ = r.Submit(context.Background(), SubmitRequest{Input: img, Preset: "draft", Project: project,
+		Overrides: map[string]any{"shape.model": "stub-shape"}})
+	if got := stageModels(j)["shape"]; got != "stub-shape" {
+		t.Fatalf("job override ignored: %q", got)
+	}
+	if _, err := r.Submit(context.Background(), SubmitRequest{Input: img, Preset: "draft",
+		Overrides: map[string]any{"shape.model": "not-here"}}); err == nil {
+		t.Fatal("a pinned model the provider does not have was accepted")
+	}
+}
+
+func TestAPresetWithoutAModelForAStageIsRefused(t *testing.T) {
+	r, fp, _, _, img := setup(t)
+	fp.set(func(f *fakeProvider) { f.drop["stub-paint"] = true })
+	_, err := r.Submit(context.Background(), SubmitRequest{Input: img, Preset: "mobile-prop"})
+	var missing *MissingError
+	if !errors.As(err, &missing) || strings.Join(missing.Uses, ",") != "texture" {
+		t.Fatalf("got %v", err)
+	}
+	if _, err := r.Submit(context.Background(), SubmitRequest{Input: img, Preset: "draft"}); err != nil {
+		t.Fatalf("draft needs no texture model: %v", err)
+	}
+	all, _ := r.Presets("")
+	plan, err := r.Resolve(context.Background(), "", all["mobile-prop"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range plan {
+		if p.Missing != (p.Use == "texture") {
+			t.Fatalf("stage %s missing = %v", p.Stage, p.Missing)
+		}
+	}
+}
+
+func TestOptionalStagesRunOnlyWhenSwitchedOn(t *testing.T) {
+	r, fp, _, _, img := setup(t)
+	ctx := context.Background()
+	j, _ := r.Submit(ctx, SubmitRequest{Input: img, Preset: "mobile-prop"})
+	wait(t, r, j.ID)
+	if _, ok := stageModels(j)["match"]; ok {
+		t.Fatal("match ran while off by default")
+	}
+	n := fp.count()
+	j, err := r.Submit(ctx, SubmitRequest{Input: img, Preset: "mobile-prop", Overrides: map[string]any{"match.enabled": true}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := wait(t, r, j.ID); got.Status != library.Succeeded {
+		t.Fatalf("%s: %s", got.Status, got.Error)
+	}
+	if got := fp.executed(n); got != "match,bake,lods,export" {
+		t.Fatalf("switching match on ran %q", got)
 	}
 }

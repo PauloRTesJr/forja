@@ -76,6 +76,25 @@ type Model struct {
 	// AdapterVersion and Upstream (the family's pinned source sha256) arrive with API 1.2.
 	AdapterVersion string `json:"adapter_version"`
 	Upstream       string `json:"upstream"`
+	// Rank orders models for the same stage when a preset leaves the model open; Stub marks
+	// the deterministic stand-ins (API 1.3).
+	Rank int  `json:"rank"`
+	Stub bool `json:"stub"`
+}
+
+// Ready reports whether the model can run on the provider now.
+func (m *Model) Ready() bool {
+	return (m.Status == "ready" || m.Status == "loaded") && m.Device != nil
+}
+
+// Does reports whether the model provides a stage type.
+func (m *Model) Does(task string) bool {
+	for _, t := range m.Tasks {
+		if t == task {
+			return true
+		}
+	}
+	return false
 }
 
 type Weights struct {

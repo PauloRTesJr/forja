@@ -20,6 +20,9 @@ func Defaults() map[string]any {
 			"allow_paid_fallback": false,
 			"priority":            []any{"local"},
 		},
+		"models": map[string]any{
+			"stubs": false,
+		},
 		"project": map[string]any{
 			"export_dir":     "Assets/Generated",
 			"default_preset": "mobile-prop",

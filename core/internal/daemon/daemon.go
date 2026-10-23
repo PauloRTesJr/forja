@@ -15,6 +15,7 @@ import (
 	"github.com/gofrs/flock"
 
 	"forja/internal/api"
+	"forja/internal/catalog"
 	"forja/internal/config"
 	"forja/internal/events"
 	"forja/internal/ipc"
@@ -105,7 +106,12 @@ func start(opts Options, base *config.Loaded, dataDir string) (*Core, error) {
 	}
 
 	hub := events.NewHub()
-	runner := jobs.NewRunner(db, st, hub, providers, cfgFn, log, opts.Version, 8)
+	cat := catalog.New(providers, db,
+		func(id string) bool { return id == jobs.LocalProvider && !eng.Running() },
+		func(id string) { hub.Publish(api.EvModelsChanged, map[string]string{"provider": id}) })
+	// Models installed while the engine was stopped show up as soon as it runs again.
+	eng.Started = func() { _, _ = cat.Ask(context.Background(), jobs.LocalProvider) }
+	runner := jobs.NewRunner(db, st, hub, providers, cat, cfgFn, log, opts.Version, 8)
 	addr := opts.Address
 	if addr == "" {
 		addr = ipc.DefaultAddress(dataDir)
@@ -113,7 +119,7 @@ func start(opts Options, base *config.Loaded, dataDir string) (*Core, error) {
 	c := &Core{Address: addr, engine: eng, db: db, done: make(chan struct{})}
 	srv := &api.Server{
 		Version: opts.Version, DataDir: dataDir, DB: db, Store: st, Hub: hub, Runner: runner,
-		Providers: providers, Engine: eng, Config: cfgFn, Log: log, Shutdown: c.Stop,
+		Providers: providers, Catalog: cat, Engine: eng, Config: cfgFn, Log: log, Shutdown: c.Stop,
 	}
 	c.server = &http.Server{Handler: srv.Handler(), ReadHeaderTimeout: 10 * time.Second}
 	ln, err := ipc.Listen(addr)

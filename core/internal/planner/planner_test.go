@@ -16,6 +16,7 @@ func plan(t *testing.T, overrides map[string]any, fp Fingerprints) *Plan {
 	t.Helper()
 	all, _ := presets.Load()
 	p, err := all["mobile-prop"].WithOverrides(overrides)
+	p = p.Active()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,7 +67,7 @@ func TestNewAdapterVersionRekeysThatStageAndWhatFollows(t *testing.T) {
 		return same(s)
 	}
 	expectChanged(t, changed(plan(t, nil, same), plan(t, nil, bumped)),
-		"lowpoly", "uv", "paint", "bake", "lods", "export")
+		"lowpoly", "paint", "bake", "lods", "export")
 }
 
 func TestNewWeightsOrUpstreamRekeyTheModelStage(t *testing.T) {
@@ -78,7 +79,7 @@ func TestNewWeightsOrUpstreamRekeyTheModelStage(t *testing.T) {
 			return same(s)
 		}
 		expectChanged(t, changed(plan(t, nil, same), plan(t, nil, other)),
-			"shape", "cleanup", "lowpoly", "uv", "paint", "bake", "lods", "export")
+			"shape", "cleanup", "lowpoly", "paint", "bake", "lods", "export")
 	}
 }
 
@@ -90,7 +91,7 @@ func TestAStageThatCannotBeFingerprintedFailsTheBuild(t *testing.T) {
 		}
 		return same(s)
 	}
-	if _, err := Build(all["mobile-prop"], img, 42, broken); err == nil {
+	if _, err := Build(all["mobile-prop"].Active(), img, 42, broken); err == nil {
 		t.Fatal("expected an error")
 	}
 }

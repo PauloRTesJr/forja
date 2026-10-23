@@ -4,19 +4,48 @@ import { Corners, DropSigil, Folder, PresetEmblem, Sparkle } from '../components
 import { ScreenHead, SectionHead } from '../components/ScreenHead'
 import { api, submitJobs, type Preset } from '../lib/api'
 import { keys } from '../lib/events'
-import { roman } from '../lib/format'
+import { listOf, roman, taskNoun } from '../lib/format'
 import { transition, useNavigate } from '../lib/nav'
 import { useToast } from '../lib/toast'
 
 const IMAGE = /\.(png|jpe?g|webp)$/i
 const PROJECT_KEY = 'forja.project'
+const OPTIONS_KEY = 'forja.options'
 
-function storedProject(): string {
+// Per-viewer conveniences only: storage may be missing or full, and the screen works without it.
+function read(key: string): string | null {
   try {
-    return localStorage.getItem(PROJECT_KEY) ?? ''
+    return localStorage.getItem(key)
   } catch {
-    return ''
+    return null
   }
+}
+
+function write(key: string, value: string | null): void {
+  try {
+    if (value === null) localStorage.removeItem(key)
+    else localStorage.setItem(key, value)
+  } catch {
+    /* ignore */
+  }
+}
+
+function storedOptions(): Record<string, boolean> {
+  try {
+    return JSON.parse(read(OPTIONS_KEY) ?? '{}') as Record<string, boolean>
+  } catch {
+    return {}
+  }
+}
+
+/** The models a preset will use, in pipeline order, each once. */
+function modelsOf(p: Preset): string[] {
+  const names = p.plan.filter((s) => s.model).map((s) => s.model_name || s.model!)
+  return [...new Set(names)]
+}
+
+function missingOf(p: Preset): string[] {
+  return [...new Set(p.plan.filter((s) => s.missing).map((s) => taskNoun(s.use)))]
 }
 
 export function Generate() {
@@ -24,12 +53,24 @@ export function Generate() {
   const toast = useToast()
   const [over, setOver] = useState(false)
   const [preset, setPreset] = useState('mobile-prop')
-  const [project, setProject] = useState(storedProject)
+  const [project, setProject] = useState(() => read(PROJECT_KEY) ?? '')
+  // Switch states for optional stages, by "<preset>.<stage>".
+  const [options, setOptions] = useState(storedOptions)
   const presets = useQuery({ queryKey: keys.presets, queryFn: () => api<Preset[]>('GET', '/v1/presets') })
+  const current = presets.data?.find((p) => p.id === preset)
+  const optional = current?.stages.filter((s) => s.optional) ?? []
+  const isOn = (stage: string, fallback: boolean): boolean => options[`${preset}.${stage}`] ?? fallback
+  const blocked = current !== undefined && !current.ready
 
   const submit = useMutation({
     mutationFn: (paths: string[]) =>
-      submitJobs({ paths, preset, project: project || undefined, priority: paths.length === 1 ? 'interactive' : 'batch' }),
+      submitJobs({
+        paths,
+        preset,
+        project: project || undefined,
+        priority: paths.length === 1 ? 'interactive' : 'batch',
+        overrides: Object.fromEntries(optional.map((s) => [`${s.id}.enabled`, isOn(s.id, s.optional!.default)])),
+      }),
     onSuccess: (jobs) => {
       toast(`${jobs.length === 1 ? jobs[0]!.name : `${jobs.length} images`} queued`)
       transition(() => navigate({ screen: 'queue' }))
@@ -37,9 +78,15 @@ export function Generate() {
     onError: (e: Error) => toast(e.message, true),
   })
 
+  const queue = (paths: string[]): void => {
+    if (blocked) return
+    if (paths.length) submit.mutate(paths)
+  }
+
   const onDrop = (e: DragEvent): void => {
     e.preventDefault()
     setOver(false)
+    if (blocked) return
     const paths = [...e.dataTransfer.files].map((f) => window.forja.pathForFile(f)).filter((p) => IMAGE.test(p))
     if (paths.length === 0) return toast('Drop PNG, JPEG or WebP images', true)
     submit.mutate(paths)
@@ -49,29 +96,40 @@ export function Generate() {
     const dir = await window.forja.pickFolder()
     if (!dir) return
     setProject(dir)
-    try {
-      localStorage.setItem(PROJECT_KEY, dir)
-    } catch {
-      /* per-viewer convenience only */
-    }
+    write(PROJECT_KEY, dir)
+  }
+
+  const toggle = (stage: string, on: boolean): void => {
+    const next = { ...options, [`${preset}.${stage}`]: on }
+    setOptions(next)
+    write(OPTIONS_KEY, JSON.stringify(next))
   }
 
   return (
     <div className="screen">
       <ScreenHead eyebrow={['Arcanum I', 'The Forge']} title="Generate" sub="Drop reference images. Each becomes a game-ready GLB." />
 
+      {blocked && current && (
+        <div className="notice enter" role="status">
+          <div>
+            <strong>{current.name} needs {current.error ? 'the engine' : `a ${listOf(missingOf(current))} model`}</strong>
+            <span>{current.error ?? 'Install it once on the Models screen; every preset that needs it can use it after that.'}</span>
+          </div>
+          <button className="btn primary" onClick={() => transition(() => navigate({ screen: 'models' }))}>
+            Set up models
+          </button>
+        </div>
+      )}
+
       <div
-        className={`drop enter ${over ? 'over' : ''} ${submit.isPending ? 'busy' : ''}`}
+        className={`drop enter ${over && !blocked ? 'over' : ''} ${submit.isPending ? 'busy' : ''} ${blocked ? 'blocked' : ''}`}
         role="button"
         tabIndex={0}
-        onClick={async () => {
-          const paths = await window.forja.pickImages()
-          if (paths.length) submit.mutate(paths)
-        }}
+        aria-disabled={blocked}
+        onClick={async () => queue(blocked ? [] : await window.forja.pickImages())}
         onKeyDown={async (e) => {
           if (e.key !== 'Enter' && e.key !== ' ') return
-          const paths = await window.forja.pickImages()
-          if (paths.length) submit.mutate(paths)
+          queue(blocked ? [] : await window.forja.pickImages())
         }}
         onDragOver={(e) => {
           e.preventDefault()
@@ -85,7 +143,7 @@ export function Generate() {
         <div className="drop-inner">
           <DropSigil />
           <strong className="drop-title">
-            {submit.isPending ? 'Queuing…' : over ? 'Release to queue them' : 'Drop images or a folder of images'}
+            {blocked ? 'Set up models to start' : submit.isPending ? 'Queuing…' : over ? 'Release to queue them' : 'Drop images or a folder of images'}
           </strong>
           <span className="drop-hint">or click to browse · PNG, JPEG, WebP</span>
         </div>
@@ -95,10 +153,11 @@ export function Generate() {
         <SectionHead>Preset</SectionHead>
         <div className="presets">
           {presets.isPending && [0, 1, 2, 3].map((i) => <div key={i} className="skeleton" style={{ height: 196 }} />)}
+          {presets.error && <div className="error">{(presets.error as Error).message}</div>}
           {presets.data?.map((p, i) => (
             <button
               key={p.id}
-              className="preset enter"
+              className={`preset enter ${p.ready ? '' : 'unready'}`}
               style={{ '--i': i } as React.CSSProperties}
               aria-pressed={preset === p.id}
               onClick={() => setPreset(p.id)}
@@ -112,10 +171,28 @@ export function Generate() {
               </span>
               <strong>{p.name}</strong>
               <small>{p.description}</small>
+              {p.ready ? (
+                <span className="preset-models">{modelsOf(p).join(' · ')}</span>
+              ) : (
+                <span className="preset-needs">Needs {p.error ? 'the engine' : `a ${listOf(missingOf(p))} model`}</span>
+              )}
               <Sparkle size={12} className="chosen" />
             </button>
           ))}
         </div>
+        {optional.length > 0 && (
+          <div className="options">
+            {optional.map((s) => {
+              const on = isOn(s.id, s.optional!.default)
+              return (
+                <button key={s.id} className="switch" role="switch" aria-checked={on} onClick={() => toggle(s.id, !on)}>
+                  <span className="switch-track" aria-hidden />
+                  {s.optional!.label}
+                </button>
+              )
+            })}
+          </div>
+        )}
       </div>
 
       <div className="section">
@@ -132,11 +209,7 @@ export function Generate() {
                 className="btn ghost"
                 onClick={() => {
                   setProject('')
-                  try {
-                    localStorage.removeItem(PROJECT_KEY)
-                  } catch {
-                    /* ignore */
-                  }
+                  write(PROJECT_KEY, null)
                 }}
               >
                 Clear

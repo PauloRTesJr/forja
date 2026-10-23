@@ -1,5 +1,15 @@
-# The M0 spike is a Forja project of its own: outputs land in ./out, presets in ./forja/presets.
+# The M0 spike is a Forja project of its own: outputs land in ./out.
 [project]
 name = "M0 spike"
 export_dir = "out"
-default_preset = "m0-local"
+default_preset = "mobile-prop"
+
+# Pinned, so runs stay comparable when other models get installed or ranked higher.
+[models.stages]
+background-removal = "birefnet"
+shape = "triposg"
+texture = "hunyuan3d2-paint"
+
+# If the first asset faces the wrong way, rotate it here (README, step 4):
+# [presets.mobile-prop]
+# overrides = { "shape.yaw_degrees" = 90 }

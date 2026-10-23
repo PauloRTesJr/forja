@@ -1,6 +1,7 @@
 id: stub-shape
 name: Stub shape (silhouette inflation)
 family: stub
+stub: true
 adapter: forja_engine.adapters.stub:StubShape
 tasks: [shape]
 license: { spdx: Apache-2.0, commercial: true }

@@ -31,6 +31,8 @@ type Manager struct {
 	storeDir string
 	logPath  string
 	log      *slog.Logger
+	// Started runs in its own goroutine each time the engine comes up; set before first use.
+	Started func()
 
 	mu       sync.Mutex
 	stopping bool
@@ -198,6 +200,9 @@ func (m *Manager) start(ctx context.Context) error {
 		m.cmd, m.group, m.exit, m.token = cmd, group, exit, token
 		m.url = "http://127.0.0.1:" + strconv.Itoa(port)
 		m.log.Info("engine ready", "url", m.url)
+		if m.Started != nil {
+			go m.Started()
+		}
 		return nil
 	case <-exit:
 		return fmt.Errorf("engine exited during startup; see %s", m.logPath)

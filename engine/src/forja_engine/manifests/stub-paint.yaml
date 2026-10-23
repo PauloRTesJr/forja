@@ -1,6 +1,7 @@
 id: stub-paint
 name: Stub paint (front projection)
 family: stub
+stub: true
 adapter: forja_engine.adapters.stub:StubPaint
 tasks: [texture]
 license: { spdx: Apache-2.0, commercial: true }

@@ -3,6 +3,7 @@ name: TripoSG
 family: triposg
 adapter: forja_triposg:TripoSG
 tasks: [shape]
+rank: 10
 license: { spdx: MIT, commercial: true }
 vram_gb: 8
 requirements:

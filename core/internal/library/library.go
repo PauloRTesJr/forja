@@ -131,6 +131,11 @@ CREATE TABLE IF NOT EXISTS assets (
 	created_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS assets_created ON assets(created_at DESC);
+CREATE TABLE IF NOT EXISTS provider_catalog (
+	provider TEXT PRIMARY KEY,
+	entry TEXT NOT NULL,
+	at INTEGER NOT NULL
+);
 `
 
 func Open(dataDir string) (*DB, error) {
@@ -341,4 +346,36 @@ func (d *DB) Assets(ctx context.Context, limit int, before time.Time, query stri
 		out = append(out, a)
 	}
 	return out, rows.Err()
+}
+
+// SaveCatalog remembers a provider's latest answer to "what do you run?".
+func (d *DB) SaveCatalog(ctx context.Context, provider string, entry []byte) error {
+	_, err := d.sql.ExecContext(ctx,
+		`INSERT INTO provider_catalog (provider, entry, at) VALUES (?, ?, ?)
+		 ON CONFLICT(provider) DO UPDATE SET entry = excluded.entry, at = excluded.at`,
+		provider, string(entry), time.Now().UnixMilli())
+	return err
+}
+
+// Catalogs returns every remembered provider answer by provider id.
+func (d *DB) Catalogs(ctx context.Context) (map[string][]byte, error) {
+	rows, err := d.sql.QueryContext(ctx, `SELECT provider, entry FROM provider_catalog`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string][]byte{}
+	for rows.Next() {
+		var id, entry string
+		if err := rows.Scan(&id, &entry); err != nil {
+			return nil, err
+		}
+		out[id] = []byte(entry)
+	}
+	return out, rows.Err()
+}
+
+func (d *DB) ForgetCatalog(ctx context.Context, provider string) error {
+	_, err := d.sql.ExecContext(ctx, `DELETE FROM provider_catalog WHERE provider = ?`, provider)
+	return err
 }

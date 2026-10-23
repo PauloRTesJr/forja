@@ -5,9 +5,9 @@ produce acceptable Mobile prop assets?** The gate and its outcomes are in
 [checklist.md](checklist.md); decision 4 in [docs/decisions.md](../../docs/decisions.md) says
 why it is decided this way.
 
-Pipeline (`forja/presets/m0-local.yaml`): BiRefNet → framing → TripoSG → cleanup → 5k-triangle
-decimation → Hunyuan3D-2 Paint (turbo, 1K texture) → bake (normal + AO from the high-poly) →
-LODs → GLB.
+Pipeline (the built-in Mobile prop preset, with its models pinned in [forja.toml](forja.toml)):
+BiRefNet → framing → TripoSG → cleanup → 5k-triangle decimation → Hunyuan3D-2 Paint (turbo, 1K
+texture) → bake (normal + AO from the high-poly) → LODs → GLB.
 
 The GLB carries base color, a tangent-space normal map, and an ORM map (R = AO; G and B white,
 so roughness and metallic stay editable constant factors, decision 6). Vertex normals and
@@ -73,9 +73,9 @@ The first image pays for model loading. Run the set twice; the second run's repo
 warm baselines the spec asks for (time and peak VRAM per stage).
 
 **First image only: check the facing.** Open the asset in the app. If the shape faces sideways
-or backwards, or the texture is projected onto the wrong side, set the yaw in
-`forja/presets/m0-local.yaml` and re-run. The yaw is `shape.params.yaw_degrees`, or
-`paint.params.yaw_degrees` if only the texture is off. Thanks to the stage cache, a paint-only
+or backwards, or the texture is projected onto the wrong side, set the yaw in `forja.toml`
+(`[presets.mobile-prop] overrides = { "shape.yaw_degrees" = 90 }`) and re-run. Use
+`"paint.yaw_degrees"` if only the texture is off. Thanks to the stage cache, a paint-only
 change re-runs only paint, LODs and export.
 
 ## 5. Judge and decide
@@ -89,7 +89,8 @@ If the normal map shows smeared or flat patches, the cage missed the high-poly t
 engine log (`<data>/logs/engine.log`) warns when that happens on more than 5% of texels. Raise
 `--set bake.cage=0.04` (a fraction of the model's size). For darker or lighter AO, use `--set bake.ao_radius=0.1` (smaller means more local).
 
-`--preset m0-local-match` adds a `texture.match` stage after paint. It fits the camera the
+`--set match.enabled=true` adds the `texture.match` stage after paint (the "Match the
+reference colors" switch in the app). It fits the camera the
 reference was drawn from, corrects the painted colors per material toward the reference (the
 back too), and blends the reference onto the surfaces facing that camera, which brings back
 detail like eyes and embroidery. `--set match.reproject=0` keeps only the color correction.

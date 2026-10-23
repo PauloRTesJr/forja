@@ -41,6 +41,10 @@ export function useCoreEvents(qc: QueryClient): boolean {
           void qc.invalidateQueries({ queryKey: ['assets'] })
           break
         }
+        case 'models.changed':
+          void qc.invalidateQueries({ queryKey: keys.models })
+          void qc.invalidateQueries({ queryKey: keys.presets })
+          break
       }
     })
     return () => {

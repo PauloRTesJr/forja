@@ -59,6 +59,17 @@ export interface PresetStage {
   use: string
   model?: string
   params?: Record<string, unknown>
+  optional?: { label: string; default: boolean }
+}
+
+/** Where one stage of a preset would run right now, and with which model. */
+export interface Pick {
+  stage: string
+  use: string
+  model?: string
+  model_name?: string
+  provider?: string
+  missing?: boolean
 }
 
 export interface Preset {
@@ -67,6 +78,10 @@ export interface Preset {
   description: string
   stages: PresetStage[]
   source: string
+  builtin: boolean
+  plan: Pick[]
+  ready: boolean
+  error?: string
 }
 
 export interface Model {

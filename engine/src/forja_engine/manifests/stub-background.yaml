@@ -1,6 +1,7 @@
 id: stub-background
 name: Stub background removal
 family: stub
+stub: true
 adapter: forja_engine.adapters.stub:StubBackground
 tasks: [background-removal]
 license: { spdx: Apache-2.0, commercial: true }
