@@ -1,4 +1,6 @@
 import { useMutation, useQuery } from '@tanstack/react-query'
+import { PauseMoon, TaskSigil } from '../components/icons'
+import { ScreenHead } from '../components/ScreenHead'
 import { api, type Model } from '../lib/api'
 import { keys } from '../lib/events'
 import { useToast } from '../lib/toast'
@@ -13,15 +15,12 @@ export function Models() {
   })
   return (
     <div className="screen">
-      <div className="screen-head">
-        <div>
-          <h1>Models</h1>
-          <p className="sub">What the local engine can run, and under which license.</p>
-        </div>
+      <ScreenHead eyebrow={['Arcanum IV', 'The Seers']} title="Models" sub="What the local engine can run, and under which license.">
         <button className="btn" onClick={() => pause.mutate()} disabled={pause.isPending}>
+          <PauseMoon />
           Pause engine
         </button>
-      </div>
+      </ScreenHead>
       {models.isPending && <div className="skeleton" style={{ height: 160 }} />}
       {models.error && <div className="error">{(models.error as Error).message}</div>}
       {models.data && (
@@ -39,18 +38,28 @@ export function Models() {
             {models.data.map((m, i) => (
               <tr key={m.id} style={{ animationDelay: `${i * 30}ms` }}>
                 <td>
-                  <strong>{m.name}</strong>
-                  <div className="muted mono">{m.id}</div>
+                  <div className="model-cell">
+                    <span className={`sigil-badge ${m.status}`}>
+                      <TaskSigil task={m.tasks[0]} />
+                    </span>
+                    <div>
+                      <strong>{m.name}</strong>
+                      <div className="muted mono">{m.id}</div>
+                    </div>
+                  </div>
                 </td>
                 <td>{m.tasks.join(', ')}</td>
                 <td>
                   {m.license.spdx}
                   {!m.license.commercial && <span className="status failed" style={{ marginLeft: 6 }}>non-commercial</span>}
-                  {m.license.restrictions.length > 0 && <div className="muted">{m.license.restrictions.join(', ')}</div>}
+                  {m.license.restrictions.length > 0 && <div className="restrictions">{m.license.restrictions.join(', ')}</div>}
                 </td>
                 <td>{m.device ?? <span className="muted">remote only</span>}</td>
                 <td>
-                  <span className={`status ${m.status === 'loaded' ? 'running' : ''}`}>{m.status}</span>
+                  <span className={`status ${m.status}`}>
+                    <i aria-hidden />
+                    {m.status}
+                  </span>
                 </td>
               </tr>
             ))}

@@ -1,9 +1,11 @@
 import type { ReactNode } from 'react'
+import { Crescent } from './icons'
 
 export function Empty({ title, children }: { title: string; children?: ReactNode }) {
   return (
     <div className="empty">
-      <strong style={{ color: 'var(--text-2)', fontSize: 14 }}>{title}</strong>
+      <Crescent />
+      <strong>{title}</strong>
       {children}
     </div>
   )

@@ -1,5 +1,6 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { lazy, Suspense, useCallback, useEffect, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useState, type CSSProperties } from 'react'
+import { Anvil, BrandMark, Eye, Grimoire, Hourglass, MoonPhases, SidebarSky, Sun } from './components/icons'
 import { api, type Job } from './lib/api'
 import { keys, useCoreEvents } from './lib/events'
 import { isActive } from './lib/jobs'
@@ -14,11 +15,11 @@ const Models = lazy(() => import('./screens/Models').then((m) => ({ default: m.M
 const Settings = lazy(() => import('./screens/Settings').then((m) => ({ default: m.Settings })))
 
 const tabs = [
-  { screen: 'generate', label: 'Generate' },
-  { screen: 'queue', label: 'Queue' },
-  { screen: 'library', label: 'Library' },
-  { screen: 'models', label: 'Models' },
-  { screen: 'settings', label: 'Settings' },
+  { screen: 'generate', label: 'Generate', numeral: 'I', Icon: Anvil },
+  { screen: 'queue', label: 'Queue', numeral: 'II', Icon: Hourglass },
+  { screen: 'library', label: 'Library', numeral: 'III', Icon: Grimoire },
+  { screen: 'models', label: 'Models', numeral: 'IV', Icon: Eye },
+  { screen: 'settings', label: 'Settings', numeral: 'V', Icon: Sun },
 ] as const
 
 export function App() {
@@ -49,24 +50,37 @@ export function App() {
     <NavContext.Provider value={navigate}>
       <div className="app">
         <nav className="sidebar" aria-label="Main">
+          <SidebarSky />
           <div className="brand">
-            <span className="brand-mark" aria-hidden />
-            Forja
+            <BrandMark />
+            <div>
+              <span className="brand-name">Forja</span>
+              <span className="brand-tag">image to game asset</span>
+            </div>
           </div>
-          <div className="nav">
-            <div className="nav-indicator" style={{ transform: `translateY(${tabIndex * 36}px)` }} />
-            {tabs.map((t) => (
+          <div className="nav" style={{ '--n': tabIndex } as CSSProperties}>
+            <div className="nav-indicator" />
+            {tabs.map(({ screen, label, numeral, Icon }) => (
               <button
-                key={t.screen}
-                aria-current={activeTab === t.screen ? 'page' : undefined}
-                onClick={() => transition(() => setRoute({ screen: t.screen }))}
+                key={screen}
+                aria-current={activeTab === screen ? 'page' : undefined}
+                onClick={() => transition(() => setRoute({ screen }))}
               >
-                {t.label}
-                {t.screen === 'queue' && running > 0 && <span className="badge">{running}</span>}
+                <span className="nav-num" aria-hidden>
+                  {numeral}
+                </span>
+                <Icon />
+                <span>{label}</span>
+                {screen === 'queue' && running > 0 && (
+                  <span className="badge" aria-label={`${running} running or waiting`}>
+                    {running}
+                  </span>
+                )}
               </button>
             ))}
           </div>
           <div className="sidebar-foot">
+            <MoonPhases />
             <div className="conn">
               <span className={`dot ${!connected ? '' : running ? 'live' : 'ok'}`} />
               {!connected ? 'Reconnecting to core…' : running ? 'Generating' : 'Ready'}

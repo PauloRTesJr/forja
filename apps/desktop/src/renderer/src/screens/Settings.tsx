@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
+import { ScreenHead, SectionHead } from '../components/ScreenHead'
 import { api, type ProviderRow } from '../lib/api'
 import { keys } from '../lib/events'
 
@@ -8,14 +9,13 @@ export function Settings() {
   const config = useQuery({ queryKey: keys.config, queryFn: () => api<Record<string, unknown>>('GET', '/v1/config/effective') })
   return (
     <div className="screen">
-      <div className="screen-head">
-        <div>
-          <h1>Settings</h1>
-          <p className="sub">Edit config.toml or a project's forja.toml; changes apply to new jobs without a restart.</p>
-        </div>
-      </div>
+      <ScreenHead
+        eyebrow={['Arcanum V', 'The Sun']}
+        title="Settings"
+        sub="Edit config.toml or a project's forja.toml; changes apply to new jobs without a restart."
+      />
       <div className="section">
-        <h2>Providers</h2>
+        <SectionHead>Providers</SectionHead>
         <table className="table">
           <thead>
             <tr>
@@ -43,11 +43,11 @@ export function Settings() {
         </table>
       </div>
       <div className="section">
-        <h2>System</h2>
+        <SectionHead>System</SectionHead>
         <pre className="code">{info.data ? JSON.stringify(info.data, null, 2) : '…'}</pre>
       </div>
       <div className="section">
-        <h2>Effective configuration</h2>
+        <SectionHead>Effective configuration</SectionHead>
         <pre className="code">{config.data ? JSON.stringify(config.data, null, 2) : '…'}</pre>
       </div>
     </div>

@@ -193,7 +193,7 @@ export class Viewer {
     const radius = Math.max(size.x, size.y, size.z, 0.1)
     if (this.grid) this.scene.remove(this.grid)
     const cells = Math.max(2, Math.ceil(radius * 2))
-    this.grid = new THREE.GridHelper(cells, cells, 0x888888, 0x444444)
+    this.grid = new THREE.GridHelper(cells, cells, 0x8a7350, 0x5a4a33)
     ;(this.grid.material as THREE.Material).transparent = true
     ;(this.grid.material as THREE.Material).opacity = 0.25
     this.scene.add(this.grid)
@@ -237,7 +237,7 @@ export class Viewer {
           mesh.material = own(new THREE.MeshNormalMaterial())
           break
         case 'wireframe':
-          mesh.material = own(new THREE.MeshBasicMaterial({ color: 0xe8622c, wireframe: true }))
+          mesh.material = own(new THREE.MeshBasicMaterial({ color: 0xc9a46a, wireframe: true }))
           break
         case 'uv':
           this.checker ??= checkerTexture()

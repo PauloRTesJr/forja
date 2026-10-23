@@ -1,38 +1,43 @@
+/* Arcane Forge: gold line-art on soot. One dark theme; the gold accents need a dark ground. */
 :root {
-  color-scheme: light dark;
-  --font: ui-sans-serif, -apple-system, 'Segoe UI', 'Inter', system-ui, sans-serif;
-  --mono: ui-monospace, 'SF Mono', 'Cascadia Code', 'JetBrains Mono', monospace;
+  color-scheme: dark;
+  --font: 'EB Garamond Variable', 'EB Garamond', Georgia, serif;
+  --display: 'Cinzel Variable', 'Cinzel', Georgia, serif;
+  --mono: 'JetBrains Mono Variable', ui-monospace, 'Cascadia Code', 'SF Mono', monospace;
 
-  --bg: #f6f6f4;
-  --surface: #ffffff;
-  --surface-2: #f0f0ed;
-  --border: #e3e3df;
-  --text: #17181b;
-  --text-2: #5d6068;
-  --text-3: #8b8e95;
-  --accent: #e8622c; /* forge ember */
+  --bg: #141210; /* night soot */
+  --bg-deep: #100e0c; /* sidebar, viewer, thumbnails */
+  --surface: #18150f; /* panels and cards */
+  --surface-2: #211b13; /* raised and selected */
+  --border: #3a3226; /* hairline */
+  --border-soft: #241f18; /* inset frames, row rules */
+  --frame: #5a4a33; /* selected frames, ornaments */
+  --gold-dim: #8a7350;
+  --accent: #c9a46a; /* gold line art */
+  --accent-hi: #e6c58f;
   --accent-soft: color-mix(in oklab, var(--accent) 14%, transparent);
-  --ok: #2f9e6b;
-  --warn: #c98a1b;
-  --bad: #d64545;
-  --shadow: 0 1px 2px rgb(0 0 0 / 0.06), 0 8px 24px rgb(0 0 0 / 0.06);
+  --on-accent: #1a1510;
+  --live: #e2864a; /* forge ember: work in progress */
+  --live-hi: #f0a774;
+  --live-soft: color-mix(in oklab, var(--live) 14%, transparent);
+  --text: #efe5d3; /* parchment */
+  --text-2: #b9ab94;
+  --text-3: #9b8e7a;
+  --ok: #86b39a; /* verdigris */
+  --warn: #e9b48a;
+  --bad: #e07b6a;
+  --bad-hi: #ef9f90;
+  --bad-soft: color-mix(in oklab, var(--bad) 12%, transparent);
+  --shadow: 0 1px 2px rgb(0 0 0 / 0.4), 0 14px 36px rgb(0 0 0 / 0.45);
+  --halo: 0 16px 40px -18px rgb(201 164 106 / 0.55);
 
-  --r-1: 6px;
-  --r-2: 10px;
+  /* Two offset grids of dots read as a still starfield without an image request. */
+  --stars:
+    radial-gradient(circle, rgb(230 197 143 / 0.26) 0 1px, transparent 1.6px) 17px 43px / 213px 187px,
+    radial-gradient(circle, rgb(230 197 143 / 0.12) 0 0.8px, transparent 1.3px) 51px 11px / 89px 97px;
+
+  --r-1: 8px;
+  --r-2: 12px;
   --r-3: 16px;
-  --sidebar: 220px;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #0e0f12;
-    --surface: #16181d;
-    --surface-2: #1d2027;
-    --border: #272a33;
-    --text: #eceef2;
-    --text-2: #a3a7b1;
-    --text-3: #6c717c;
-    --accent: #ff7a3d;
-    --shadow: 0 1px 2px rgb(0 0 0 / 0.4), 0 12px 32px rgb(0 0 0 / 0.35);
-  }
+  --sidebar: 232px;
 }
