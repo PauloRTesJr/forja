@@ -19,6 +19,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"path"
 	"slices"
 	"strconv"
 	"strings"
@@ -325,7 +326,8 @@ func (e *entry) model() engineapi.Model {
 	m := engineapi.Model{
 		ID: e.Endpoint, Name: e.Name, Family: "fal.ai", Tasks: e.Tasks, Description: e.Description,
 		License: engineapi.License{SPDX: "fal.ai " + orDefault(e.License, "terms"), Commercial: e.License == "commercial",
-			URL: "https://fal.ai/models/" + e.Endpoint},
+			Restrictions: []string{}, URL: "https://fal.ai/models/" + e.Endpoint},
+		Params: map[string]any{}, Requires: map[string]any{},
 		Status: "ready", Device: &hosted, RunsOn: &hosted, Fit: "hosted", Rank: rank, Recommended: recommended,
 		Price: e.Price, Thumbnail: e.Thumbnail, AdapterVersion: "1",
 		// The endpoint id names the model version, so it keys cached results like a weight revision.
@@ -394,6 +396,39 @@ func (p *Provider) Check(ctx context.Context, id string) (engineapi.CatalogModel
 	m := e.model()
 	return engineapi.CatalogModel{ID: id, Name: e.Name, Description: e.Description, License: m.License, Price: e.Price,
 		Tasks: m.Tasks, Problem: e.Problem}, nil
+}
+
+// Thumbnail fetches a catalog picture, without the key: they are public files on fal's CDN.
+func (p *Provider) Thumbnail(ctx context.Context, raw string) (io.ReadCloser, string, error) {
+	u, err := url.Parse(raw)
+	if err != nil || !thumbnailHost(u) {
+		return nil, "", fmt.Errorf("not a fal.ai picture: %q", raw)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+	if err != nil {
+		return nil, "", err
+	}
+	resp, err := p.http.Do(req)
+	if err != nil {
+		return nil, "", err
+	}
+	kind := resp.Header.Get("Content-Type")
+	if resp.StatusCode >= 400 || !strings.HasPrefix(kind, "image/") {
+		resp.Body.Close()
+		return nil, "", fmt.Errorf("fal.ai picture: %s, %s", resp.Status, kind)
+	}
+	return resp.Body, kind, nil
+}
+
+// thumbnailHost is true for the hosts fal serves catalog pictures from. Cleaned paths only,
+// so a "/falserverless/../" path cannot reach another bucket.
+func thumbnailHost(u *url.URL) bool {
+	if u.Scheme != "https" || u.User != nil || path.Clean(u.Path) != u.Path {
+		return false
+	}
+	h := u.Hostname()
+	return h == "fal.media" || strings.HasSuffix(h, ".fal.media") ||
+		(h == "storage.googleapis.com" && strings.HasPrefix(u.Path, "/falserverless/"))
 }
 
 // Run calls each stage's endpoint in turn: inputs go inline, the mesh comes back into the store.

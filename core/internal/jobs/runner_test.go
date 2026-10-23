@@ -454,13 +454,19 @@ func TestAOneShotModelSkipsTheTextureStageAndWhatRefinesIt(t *testing.T) {
 	}
 	all, _ := r.Presets(project)
 	plan, _ := r.Resolve(context.Background(), project, all["mobile-prop"])
+	match := false
 	for _, p := range plan {
 		if p.Stage == "paint" && (!p.Skipped || p.By != "shape") {
 			t.Fatalf("paint pick %+v", p)
 		}
+		// Off by default, but reported, so the app does not offer to turn it on.
+		match = match || p.Stage == "match" && p.Skipped
 		if p.Stage == "shape" && (!p.Paid || p.Price == nil || p.Price.Amount != 0.4) {
 			t.Fatalf("shape pick %+v", p)
 		}
+	}
+	if !match {
+		t.Fatalf("match is not reported skipped: %+v", plan)
 	}
 	spent, _ := r.db.Spent(context.Background(), time.Now().Add(-time.Hour))
 	if spent != 0.4 {

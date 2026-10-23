@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -170,6 +171,10 @@ func TestARunSendsTheImageInlineAndStoresTheMesh(t *testing.T) {
 	if err != nil || len(models) != 1 || models[0].Price == nil || models[0].Price.Amount != 0.4 || !models[0].Ready() {
 		t.Fatalf("models %+v %v", models, err)
 	}
+	// The desktop reads these lists without null checks, as engines always send them.
+	if js, _ := json.Marshal(models[0]); !strings.Contains(string(js), `"restrictions":[]`) || strings.Contains(string(js), `"tasks":null`) {
+		t.Fatalf("a list is null: %s", js)
+	}
 	img, _ := st.PutBytes([]byte("\x89PNG fake image"))
 	events := make(chan engineapi.Event, 16)
 	run, err := p.Run(ctx, engineapi.RunRequest{Seed: 7, Stages: []engineapi.StageSpec{{ID: "shape", Use: "shape", Model: "fal-ai/fake-3d", Inputs: []string{img}}}}, events)
@@ -211,5 +216,28 @@ func TestABadKeyAndAnUnusableModelSaySo(t *testing.T) {
 		if m.ID == "fal-ai/fake-3d" && (!m.Added || m.Problem != "") {
 			t.Fatalf("fake-3d: %+v", m)
 		}
+	}
+}
+
+func TestThumbnailsComeOnlyFromFalsImageHosts(t *testing.T) {
+	for raw, want := range map[string]bool{
+		"https://v3b.fal.media/files/b/0a8c/x.jpg":                        true,
+		"https://fal.media/files/x.png":                                   true,
+		"https://storage.googleapis.com/falserverless/web-examples/x.jpg": true,
+		"https://storage.googleapis.com/other-bucket/x.jpg":               false,
+		"https://storage.googleapis.com/falserverless/../other/x.jpg":     false,
+		"http://v3b.fal.media/files/x.jpg":                                false,
+		"https://fal.media.example.com/x.jpg":                             false,
+		"https://user@v3b.fal.media/x.jpg":                                false,
+		"http://127.0.0.1:8787/files/x.jpg":                               false,
+	} {
+		u, _ := url.Parse(raw)
+		if got := thumbnailHost(u); got != want {
+			t.Errorf("%s: %v, want %v", raw, got, want)
+		}
+	}
+	p, _ := newProvider(t, newFake(t), key)
+	if _, _, err := p.Thumbnail(context.Background(), "https://example.com/x.jpg"); err == nil {
+		t.Fatal("fetched a picture from another host")
 	}
 }

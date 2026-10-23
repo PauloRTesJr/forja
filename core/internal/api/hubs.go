@@ -101,6 +101,28 @@ func (s *Server) hubCatalog(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, page)
 }
 
+// maxThumbnail caps a relayed catalog picture.
+const maxThumbnail = 4 << 20
+
+// hubThumbnail relays a catalog picture: the desktop page loads images only from the core.
+func (s *Server) hubThumbnail(w http.ResponseWriter, r *http.Request) {
+	h, ok := s.hub(w, r.PathValue("id"))
+	if !ok {
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+	body, kind, err := h.Thumbnail(ctx, r.URL.Query().Get("url"))
+	if err != nil {
+		problem(w, 502, err.Error())
+		return
+	}
+	defer body.Close()
+	w.Header().Set("Content-Type", kind)
+	w.Header().Set("Cache-Control", "max-age=86400")
+	_, _ = io.Copy(w, io.LimitReader(body, maxThumbnail))
+}
+
 // hubModels adds a model to a hub's list (POST) or removes one (DELETE ?model=).
 func (s *Server) hubModels(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")

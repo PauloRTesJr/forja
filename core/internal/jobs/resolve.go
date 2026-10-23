@@ -64,7 +64,27 @@ func (r *Runner) Resolve(ctx context.Context, project string, p *presets.Preset)
 		}
 	}
 	picks, _, err := r.resolve(ctx, cfg, p.Active())
-	return picks, err
+	if err != nil {
+		return nil, err
+	}
+	// An optional stage that is off has no pick. One that reads a skipped stage gets a skipped
+	// pick anyway, so the app does not offer to turn on a step that would not run.
+	by := map[string]string{}
+	for _, pick := range picks {
+		by[pick.Stage] = pick.By
+	}
+	for _, s := range p.Stages {
+		if _, ok := by[s.ID]; ok || s.Optional == nil {
+			continue
+		}
+		for _, in := range s.Inputs {
+			if by[in] != "" {
+				picks = append(picks, Pick{Stage: s.ID, Use: s.Use, Skipped: true, By: by[in]})
+				break
+			}
+		}
+	}
+	return picks, nil
 }
 
 // resolve picks a provider and a model for every stage (docs/decisions.md, decision 12), then

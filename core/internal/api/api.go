@@ -66,6 +66,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("DELETE /v1/providers/{id}", s.providerRemove)
 	mux.HandleFunc("PUT /v1/providers/{id}/token", s.providerToken)
 	mux.HandleFunc("GET /v1/providers/{id}/catalog", s.hubCatalog)
+	mux.HandleFunc("GET /v1/providers/{id}/thumbnail", s.hubThumbnail)
 	mux.HandleFunc("POST /v1/providers/{id}/models", s.hubModels)
 	mux.HandleFunc("DELETE /v1/providers/{id}/models", s.hubModels)
 	mux.HandleFunc("GET /v1/spend", s.spend)
