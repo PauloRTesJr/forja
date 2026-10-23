@@ -1,7 +1,10 @@
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { useState, type DragEvent } from 'react'
+import { Corners, DropSigil, Folder, PresetEmblem, Sparkle } from '../components/icons'
+import { ScreenHead, SectionHead } from '../components/ScreenHead'
 import { api, submitJobs, type Preset } from '../lib/api'
 import { keys } from '../lib/events'
+import { roman } from '../lib/format'
 import { transition, useNavigate } from '../lib/nav'
 import { useToast } from '../lib/toast'
 
@@ -55,15 +58,10 @@ export function Generate() {
 
   return (
     <div className="screen">
-      <div className="screen-head">
-        <div>
-          <h1>Generate</h1>
-          <p className="sub">Drop reference images. Each becomes a game-ready GLB.</p>
-        </div>
-      </div>
+      <ScreenHead eyebrow={['Arcanum I', 'The Forge']} title="Generate" sub="Drop reference images. Each becomes a game-ready GLB." />
 
       <div
-        className={`drop enter ${over ? 'over' : ''}`}
+        className={`drop enter ${over ? 'over' : ''} ${submit.isPending ? 'busy' : ''}`}
         role="button"
         tabIndex={0}
         onClick={async () => {
@@ -82,37 +80,49 @@ export function Generate() {
         onDragLeave={() => setOver(false)}
         onDrop={onDrop}
       >
+        <span className="frame" aria-hidden />
+        <Corners />
         <div className="drop-inner">
-          <div className="drop-icon">⬆</div>
-          <strong style={{ fontSize: 15 }}>{submit.isPending ? 'Queuing…' : 'Drop images or a folder of images'}</strong>
-          <span className="muted">or click to browse · PNG, JPEG, WebP</span>
+          <DropSigil />
+          <strong className="drop-title">
+            {submit.isPending ? 'Queuing…' : over ? 'Release to queue them' : 'Drop images or a folder of images'}
+          </strong>
+          <span className="drop-hint">or click to browse · PNG, JPEG, WebP</span>
         </div>
       </div>
 
       <div className="section">
-        <h2>Preset</h2>
-        <div className="chips">
-          {presets.isPending &&
-            [0, 1, 2, 3].map((i) => <div key={i} className="skeleton" style={{ width: 200, height: 62 }} />)}
+        <SectionHead>Preset</SectionHead>
+        <div className="presets">
+          {presets.isPending && [0, 1, 2, 3].map((i) => <div key={i} className="skeleton" style={{ height: 196 }} />)}
           {presets.data?.map((p, i) => (
             <button
               key={p.id}
-              className="chip enter"
+              className="preset enter"
               style={{ '--i': i } as React.CSSProperties}
               aria-pressed={preset === p.id}
               onClick={() => setPreset(p.id)}
             >
+              <span className="frame" aria-hidden />
+              <span className="tarot-num" aria-hidden>
+                {roman(i + 1)}
+              </span>
+              <span className="emblem">
+                <PresetEmblem id={p.id} />
+              </span>
               <strong>{p.name}</strong>
               <small>{p.description}</small>
+              <Sparkle size={12} className="chosen" />
             </button>
           ))}
         </div>
       </div>
 
       <div className="section">
-        <h2>Export to</h2>
+        <SectionHead>Export to</SectionHead>
         <div className="row">
           <button className="btn" onClick={pickProject}>
+            <Folder />
             {project ? 'Change project…' : 'Choose a Unity project…'}
           </button>
           {project ? (

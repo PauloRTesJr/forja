@@ -1,6 +1,8 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useDeferredValue, useEffect, useState, useSyncExternalStore } from 'react'
 import { Empty } from '../components/Empty'
+import { Search as SearchIcon, Sparkle } from '../components/icons'
+import { ScreenHead } from '../components/ScreenHead'
 import { api, artifactURL, type Asset } from '../lib/api'
 import { keys } from '../lib/events'
 import { count, relative } from '../lib/format'
@@ -26,13 +28,13 @@ export function Library() {
 
   return (
     <div className="screen">
-      <div className="screen-head">
-        <div>
-          <h1>Library</h1>
-          <p className="sub">{assets.data ? `${assets.data.length} assets` : ' '}</p>
-        </div>
-        <input className="search" placeholder="Search by name or preset" value={q} onChange={(e) => setQ(e.target.value)} />
-      </div>
+      <ScreenHead eyebrow={['Arcanum III', 'The Grimoire']} title="Library" sub={assets.data ? `${assets.data.length} assets` : ' '}>
+        <label className="search">
+          <SearchIcon />
+          <span className="sr-only">Search assets</span>
+          <input type="search" placeholder="Search by name or preset" value={q} onChange={(e) => setQ(e.target.value)} />
+        </label>
+      </ScreenHead>
       {assets.data?.length === 0 && <Empty title={query ? 'No matches' : 'No assets yet'}>Finished jobs land here.</Empty>}
       <div className="grid">
         {assets.isPending && [0, 1, 2, 3, 4, 5].map((i) => <div key={i} className="skeleton" style={{ aspectRatio: '1 / 1.2' }} />)}
@@ -53,6 +55,8 @@ function AssetCard({ asset, index }: { asset: Asset; index: number }) {
       onClick={() => transition(() => navigate({ screen: 'asset', id: asset.id }))}
     >
       <div className="card-img">
+        <Sparkle size={11} className="dust a" />
+        <Sparkle size={8} className="dust b" />
         {asset.thumbnail ? (
           <img src={artifactURL(asset.thumbnail, 'image/webp')} alt="" decoding="async" loading="lazy" />
         ) : error ? (

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { Corners } from '../components/icons'
 import { Viewer, type MeshStats, type ViewMode } from './scene'
 
 const modes: { id: ViewMode; label: string }[] = [
@@ -47,6 +48,8 @@ export function ViewerView({ url, onStats }: { url: string | undefined; onStats?
   return (
     <div className="viewer">
       <canvas ref={canvas} tabIndex={0} aria-label="3D model viewer" />
+      <span className="frame" aria-hidden />
+      <Corners />
       <div className={`viewer-loading ${state === 'ready' ? 'hidden' : ''}`}>
         {state === 'error' ? 'Could not load this model' : state === 'loading' ? <div className="skeleton" style={{ width: 120, height: 8 }} /> : 'No model yet'}
       </div>

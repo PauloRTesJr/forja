@@ -48,6 +48,12 @@
   }
 }
 
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 @keyframes indeterminate {
   from {
     transform: translateX(-100%) scaleX(0.4);

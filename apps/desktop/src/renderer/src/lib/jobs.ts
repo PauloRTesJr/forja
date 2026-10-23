@@ -1,5 +1,6 @@
 // Pure helpers over job state, shared by the event reducer and the screens.
 import type { Job, Stage } from './api'
+import { seconds, stageLabel } from './format'
 
 /** Insert or replace a job, newest first. Keeps array identity when nothing changed. */
 export function upsertJob(list: Job[] | undefined, job: Job): Job[] {
@@ -47,3 +48,97 @@ export function previewOf(job: Job): string | undefined {
 }
 
 export const isActive = (j: Job): boolean => j.status === 'queued' || j.status === 'running'
+
+export type PhaseId = 'prepare' | 'shape' | 'paint' | 'finish'
+export interface Phase {
+  id: PhaseId
+  label: string
+  stages: Stage[]
+}
+
+const phaseLabels: Record<PhaseId, string> = { prepare: 'Prepare', shape: 'Shape', paint: 'Paint', finish: 'Finish' }
+
+function phaseOfUse(use: string): PhaseId | undefined {
+  if (use === 'background-removal' || use === 'framing') return 'prepare'
+  if (use === 'shape' || use === 'mesh.cleanup' || use === 'mesh.decimate' || use === 'mesh.uv') return 'shape'
+  if (use === 'texture' || use.startsWith('texture.') || use === 'bake') return 'paint'
+  if (use === 'mesh.lods' || use === 'export') return 'finish'
+  return undefined
+}
+
+/**
+ * Groups stages into the pipeline's phases, keeping their order. Ten stage names in a row are
+ * too many to read at a glance; four phases are not. A stage type the UI does not know joins
+ * the phase before it, so a new adapter never breaks the track.
+ */
+export function phasesOf(stages: Stage[]): Phase[] {
+  const phases: Phase[] = []
+  for (const s of stages) {
+    const last = phases.at(-1)
+    const id = phaseOfUse(s.use) ?? last?.id ?? 'prepare'
+    if (last?.id === id) last.stages.push(s)
+    else phases.push({ id, label: phaseLabels[id], stages: [s] })
+  }
+  return phases
+}
+
+export type PhaseState = 'done' | 'running' | 'failed' | 'waiting'
+
+export function phaseState(p: Phase): PhaseState {
+  if (p.stages.some((s) => s.status === 'failed')) return 'failed'
+  if (p.stages.some((s) => s.status === 'running')) return 'running'
+  if (p.stages.every((s) => s.status === 'succeeded')) return 'done'
+  return 'waiting'
+}
+
+export interface Summary {
+  headline: string
+  note: string
+}
+
+/** One plain sentence for a job row: what is happening and where. */
+export function summarize(job: Job): Summary {
+  const n = job.stages.length
+  const done = job.stages.filter((s) => s.status === 'succeeded').length
+  const cached = job.stages.filter((s) => s.cached).length
+  const ran = job.stages.reduce((t, s) => t + (s.cached ? 0 : s.seconds), 0)
+  const at = (s: Stage): string => `stage ${job.stages.indexOf(s) + 1} of ${n}`
+  switch (job.status) {
+    case 'running': {
+      const s = job.stages.find((x) => x.status === 'running')
+      const overall = `${Math.round(jobFraction(job) * 100)}% overall`
+      return s
+        ? { headline: `Running ${stageLabel(s.use)}`, note: `${at(s)} · ${overall}` }
+        : { headline: 'Running', note: `${done} of ${n} stages done · ${overall}` }
+    }
+    case 'queued':
+      return { headline: 'Waiting to start', note: done ? `${n - done} of ${n} stages left to run` : `${n} stages to run` }
+    case 'succeeded':
+      return {
+        headline: ran > 0 ? `Finished in ${seconds(ran)}` : 'Finished from cache',
+        note: cached ? `${cached} of ${n} stages reused from cache` : `${n} stages`,
+      }
+    case 'failed': {
+      const s = job.stages.find((x) => x.status === 'failed')
+      return s ? { headline: `Stopped at ${stageLabel(s.use)}`, note: at(s) } : { headline: 'Failed', note: `${done} of ${n} stages done` }
+    }
+    case 'cancelled':
+      return { headline: 'Cancelled', note: `${done} of ${n} stages done` }
+  }
+}
+
+/** The time column of the stage list: a duration, or what the stage is doing instead. */
+export function stageTime(s: Stage): string {
+  switch (s.status) {
+    case 'succeeded':
+      return s.cached ? 'cached' : seconds(s.seconds)
+    case 'running':
+      return s.total > 0 ? `${Math.round((s.step / s.total) * 100)}%` : 'running'
+    case 'failed':
+      return 'failed'
+    case 'cancelled':
+      return 'cancelled'
+    default:
+      return '—'
+  }
+}

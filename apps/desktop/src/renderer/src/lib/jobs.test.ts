@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { Job, Stage } from './api'
-import { applyProgress, jobFraction, previewOf, upsertJob } from './jobs'
-import { count, seconds } from './format'
+import { applyProgress, jobFraction, phaseState, phasesOf, previewOf, stageTime, summarize, upsertJob } from './jobs'
+import { count, roman, seconds } from './format'
 
 const stage = (id: string, status: Stage['status'], extra: Partial<Stage> = {}): Stage => ({
   id, use: id, status, key: '', cached: false, outputs: [], seconds: 0, step: 0, total: 0, ...extra,
@@ -38,11 +38,69 @@ describe('progress', () => {
   })
 })
 
+describe('phases', () => {
+  const uses = ['background-removal', 'framing', 'shape', 'mesh.cleanup', 'mesh.decimate', 'mesh.uv', 'texture', 'texture.match', 'bake', 'mesh.lods', 'export']
+
+  it('groups a full pipeline into four phases in order', () => {
+    const phases = phasesOf(uses.map((u) => stage(u, 'queued')))
+    expect(phases.map((p) => [p.label, p.stages.length])).toEqual([
+      ['Prepare', 2],
+      ['Shape', 4],
+      ['Paint', 3],
+      ['Finish', 2],
+    ])
+  })
+
+  it('puts an unknown stage type in the phase before it', () => {
+    const phases = phasesOf([stage('shape', 'queued'), stage('mesh.rig', 'queued'), stage('export', 'queued')])
+    expect(phases.map((p) => p.stages.map((s) => s.id))).toEqual([['shape', 'mesh.rig'], ['export']])
+  })
+
+  it('reads a phase as failed, running, done or waiting', () => {
+    const [prepare, shape] = phasesOf([
+      stage('background-removal', 'succeeded'),
+      stage('framing', 'succeeded'),
+      stage('shape', 'running'),
+      stage('mesh.cleanup', 'queued'),
+    ])
+    expect(phaseState(prepare!)).toBe('done')
+    expect(phaseState(shape!)).toBe('running')
+    expect(phaseState(phasesOf([stage('texture', 'failed')])[0]!)).toBe('failed')
+    expect(phaseState(phasesOf([stage('export', 'queued')])[0]!)).toBe('waiting')
+  })
+})
+
+describe('summarize', () => {
+  it('names the running stage and its place', () => {
+    const j = job('a', [stage('shape', 'succeeded'), stage('texture', 'running', { step: 1, total: 2 }), stage('export', 'queued')])
+    expect(summarize(j)).toEqual({ headline: 'Running Texture', note: 'stage 2 of 3 · 50% overall' })
+  })
+
+  it('names where a failed job stopped', () => {
+    const j = { ...job('a', [stage('framing', 'succeeded'), stage('shape', 'failed')]), status: 'failed' as const }
+    expect(summarize(j)).toEqual({ headline: 'Stopped at Shape', note: 'stage 2 of 2' })
+  })
+
+  it('counts time spent and stages reused from cache', () => {
+    const j = {
+      ...job('a', [stage('shape', 'succeeded', { cached: true, seconds: 30 }), stage('texture', 'succeeded', { seconds: 95 })]),
+      status: 'succeeded' as const,
+    }
+    expect(summarize(j)).toEqual({ headline: 'Finished in 1 min 35 s', note: '1 of 2 stages reused from cache' })
+    expect(stageTime(j.stages[0]!)).toBe('cached')
+    expect(stageTime(stage('x', 'running', { step: 1, total: 4 }))).toBe('25%')
+  })
+})
+
 describe('format', () => {
   it('formats durations and counts', () => {
     expect(seconds(0.25)).toBe('250 ms')
     expect(seconds(4.2)).toBe('4.2 s')
     expect(seconds(95)).toBe('1 min 35 s')
     expect(count(4998)).toBe('5.0k')
+  })
+
+  it('numbers cards in roman numerals', () => {
+    expect([1, 4, 9, 14, 40].map(roman)).toEqual(['I', 'IV', 'IX', 'XIV', 'XL'])
   })
 })

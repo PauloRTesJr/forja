@@ -39,9 +39,34 @@ const stageLabels: Record<string, string> = {
   'mesh.decimate': 'Low-poly',
   'mesh.uv': 'UV unwrap',
   texture: 'Texture',
+  'texture.match': 'Texture match',
   bake: 'Bake',
   'mesh.lods': 'LODs',
   export: 'Export',
 }
 
 export const stageLabel = (use: string): string => stageLabels[use] ?? use
+
+const numerals: [number, string][] = [
+  [100, 'C'],
+  [90, 'XC'],
+  [50, 'L'],
+  [40, 'XL'],
+  [10, 'X'],
+  [9, 'IX'],
+  [5, 'V'],
+  [4, 'IV'],
+  [1, 'I'],
+]
+
+/** Tarot-style card numbers. */
+export function roman(n: number): string {
+  let out = ''
+  for (const [value, glyph] of numerals) {
+    while (n >= value) {
+      out += glyph
+      n -= value
+    }
+  }
+  return out
+}

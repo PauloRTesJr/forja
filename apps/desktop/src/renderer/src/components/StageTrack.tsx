@@ -1,28 +1,54 @@
+import type { CSSProperties } from 'react'
 import type { Stage } from '../lib/api'
 import { stageLabel } from '../lib/format'
-import { stageFraction } from '../lib/jobs'
+import { phaseState, phasesOf, stageFraction, stageTime } from '../lib/jobs'
+import { Star } from './icons'
 
-/** One segment per stage; fills animate with transform only. */
+const starClass = (s: Stage): string => `star-slot ${s.status} ${s.cached ? 'cached' : ''}`
+
+/** The pipeline as phases; each phase's rule fills with transform only as its stages finish. */
 export function StageTrack({ stages }: { stages: Stage[] }) {
   return (
-    <>
-      <div className="track" aria-hidden>
-        {stages.map((s) => {
-          const cls = [s.status, s.cached ? 'cached' : '', s.status === 'running' && s.total === 0 ? 'indeterminate' : '']
-          return (
-            <div key={s.id} className={`seg ${cls.join(' ')}`} title={`${stageLabel(s.use)}: ${s.cached ? 'cached' : s.status}`}>
-              <i style={{ '--p': s.status === 'running' && s.total === 0 ? 1 : stageFraction(s) } as React.CSSProperties} />
+    <div className="phases">
+      {phasesOf(stages).map((p) => {
+        const state = phaseState(p)
+        const done = p.stages.filter((s) => s.status === 'succeeded').length
+        const fraction = p.stages.reduce((t, s) => t + stageFraction(s), 0) / p.stages.length
+        return (
+          <div key={p.stages[0]!.id} className={`phase ${state}`} style={{ '--size': p.stages.length, '--p': fraction } as CSSProperties}>
+            <div className="phase-head">
+              <span className="phase-name">{p.label}</span>
+              <span className="phase-tally">{state === 'failed' ? 'stopped' : `${done} of ${p.stages.length}`}</span>
             </div>
-          )
-        })}
-      </div>
-      <div className="track-labels">
-        {stages.map((s) => (
-          <span key={s.id} className={s.status}>
-            {stageLabel(s.use)}
-          </span>
-        ))}
-      </div>
-    </>
+            <div className="phase-rule" aria-hidden>
+              <i />
+            </div>
+            <div className="phase-stars">
+              {p.stages.map((s) => (
+                <span key={s.id} className={starClass(s)} title={`${stageLabel(s.use)}: ${s.cached ? 'cached' : s.status}`}>
+                  <Star />
+                </span>
+              ))}
+            </div>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+/** Every stage on its own line: what ran it and how long it took. */
+export function StageList({ stages }: { stages: Stage[] }) {
+  return (
+    <ol className="stage-list">
+      {stages.map((s) => (
+        <li key={s.id} className={`${s.status} ${s.cached ? 'cached' : ''}`}>
+          <Star size={13} />
+          <span className="stage-name">{stageLabel(s.use)}</span>
+          <span className="stage-model">{s.model ?? 'built-in'}</span>
+          <span className="stage-time">{stageTime(s)}</span>
+        </li>
+      ))}
+    </ol>
   )
 }

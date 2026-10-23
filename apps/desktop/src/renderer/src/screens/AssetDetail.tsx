@@ -1,5 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
+import { ArrowLeft, Folder } from '../components/icons'
+import { SectionHead } from '../components/ScreenHead'
 import { api, artifactURL, type Asset, type Job } from '../lib/api'
 import { keys } from '../lib/events'
 import { count, relative, seconds, stageLabel } from '../lib/format'
@@ -21,14 +23,16 @@ export function AssetDetail({ id }: { id: string }) {
   return (
     <div className="screen" style={{ display: 'flex', flexDirection: 'column' }}>
       <div className="screen-head">
-        <div>
-          <button className="btn ghost" style={{ marginLeft: -14 }} onClick={() => transition(() => navigate({ screen: 'library' }))}>
-            ← Library
+        <div className="screen-title">
+          <button className="back" onClick={() => transition(() => navigate({ screen: 'library' }))}>
+            <ArrowLeft />
+            Library
           </button>
           <h1>{a?.name ?? ' '}</h1>
         </div>
         {a?.export_path && (
           <button className="btn" onClick={() => window.forja.showItem(a.export_path!)}>
+            <Folder />
             Show in folder
           </button>
         )}
@@ -46,7 +50,7 @@ export function AssetDetail({ id }: { id: string }) {
                 ['Size (m)', stats.size.map((v) => v.toFixed(2)).join(' × ')],
                 ['Materials', String(stats.materials)],
               ].map(([k, v], i) => (
-                <div className="stat" key={k} style={{ '--i': i } as React.CSSProperties}>
+                <div className={`stat ${k === 'Textures' || k === 'Size (m)' ? 'wide' : ''}`} key={k} style={{ '--i': i } as React.CSSProperties}>
                   <b>{v}</b>
                   <span>{k}</span>
                 </div>
@@ -56,38 +60,44 @@ export function AssetDetail({ id }: { id: string }) {
             )}
           </div>
           {a && (
-            <dl className="kv">
-              <dt>Preset</dt>
-              <dd>{a.preset}</dd>
-              <dt>Created</dt>
-              <dd>{relative(a.created_at)}</dd>
-              <dt>Exported</dt>
-              <dd title={a.export_path}>{a.export_path ?? 'library only'}</dd>
-              <dt>File</dt>
-              <dd className="mono">{a.glb.slice(7, 19)}…</dd>
-            </dl>
+            <section>
+              <SectionHead>Details</SectionHead>
+              <dl className="kv">
+                <dt>Preset</dt>
+                <dd>{a.preset}</dd>
+                <dt>Created</dt>
+                <dd>{relative(a.created_at)}</dd>
+                <dt>Exported</dt>
+                <dd title={a.export_path}>{a.export_path ?? 'library only'}</dd>
+                <dt>File</dt>
+                <dd className="mono">{a.glb.slice(7, 19)}…</dd>
+              </dl>
+            </section>
           )}
           {job.data && (
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>Stage</th>
-                  <th>Model</th>
-                  <th style={{ textAlign: 'right' }}>Time</th>
-                </tr>
-              </thead>
-              <tbody>
-                {job.data.stages.map((s, i) => (
-                  <tr key={s.id} style={{ animationDelay: `${i * 25}ms` }}>
-                    <td>{stageLabel(s.use)}</td>
-                    <td className="muted">{s.model ?? 'built-in'}</td>
-                    <td style={{ textAlign: 'right' }} className={s.cached ? 'muted' : ''}>
-                      {s.cached ? 'cached' : seconds(s.seconds)}
-                    </td>
+            <section>
+              <SectionHead>Stages</SectionHead>
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Stage</th>
+                    <th>Model</th>
+                    <th style={{ textAlign: 'right' }}>Time</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {job.data.stages.map((s, i) => (
+                    <tr key={s.id} style={{ animationDelay: `${i * 25}ms` }}>
+                      <td>{stageLabel(s.use)}</td>
+                      <td className="muted">{s.model ?? 'built-in'}</td>
+                      <td style={{ textAlign: 'right' }} className={s.cached ? 'muted' : ''}>
+                        {s.cached ? 'cached' : seconds(s.seconds)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </section>
           )}
         </aside>
       </div>
