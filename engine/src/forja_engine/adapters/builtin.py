@@ -41,6 +41,9 @@ class Framing(Adapter):
 
 
 class Cleanup(Adapter):
+    # 2: floaters are dropped by face mask instead of split and joined (keeps textures).
+    version = "2"
+
     def capabilities(self) -> Capabilities:
         return Capabilities(tasks=(StageType.MESH_CLEANUP,), devices=CPU)
 
@@ -129,6 +132,10 @@ class Bake(Adapter):
 
     Inputs: the textured low-poly first, the high-poly second. Roughness and metallic stay
     constant factors; the ORM map's G and B are white so those factors pass through.
+
+    When the low-poly was not painted (a model did shape and texture in one pass, so the paint
+    stage was skipped), it is unwrapped here and the high-poly's colors are baked as its base
+    color (docs/decisions.md, 16).
     """
 
     version = "2"
@@ -139,6 +146,8 @@ class Bake(Adapter):
     def run(self, ctx: StageContext) -> list[StageOutput]:
         low = mesh_ops.load(ctx.input(ArtifactKind.MESH_GLB, 0).path)
         high = mesh_ops.load(ctx.input(ArtifactKind.MESH_GLB, 1).path)
+        if getattr(low.visual, "uv", None) is None:
+            low = mesh_ops.unwrap(low)
         material = getattr(low.visual, "material", None)
         base = getattr(material, "baseColorTexture", None)
         size = int(ctx.params.get("resolution") or (base.size[0] if base is not None else 1024))
@@ -151,7 +160,10 @@ class Bake(Adapter):
             ao_samples=int(ctx.params.get("ao_samples", 24)),
             ao_radius=float(ctx.params.get("ao_radius", 0.15)),
             seed=ctx.seed,
+            color=base is None,
         )
+        if base is None:
+            base = result.color
         ctx.progress(2, 3)
         ctx.check_cancel()
         if result.hit_ratio < 0.95:

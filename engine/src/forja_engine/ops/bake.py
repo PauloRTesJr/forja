@@ -1,4 +1,5 @@
-"""High-to-low baking: tangent-space normals and ambient occlusion, in the low-poly's UV space.
+"""High-to-low baking: tangent-space normals, ambient occlusion and, on request, base color,
+in the low-poly's UV space.
 
 For every texel the low-poly covers, a ray starts just outside the low surface (a cage at
 `cage` times the model's size) and travels inward along the low normal; the first hit on the
@@ -33,6 +34,9 @@ class BakeResult:
     tangents: F32  # per-vertex tangents of the low mesh, written into the GLB
     hit_ratio: float  # share of texels whose ray found the high-poly; low values mean a bad cage
     ray_engine: str
+    # The high-poly's own colors in the low-poly's UVs, when asked for and the high-poly has any
+    # (a textured mesh from a model that does shape and texture in one pass).
+    color: Image.Image | None = None
 
 
 @dataclass(frozen=True)
@@ -103,6 +107,8 @@ class _Rays:
     def __init__(self, high: trimesh.Trimesh) -> None:
         self.high = high
         self.vertex_normals = np.asarray(high.vertex_normals, dtype=np.float64)
+        # Triangles and barycentrics of the latest first_hits, for sampling colors there.
+        self.last: tuple[NDArray[np.int64], NDArray[np.float64]] = (np.zeros(0, np.int64), np.zeros((0, 3)))
         try:
             from trimesh.ray.ray_pyembree import RayMeshIntersector
 
@@ -117,16 +123,31 @@ class _Rays:
     def first_hits(
         self, origins: NDArray[np.float64], dirs: NDArray[np.float64], max_dist: float
     ) -> tuple[NDArray[np.bool_], NDArray[np.float64], NDArray[np.float64]]:
-        """(hit mask, hit points, smooth high-poly normals) for rays within max_dist."""
+        """(hit mask, hit points, smooth high-poly normals) for rays within max_dist.
+
+        The hit triangles and barycentrics stay on self.last for sampling colors at the hits.
+        """
         n = len(origins)
         hit = np.zeros(n, dtype=bool)
         points = np.zeros((n, 3))
         normals = np.zeros((n, 3))
+        tris = np.zeros(n, dtype=np.int64)
+        barys = np.zeros((n, 3))
         if self.embree is None:
             dist, idx = self.tree.query(origins + dirs * max_dist / 2)
             hit = dist < max_dist
             points[hit] = self.high.vertices[idx[hit]]
             normals[hit] = self.vertex_normals[idx[hit]]
+            # The nearest vertex stands in for the hit: one of its faces, all weight on it.
+            faces = np.asarray(self.high.faces)
+            first_face = np.full(len(self.high.vertices), -1, dtype=np.int64)
+            for corner in range(3):
+                unset = first_face[faces[:, corner]] < 0
+                first_face[faces[unset, corner]] = np.nonzero(unset)[0]
+            tris = np.maximum(first_face[idx], 0)
+            corner_of = np.argmax(faces[tris] == idx[:, None], axis=1)
+            barys[np.arange(n), corner_of] = 1.0
+            self.last = (tris, barys)
             return hit, points, normals
         loc, ray_idx, tri_idx = self.embree.intersects_location(origins, dirs, multiple_hits=False)
         close = np.linalg.norm(loc - origins[ray_idx], axis=1) <= max_dist
@@ -136,6 +157,9 @@ class _Rays:
         hit[ray_idx] = True
         points[ray_idx] = loc
         normals[ray_idx] = _unit(np.einsum("ij,ijk->ik", bary, corner_normals))
+        tris[ray_idx] = tri_idx
+        barys[ray_idx] = bary
+        self.last = (tris, barys)
         return hit, points, normals
 
     def occlusion(
@@ -171,6 +195,39 @@ class _Rays:
         return 1.0 - blocked.reshape(-1, samples).mean(axis=1)
 
 
+def has_color(mesh: trimesh.Trimesh) -> bool:
+    """Whether a mesh carries its own colors: a base color texture or vertex colors."""
+    visual = mesh.visual
+    if isinstance(visual, trimesh.visual.TextureVisuals):
+        material = getattr(visual, "material", None)
+        image = getattr(material, "baseColorTexture", None) or getattr(material, "image", None)
+        return image is not None and getattr(visual, "uv", None) is not None
+    return isinstance(visual, trimesh.visual.ColorVisuals) and visual.kind == "vertex"
+
+
+def sample_color(mesh: trimesh.Trimesh, tris: NDArray[np.int64], bary: NDArray[np.float64]) -> F32:
+    """RGB in [0, 1] at points given as (triangle, barycentric) on a mesh with colors."""
+    faces = np.asarray(mesh.faces)[tris]
+    visual = mesh.visual
+    if isinstance(visual, trimesh.visual.TextureVisuals):
+        material = visual.material
+        image = getattr(material, "baseColorTexture", None) or getattr(material, "image", None)
+        assert image is not None, "sample_color needs a mesh for which has_color is true"
+        rgb = np.asarray(image.convert("RGB"), dtype=np.float32) / 255
+        uv = np.einsum("ij,ijk->ik", bary, np.asarray(visual.uv, dtype=np.float64)[faces]) % 1.0
+        h, w = rgb.shape[:2]
+        px = np.clip((uv[:, 0] * w).astype(int), 0, w - 1)
+        py = np.clip(((1 - uv[:, 1]) * h).astype(int), 0, h - 1)  # UVs are bottom-left
+        out = rgb[py, px]
+        factor = getattr(material, "baseColorFactor", None)
+        if factor is not None:
+            out = out * (np.asarray(factor[:3], dtype=np.float32) / 255)
+        return out.astype(np.float32)
+    assert isinstance(visual, trimesh.visual.ColorVisuals)
+    colors = np.asarray(visual.vertex_colors, dtype=np.float32)[:, :3] / 255
+    return np.einsum("ij,ijk->ik", bary, colors[faces]).astype(np.float32)
+
+
 def bake(
     low: trimesh.Trimesh,
     high: trimesh.Trimesh,
@@ -180,8 +237,12 @@ def bake(
     ao_radius: float = 0.15,
     ao_scale: float = 0.5,
     seed: int = 0,
+    color: bool = False,
 ) -> BakeResult:
-    """`cage` and `ao_radius` are fractions of the low-poly's bounding-box diagonal."""
+    """`cage` and `ao_radius` are fractions of the low-poly's bounding-box diagonal.
+
+    With `color`, the high-poly's base color is baked too, from the same hits as the normals.
+    """
     uv = mesh_ops.uvs_of(low)
     tangents = mesh_ops.vertex_tangents(low, uv)
     diag = float(np.linalg.norm(low.extents))
@@ -204,6 +265,17 @@ def bake(
     covered[tx.ys, tx.xs] = True
     normal_tex = mesh_ops.dilate(normal_tex, covered, iterations=8)
 
+    color_img = None
+    if color and has_color(high):
+        tris, barys = rays.last
+        rgb = np.zeros((size, size, 3), dtype=np.float32)
+        rgb[tx.ys[hit], tx.xs[hit]] = sample_color(high, tris[hit], barys[hit])
+        got = np.zeros((size, size), dtype=bool)
+        got[tx.ys[hit], tx.xs[hit]] = True
+        # Texels whose ray missed take their neighbors' color; seams stay filled for mipmaps.
+        rgb = mesh_ops.dilate(rgb, got, iterations=16)
+        color_img = Image.fromarray((np.clip(rgb, 0, 1) * 255).round().astype(np.uint8), "RGB")
+
     # AO is low frequency: bake it at a fraction of the resolution from the high-poly hits.
     ao_size = max(64, int(size * ao_scale))
     ax = sample_texels(low, uv, tangents, ao_size)
@@ -225,4 +297,5 @@ def bake(
         tangents=tangents,
         hit_ratio=float(hit.mean()) if len(hit) else 0.0,
         ray_engine=rays.engine,
+        color=color_img,
     )

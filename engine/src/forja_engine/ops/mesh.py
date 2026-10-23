@@ -132,16 +132,18 @@ def _as_scene(mesh: trimesh.Trimesh | trimesh.Scene) -> trimesh.Scene:
 def cleanup(mesh: trimesh.Trimesh, min_component_ratio: float = 0.01) -> trimesh.Trimesh:
     """Drop floaters, merge duplicate vertices, drop degenerate faces, make normals consistent."""
     mesh = mesh.copy()
-    mesh.merge_vertices()
+    mesh.merge_vertices()  # keeps UV seams, so a textured mesh keeps its texture
     mesh.update_faces(mesh.nondegenerate_faces())
     mesh.remove_unreferenced_vertices()
-    parts = mesh.split(only_watertight=False)
-    if len(parts) > 1:
-        areas = np.array([p.area for p in parts])
-        keep = [p for p, a in zip(parts, areas, strict=True) if a >= areas.max() * min_component_ratio]
-        merged = trimesh.util.concatenate(keep)
-        assert isinstance(merged, trimesh.Trimesh)
-        mesh = merged
+    # Parts are found on a copy welded by position only: UV seams must not split a textured
+    # mesh into islands. Floaters are then dropped by face, which leaves the texture alone.
+    welded = trimesh.Trimesh(mesh.vertices, mesh.faces, process=False)
+    welded.merge_vertices(merge_tex=True, merge_norm=True)
+    labels = trimesh.graph.connected_component_labels(welded.face_adjacency, node_count=len(welded.faces))
+    if len(labels) and labels.max() > 0:
+        areas = np.bincount(labels, weights=welded.area_faces)
+        mesh.update_faces((areas >= areas.max() * min_component_ratio)[labels])
+        mesh.remove_unreferenced_vertices()
     trimesh.repair.fix_normals(mesh)
     return mesh
 
