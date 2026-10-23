@@ -21,6 +21,8 @@ func Defaults() map[string]any {
 			"policy":              "prefer-local",
 			"allow_paid_fallback": false,
 			"priority":            []any{"local"},
+			// Spending limits for paid providers, in USD; 0 means no limit.
+			"budget_usd": map[string]any{"per_job": 0.0, "per_day": 0.0, "per_month": 0.0},
 		},
 		"models": map[string]any{
 			"stubs": false,

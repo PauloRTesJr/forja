@@ -131,6 +131,16 @@ CREATE TABLE IF NOT EXISTS assets (
 	created_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS assets_created ON assets(created_at DESC);
+CREATE TABLE IF NOT EXISTS stage_costs (
+	job TEXT NOT NULL,
+	stage TEXT NOT NULL,
+	provider TEXT NOT NULL,
+	model TEXT NOT NULL,
+	amount REAL NOT NULL,
+	currency TEXT NOT NULL,
+	at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS stage_costs_at ON stage_costs(at);
 CREATE TABLE IF NOT EXISTS license_acceptances (
 	model TEXT NOT NULL,
 	license TEXT NOT NULL,
@@ -411,4 +421,28 @@ func (d *DB) Acceptances(ctx context.Context) (map[string]time.Time, error) {
 		out[model+" "+license] = time.UnixMilli(at)
 	}
 	return out, rows.Err()
+}
+
+// Cost is what one paid stage cost.
+type Cost struct {
+	Job      string  `json:"job"`
+	Stage    string  `json:"stage"`
+	Provider string  `json:"provider"`
+	Model    string  `json:"model"`
+	Amount   float64 `json:"amount"`
+	Currency string  `json:"currency"`
+}
+
+func (d *DB) RecordCost(ctx context.Context, c Cost) error {
+	_, err := d.sql.ExecContext(ctx,
+		`INSERT INTO stage_costs (job, stage, provider, model, amount, currency, at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		c.Job, c.Stage, c.Provider, c.Model, c.Amount, c.Currency, time.Now().UnixMilli())
+	return err
+}
+
+// Spent sums the cost of paid stages since a time. Hosted providers bill in USD.
+func (d *DB) Spent(ctx context.Context, since time.Time) (float64, error) {
+	var total sql.NullFloat64
+	err := d.sql.QueryRowContext(ctx, `SELECT SUM(amount) FROM stage_costs WHERE at >= ?`, since.UnixMilli()).Scan(&total)
+	return total.Float64, err
 }

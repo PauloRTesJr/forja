@@ -28,14 +28,17 @@ const EvSettingsChanged = "settings.changed"
 // settingKinds are the settings the app edits, with the type each holds. Only settings that
 // something reads are here; the rest of config.toml stays for hand editing.
 var settingKinds = map[string]string{
-	"engine.idle_unload_minutes":  "int",
-	"engine.vram_reserve_gb":      "float",
-	"engine.fit_mode":             "string",
-	"routing.policy":              "string",
-	"routing.allow_paid_fallback": "bool",
-	"project.export_dir":          "string",
-	"project.default_preset":      "string",
-	"models.stubs":                "bool",
+	"engine.idle_unload_minutes":   "int",
+	"routing.budget_usd.per_job":   "float",
+	"routing.budget_usd.per_day":   "float",
+	"routing.budget_usd.per_month": "float",
+	"engine.vram_reserve_gb":       "float",
+	"engine.fit_mode":              "string",
+	"routing.policy":               "string",
+	"routing.allow_paid_fallback":  "bool",
+	"project.export_dir":           "string",
+	"project.default_preset":       "string",
+	"models.stubs":                 "bool",
 }
 
 type settingView struct {
