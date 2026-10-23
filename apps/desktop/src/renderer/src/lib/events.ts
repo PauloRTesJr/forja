@@ -69,6 +69,7 @@ export function useCoreEvents(qc: QueryClient): boolean {
           void qc.invalidateQueries({ queryKey: keys.config })
           void qc.invalidateQueries({ queryKey: keys.presets })
           void qc.invalidateQueries({ queryKey: keys.models })
+          void qc.invalidateQueries({ queryKey: keys.setup })
           break
         case 'install.updated': {
           const t = ev.data as InstallTask

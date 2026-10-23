@@ -62,6 +62,10 @@ export function Generate() {
   const optional = current?.stages.filter((s) => s.optional) ?? []
   const isOn = (stage: string, fallback: boolean): boolean => options[`${preset}.${stage}`] ?? fallback
   const blocked = current !== undefined && !current.ready
+  // Once shown, setup stays until it is finished or skipped: its last step, the test run,
+  // comes after the presets are already ready.
+  const [setupOpen, setSetupOpen] = useState(false)
+  if (blocked && !current?.error && !setupOpen) setSetupOpen(true)
 
   const submit = useMutation({
     mutationFn: (paths: string[]) =>
@@ -115,7 +119,7 @@ export function Generate() {
           {current.name} cannot run: {current.error}
         </div>
       )}
-      {blocked && !current?.error && <Setup />}
+      {setupOpen && <Setup onDone={() => setSetupOpen(false)} />}
 
       <div
         className={`drop enter ${over && !blocked ? 'over' : ''} ${submit.isPending ? 'busy' : ''} ${blocked ? 'blocked' : ''}`}
