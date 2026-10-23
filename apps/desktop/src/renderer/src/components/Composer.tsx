@@ -1,7 +1,7 @@
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { api, fetchModels, pinModel, type Model, type Pick, type Preset } from '../lib/api'
 import { keys } from '../lib/events'
-import { money, stageLabel } from '../lib/format'
+import { money, PER_CALL, stageLabel } from '../lib/format'
 import { useToast } from '../lib/toast'
 import { PresetEmblem } from './icons'
 
@@ -38,7 +38,7 @@ export function estimate(plan: Pick[]): { usd: number; unknown: string[]; hosts:
   for (const p of plan) {
     if (p.skipped || !p.paid) continue
     if (p.provider) hosts.add(p.provider)
-    if (!p.price || /second|minute|megapixel|token|step/i.test(p.price.unit)) unknown.push(p.model_name || p.model || p.stage)
+    if (p.price?.unit !== PER_CALL) unknown.push(p.model_name || p.model || p.stage)
     else usd += p.price.amount
   }
   return { usd, unknown, hosts: [...hosts] }

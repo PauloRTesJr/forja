@@ -82,9 +82,12 @@ export function roman(n: number): string {
 }
 
 /** "$0.30", or "$0.02 per second" when the unit is not one generation. */
+/** The core's unit for a price per generation; any other unit cannot be added up per image. */
+export const PER_CALL = 'generation'
+
 export function money(p: { amount: number; unit: string; currency: string } | undefined): string {
   if (!p) return 'price unknown'
   const symbol = p.currency === 'USD' ? '$' : `${p.currency} `
   const amount = `${symbol}${p.amount < 0.1 ? p.amount.toFixed(3) : p.amount.toFixed(2)}`
-  return /second|minute|megapixel|token|step/i.test(p.unit) ? `${amount} per ${p.unit}` : amount
+  return `${amount} per ${p.unit === PER_CALL ? 'image' : p.unit.replace(/s$/, '')}`
 }

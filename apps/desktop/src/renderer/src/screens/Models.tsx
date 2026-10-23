@@ -21,12 +21,13 @@ import { keys } from '../lib/events'
 import { money, stageLabel, taskNoun } from '../lib/format'
 import { useToast } from '../lib/toast'
 
+const UNUSABLE = 'unusable'
 const ORDER = ['background-removal', 'shape', 'texture']
 
 function groupsOf(models: Model[]): [string, Model[]][] {
   const by = new Map<string, Model[]>()
   for (const m of models) {
-    const use = m.tasks[0] ?? 'other'
+    const use = m.tasks[0] ?? UNUSABLE
     by.set(use, [...(by.get(use) ?? []), m])
   }
   const rank = (use: string): number => (ORDER.includes(use) ? ORDER.indexOf(use) : ORDER.length)
@@ -78,7 +79,7 @@ export function Models() {
       {models.error && <div className="error">{(models.error as Error).message}</div>}
       {groupsOf(visible).map(([use, list]) => (
         <div className="section" key={use}>
-          <SectionHead>{stageLabel(use)}</SectionHead>
+          <SectionHead>{use === UNUSABLE ? 'Cannot be used' : stageLabel(use)}</SectionHead>
           <div className="model-grid">
             {list.map((m, i) => (
               <ModelCard key={`${m.provider}|${m.id}`} model={m} i={i} onInstall={() => setInstalling(m)} />
@@ -129,12 +130,13 @@ function ModelCard({ model: m, i, onInstall }: { model: Model; i: number; onInst
   const [confirm, setConfirm] = useState(false)
   const installed = m.status === 'ready' || m.status === 'loaded'
   const hosted = m.fit === 'hosted'
-  const use = m.tasks[0]!
-  const usedFor = m.uses.find((u) => u.use === use)
+  // A hosted model Forja cannot call has no stage; its description says why.
+  const use = m.tasks[0] as string | undefined
+  const usedFor = use ? m.uses.find((u) => u.use === use) : undefined
   const runnable = m.fit === 'fits' || m.fit === 'offload'
 
   const pick = useMutation({
-    mutationFn: (model: string) => pinModel(use, model, model ? m.provider : undefined),
+    mutationFn: (model: string) => pinModel(use!, model, model ? m.provider : undefined),
     onSuccess: () => void qc.invalidateQueries({ queryKey: keys.models }),
     onError: (e: Error) => toast(e.message, true),
   })
@@ -148,7 +150,7 @@ function ModelCard({ model: m, i, onInstall }: { model: Model; i: number; onInst
     <article className={`model-card enter ${installed ? 'installed' : ''}`} style={{ '--i': i } as CSSProperties}>
       <div className="model-cell">
         <span className={`sigil-badge ${m.status}`}>
-          <TaskSigil task={use} />
+          <TaskSigil task={use ?? 'shape'} />
         </span>
         <div>
           <strong>{m.name}</strong>
@@ -159,7 +161,9 @@ function ModelCard({ model: m, i, onInstall }: { model: Model; i: number; onInst
           {m.status === 'loaded'
             ? 'in VRAM'
             : hosted
-              ? `on ${m.provider_label}`
+              ? use
+                ? `on ${m.provider_label}`
+                : 'cannot be used'
               : installed
                 ? `ready on ${m.provider === 'local' ? m.device : m.provider_label}`
                 : 'not installed'}
@@ -168,15 +172,15 @@ function ModelCard({ model: m, i, onInstall }: { model: Model; i: number; onInst
       {m.description && <p className="model-desc">{m.description}</p>}
       <div className="chips">
         {m.recommended && <span className="chip recommended">Recommended</span>}
-        {hosted ? <span className="chip paid">{money(m.price)} per image</span> : <FitBadge fit={m.fit} />}
+        {hosted ? <span className="chip paid">{money(m.price)}</span> : <FitBadge fit={m.fit} />}
         {m.disk_gb ? <span className="chip">{m.disk_gb.toFixed(1)} GB</span> : null}
         {hosted && m.tasks.length > 1 && <span className="chip">Shape and texture in one pass</span>}
-        {usedFor && <span className="chip used">{usedFor.pinned ? `Chosen for ${taskNoun(use)}` : `In use for ${taskNoun(use)}`}</span>}
+        {usedFor && use && <span className="chip used">{usedFor.pinned ? `Chosen for ${taskNoun(use)}` : `In use for ${taskNoun(use)}`}</span>}
       </div>
       <LicenseLine license={m.license} />
       {hosted ? (
         <div className="row model-actions">
-          {!usedFor && (
+          {use && !usedFor && (
             <button className="btn" onClick={() => pick.mutate(m.id)} disabled={pick.isPending}>
               Use for {taskNoun(use)}
             </button>
@@ -205,7 +209,7 @@ function ModelCard({ model: m, i, onInstall }: { model: Model; i: number; onInst
             </button>
           )}
           {!installed && !runnable && <span className="muted">Runs only on another computer or a cloud GPU.</span>}
-          {installed && !usedFor && (
+          {installed && use && !usedFor && (
             <button className="btn" onClick={() => pick.mutate(m.id)} disabled={pick.isPending}>
               Use for {taskNoun(use)}
             </button>
