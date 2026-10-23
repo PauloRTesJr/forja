@@ -331,7 +331,15 @@ class Installer:
         uv = uv_binary()
         python = families.interpreter(env_dir)
         if not python.exists():
-            _run([uv, "venv", "--python", fam.python, "--seed", env_dir], self.log, cancel=self.report.cancel)
+            # The interpreters live in Forja's data folder, not uv's shared store: installs neither
+            # depend on nor change the user's other uv projects, and removing Forja removes them.
+            store = os.environ.get("UV_PYTHON_INSTALL_DIR") or str(self.envs_dir.parent / "_uv" / "python")
+            _run(
+                [uv, "venv", "--python", fam.python, "--seed", env_dir],
+                self.log,
+                env={"UV_PYTHON_INSTALL_DIR": store},
+                cancel=self.report.cancel,
+            )
         reqs = fam.requirements(lane)
         if not reqs.is_file():
             raise InstallError(f"{fam.name} has no requirements for lane {lane} ({reqs})")

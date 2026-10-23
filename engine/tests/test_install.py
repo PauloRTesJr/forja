@@ -200,3 +200,13 @@ def test_remove_drops_the_environment_with_its_last_model(tmp_path):
     assert not env.exists() and not (models / "birefnet").exists()
     with pytest.raises(install.InstallError, match="part of the engine"):
         inst.remove("stub-shape")
+
+
+def test_interpreters_live_in_the_data_folder(tmp_path, monkeypatch):
+    envs = {}
+    monkeypatch.delenv("UV_PYTHON_INSTALL_DIR", raising=False)
+    monkeypatch.setattr(install, "_run", lambda cmd, log, env=None, **kw: envs.setdefault(str(cmd[1]), env))
+    monkeypatch.setattr(install, "uv_binary", lambda: "uv")
+    inst = install.Installer(Registry.load(), tmp_path / "envs", tmp_path / "models", log=lambda s: None)
+    inst.environment(families.load("birefnet"), "cpu", tmp_path / "envs" / "birefnet")
+    assert envs["venv"]["UV_PYTHON_INSTALL_DIR"] == str(tmp_path / "_uv" / "python")
