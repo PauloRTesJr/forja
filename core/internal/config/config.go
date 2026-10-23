@@ -78,6 +78,8 @@ type Provider struct {
 	EndpointID        string  `toml:"endpoint_id" json:"endpoint_id,omitempty"`
 	PriceUSDPerSecond float64 `toml:"price_usd_per_second" json:"price_usd_per_second,omitempty"`
 	Paid              bool    `toml:"paid" json:"paid"`
+	// Models are the hub models the user added (endpoint ids), for kind = "api" providers.
+	Models []string `toml:"models" json:"models,omitempty"`
 }
 
 type Project struct {

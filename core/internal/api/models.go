@@ -28,6 +28,8 @@ var sample []byte
 type modelView struct {
 	engineapi.Model
 	Provider        string     `json:"provider"`
+	ProviderLabel   string     `json:"provider_label"`
+	Paid            bool       `json:"paid"`
 	NeedsAcceptance bool       `json:"needs_acceptance"`
 	AcceptedAt      *time.Time `json:"accepted_at,omitempty"`
 	Uses            []modelUse `json:"uses"`
@@ -47,45 +49,81 @@ func providerParam(r *http.Request) string {
 	return jobs.LocalProvider
 }
 
+// models lists one provider's models (?provider=, default local), or every provider's with
+// ?all=1. A provider that cannot answer is left out of an all-providers list.
 func (s *Server) models(w http.ResponseWriter, r *http.Request) {
-	id := providerParam(r)
-	if _, ok := s.Providers.Get(id); !ok {
-		problem(w, 404, "no provider "+id)
+	ids := []string{providerParam(r)}
+	all := r.URL.Query().Get("all") == "1"
+	if all {
+		ids = ids[:0]
+		for _, p := range s.Providers.All() {
+			ids = append(ids, p.ID())
+		}
+	} else if _, ok := s.Providers.Get(ids[0]); !ok {
+		problem(w, 404, "no provider "+ids[0])
 		return
 	}
 	get := s.Catalog.Get
 	if fresh(r) {
 		get = s.Catalog.Ask
 	}
-	e, err := get(r.Context(), id)
-	if err != nil {
-		problem(w, 502, err.Error())
-		return
-	}
 	cfg, err := s.Runner.Config("")
 	if err != nil {
 		problem(w, 422, err.Error())
 		return
 	}
+	labels := map[string]string{jobs.LocalProvider: "This computer"}
+	for _, pc := range cfg.Providers {
+		labels[pc.ID] = pc.Label
+	}
 	accepted, _ := s.DB.Acceptances(r.Context())
-	out := make([]modelView, 0, len(e.Models))
-	for _, m := range e.Models {
-		v := modelView{Model: m, Provider: id, NeedsAcceptance: m.License.NeedsAcceptance(), Uses: []modelUse{}}
-		if at, ok := accepted[m.ID+" "+m.License.SPDX]; ok {
-			v.AcceptedAt = &at
-		}
-		for _, use := range m.Tasks {
-			if pin := cfg.Models.Stages[use]; pin != "" {
-				if pin == m.ID {
-					v.Uses = append(v.Uses, modelUse{Use: use, Pinned: true})
-				}
-			} else if b := jobs.BestModel(e.Models, use, cfg.Models.Stubs); b != nil && b.ID == m.ID {
-				v.Uses = append(v.Uses, modelUse{Use: use})
+	auto := map[string]jobs.Pick{}
+	out := []modelView{}
+	for _, id := range ids {
+		e, err := get(r.Context(), id)
+		if err != nil {
+			if !all {
+				problem(w, 502, err.Error())
+				return
 			}
+			continue
 		}
-		out = append(out, v)
+		for _, m := range e.Models {
+			v := modelView{Model: m, Provider: id, ProviderLabel: orID(labels[id], id), Uses: []modelUse{},
+				NeedsAcceptance: m.License.NeedsAcceptance()}
+			if p, ok := s.Providers.Get(id); ok {
+				v.Paid = p.Paid()
+			}
+			if at, ok := accepted[m.ID+" "+m.License.SPDX]; ok {
+				v.AcceptedAt = &at
+			}
+			for _, use := range m.Tasks {
+				if pin := cfg.Models.Stages[use]; pin != "" {
+					if pin == m.ID && (cfg.Routing.Stages[use] == "" || cfg.Routing.Stages[use] == id) {
+						v.Uses = append(v.Uses, modelUse{Use: use, Pinned: true})
+					}
+					continue
+				}
+				pick, ok := auto[use]
+				if !ok {
+					pick, _ = s.Runner.Pick(r.Context(), "", use)
+					auto[use] = pick
+				}
+				if pick.Model == m.ID && pick.Provider == id {
+					v.Uses = append(v.Uses, modelUse{Use: use})
+				}
+			}
+			out = append(out, v)
+		}
 	}
 	writeJSON(w, 200, out)
+}
+
+func orID(label, id string) string {
+	if label == "" {
+		return id
+	}
+	return label
 }
 
 type installBody struct {
@@ -181,7 +219,8 @@ func detailOf(err error) string {
 func (s *Server) modelStage(w http.ResponseWriter, r *http.Request) {
 	use := r.PathValue("use")
 	var body struct {
-		Model string `json:"model"`
+		Model    string `json:"model"`
+		Provider string `json:"provider"`
 	}
 	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&body); err != nil {
 		problem(w, 400, "invalid JSON: "+err.Error())
@@ -191,11 +230,21 @@ func (s *Server) modelStage(w http.ResponseWriter, r *http.Request) {
 		problem(w, 400, "not a stage type: "+use)
 		return
 	}
-	var value any
-	if body.Model != "" {
-		value = body.Model
+	if body.Provider != "" {
+		if _, ok := s.Providers.Get(body.Provider); !ok {
+			problem(w, 404, "no provider "+body.Provider)
+			return
+		}
 	}
-	err := config.Edit(config.UserFile(), map[string]any{"models.stages." + use: value}, func() error {
+	// The model and, when given, the provider that runs it; nothing means automatic.
+	var model, prov any
+	if body.Model != "" {
+		model = body.Model
+		if body.Provider != "" {
+			prov = body.Provider
+		}
+	}
+	err := config.Edit(config.UserFile(), map[string]any{"models.stages." + use: model, "routing.stages." + use: prov}, func() error {
 		_, err := config.Load("", nil)
 		return err
 	})

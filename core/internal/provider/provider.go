@@ -95,3 +95,10 @@ func (r *Registry) All() []Provider {
 	}
 	return out
 }
+
+// Hub is implemented by providers with a catalog to browse and add models from (fal.ai).
+type Hub interface {
+	Search(ctx context.Context, query, cursor string) (*engineapi.CatalogPage, error)
+	// Check describes one model before it is added; Problem is set when Forja cannot call it.
+	Check(ctx context.Context, model string) (engineapi.CatalogModel, error)
+}
