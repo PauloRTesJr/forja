@@ -18,6 +18,8 @@ export const keys = {
   checks: (models: string[]) => ['checks', models.join(',')] as const,
   settings: ['settings'] as const,
   share: ['share'] as const,
+  spend: ['spend'] as const,
+  catalog: (provider: string, q: string) => ['catalog', provider, q] as const,
 }
 
 /** Keeps the newest state of each task, newest task first. */
@@ -42,6 +44,8 @@ export function useCoreEvents(qc: QueryClient): boolean {
         case 'job.updated':
         case 'job.finished':
           qc.setQueryData<Job[]>(keys.jobs, (list) => upsertJob(list, ev.data as Job))
+          // A finished job may have run paid stages.
+          if (ev.type === 'job.finished') void qc.invalidateQueries({ queryKey: keys.spend })
           break
         case 'stage.progress': {
           const p = ev.data as { job: string; stage: string; step: number; total: number }
@@ -58,6 +62,8 @@ export function useCoreEvents(qc: QueryClient): boolean {
           void qc.invalidateQueries({ queryKey: keys.models })
           void qc.invalidateQueries({ queryKey: keys.presets })
           void qc.invalidateQueries({ queryKey: keys.setup })
+          // Pins live in config: a model chosen for a stage changes it.
+          void qc.invalidateQueries({ queryKey: keys.config })
           break
         case 'providers.changed':
           void qc.invalidateQueries({ queryKey: keys.providers })

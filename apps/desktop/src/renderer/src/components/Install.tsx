@@ -35,6 +35,7 @@ const fitText: Record<Fit, string> = {
   offload: 'Runs with offload, slower',
   'too-big': 'Needs more VRAM',
   unsupported: 'Cannot run here',
+  hosted: 'Hosted',
 }
 
 export function FitBadge({ fit }: { fit?: Fit }) {
