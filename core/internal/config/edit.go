@@ -20,6 +20,106 @@ import (
 // removes the key. validate runs on the result (normally a full Load); when it fails, the
 // file goes back to how it was.
 func Edit(path string, changes map[string]any, validate func() error) error {
+	return rewrite(path, func(want map[string]any) {
+		for k, v := range changes {
+			setPath(want, strings.Split(k, "."), v)
+		}
+	}, func(text string) (string, bool) { return editLines(text, changes) }, validate)
+}
+
+// AddProvider appends a [[providers]] table to a config file, keeping the rest of it.
+func AddProvider(path string, p Provider, validate func() error) error {
+	fields := providerFields(p)
+	return rewrite(path, func(want map[string]any) {
+		list, _ := want["providers"].([]map[string]any)
+		want["providers"] = append(list, fields)
+	}, func(text string) (string, bool) {
+		var b strings.Builder
+		b.WriteString(strings.TrimRight(text, "\n"))
+		if b.Len() > 0 {
+			b.WriteString("\n\n")
+		}
+		b.WriteString("[[providers]]\n")
+		for _, k := range []string{"id", "label", "kind", "url", "secret", "fingerprint"} {
+			if v, ok := fields[k]; ok {
+				val, _ := encodeValue(v)
+				b.WriteString(k + " = " + val + "\n")
+			}
+		}
+		return b.String(), true
+	}, validate)
+}
+
+// RemoveProvider deletes the [[providers]] table with this id from a config file.
+func RemoveProvider(path, id string, validate func() error) error {
+	return rewrite(path, func(want map[string]any) {
+		list, _ := want["providers"].([]map[string]any)
+		kept := []map[string]any{}
+		for _, p := range list {
+			if p["id"] != id {
+				kept = append(kept, p)
+			}
+		}
+		if len(kept) == 0 {
+			delete(want, "providers")
+		} else {
+			want["providers"] = kept
+		}
+	}, func(text string) (string, bool) { return removeProviderLines(text, id) }, validate)
+}
+
+func providerFields(p Provider) map[string]any {
+	out := map[string]any{"id": p.ID, "kind": p.Kind}
+	for k, v := range map[string]string{"label": p.Label, "url": p.URL, "secret": p.Secret, "fingerprint": p.Fingerprint} {
+		if v != "" {
+			out[k] = v
+		}
+	}
+	if p.Paid {
+		out["paid"] = true
+	}
+	return out
+}
+
+// removeProviderLines drops the lines of one [[providers]] table, up to the next header.
+func removeProviderLines(text, id string) (string, bool) {
+	lines := strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n")
+	start, end := -1, len(lines)
+	for i := 0; i < len(lines); i++ {
+		if strings.TrimSpace(lines[i]) != "[[providers]]" {
+			continue
+		}
+		j := i + 1
+		match := false
+		for ; j < len(lines); j++ {
+			if headerLine.MatchString(lines[j]) || arrayLine.MatchString(lines[j]) {
+				break
+			}
+			if m := keyLine.FindStringSubmatch(lines[j]); m != nil && unquote(m[1]) == "id" {
+				var probe map[string]any
+				if _, err := toml.Decode(lines[j], &probe); err == nil && probe["id"] == id {
+					match = true
+				}
+			}
+		}
+		if match {
+			start, end = i, j
+			break
+		}
+		i = j - 1
+	}
+	if start < 0 {
+		return text, true
+	}
+	if start > 0 && strings.TrimSpace(lines[start-1]) == "" {
+		start--
+	}
+	return strings.Join(append(lines[:start], lines[end:]...), "\n"), true
+}
+
+// rewrite changes one config file: change describes the result as data, lineEdit tries to
+// produce it as text. When the text decodes to something else, the file is encoded anew.
+func rewrite(path string, change func(map[string]any), lineEdit func(string) (string, bool), validate func() error) error {
 	before, err := os.ReadFile(path)
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return err
@@ -29,10 +129,8 @@ func Edit(path string, changes map[string]any, validate func() error) error {
 		return fmt.Errorf("%s: %w", path, err)
 	}
 	want := deepCopy(current)
-	for k, v := range changes {
-		setPath(want, strings.Split(k, "."), v)
-	}
-	after, ok := editLines(string(before), changes)
+	change(want)
+	after, ok := lineEdit(string(before))
 	if ok {
 		got := map[string]any{}
 		_, err := toml.Decode(after, &got)

@@ -192,12 +192,35 @@ export const pinModel = (use: string, model: string): Promise<void> => api('PUT'
 
 export interface ProviderRow {
   id: string
+  label: string
   kind: string
+  url?: string
   paid: boolean
   healthy: boolean
   latency_ms: number
   error?: string
+  /** The pinned certificate, short, for comparing with what the other computer shows. */
+  fingerprint?: string
+  /** Where its key lives and how it ends; never the key itself. */
+  key?: { stored: boolean; hint?: string; store: string }
+  editable: boolean
 }
+
+export interface ShareView {
+  enabled: boolean
+  active: boolean
+  port: number
+  addresses: string[]
+  fingerprint?: string
+  pending?: 'restart'
+}
+
+export const addProvider = (body: { url: string; label?: string; code?: string; token?: string }): Promise<{ id: string; label: string }> =>
+  api('POST', '/v1/providers', body)
+export const removeProvider = (id: string): Promise<void> => api('DELETE', `/v1/providers/${id}`)
+export const replaceToken = (id: string, token: string): Promise<void> => api('PUT', `/v1/providers/${id}/token`, { token })
+export const setSharing = (enabled: boolean): Promise<ShareView> => api('PUT', '/v1/share', { enabled })
+export const pairingCode = (): Promise<{ code: string; expires_at: string }> => api('POST', '/v1/share/code')
 
 export class ApiError extends Error {
   constructor(

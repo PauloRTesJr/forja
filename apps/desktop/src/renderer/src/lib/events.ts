@@ -17,6 +17,7 @@ export const keys = {
   setup: ['setup'] as const,
   checks: (models: string[]) => ['checks', models.join(',')] as const,
   settings: ['settings'] as const,
+  share: ['share'] as const,
 }
 
 /** Keeps the newest state of each task, newest task first. */
@@ -57,6 +58,11 @@ export function useCoreEvents(qc: QueryClient): boolean {
           void qc.invalidateQueries({ queryKey: keys.models })
           void qc.invalidateQueries({ queryKey: keys.presets })
           void qc.invalidateQueries({ queryKey: keys.setup })
+          break
+        case 'providers.changed':
+          void qc.invalidateQueries({ queryKey: keys.providers })
+          void qc.invalidateQueries({ queryKey: keys.share })
+          void qc.invalidateQueries({ queryKey: keys.info })
           break
         case 'settings.changed':
           void qc.invalidateQueries({ queryKey: keys.settings })

@@ -158,3 +158,15 @@ def test_a_model_this_machine_cannot_run_says_so(client, monkeypatch):
     body = client.get("/v1/checks?models=hunyuan3d2-paint").json()
     assert [c["id"] for c in body["checks"]] == ["runs-here:hunyuan3d2-paint"]
     assert body["checks"][0]["fix"]["runnable"] is False
+
+
+def test_the_install_body_reaches_the_installer(client, monkeypatch):
+    seen = {}
+
+    def install(self, model_id, lane=None, weights=True):
+        seen.update(lane=lane, weights=weights)
+
+    monkeypatch.setattr(FakeInstaller, "install", install)
+    task = client.post("/v1/models/birefnet/install", json={"lane": "cpu", "weights": False}).json()
+    assert follow(client, task["id"])[-1]["status"] == "succeeded"
+    assert seen == {"lane": "cpu", "weights": False}

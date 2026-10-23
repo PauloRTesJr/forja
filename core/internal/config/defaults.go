@@ -14,6 +14,8 @@ func Defaults() map[string]any {
 			"fit_mode":      "fit-first",
 			"fairness_cap":  int64(8),
 			"start_timeout": "60s",
+			"share":         false,
+			"share_port":    int64(7861),
 		},
 		"routing": map[string]any{
 			"policy":              "prefer-local",

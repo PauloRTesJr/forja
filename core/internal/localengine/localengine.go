@@ -41,6 +41,7 @@ type Manager struct {
 	group    *procGroup
 	url      string
 	token    string
+	share    Share
 	exit     chan struct{}
 }
 
@@ -137,6 +138,16 @@ func (m *Manager) start(ctx context.Context) error {
 	for _, d := range cfg.Engine.ManifestDirs {
 		args = append(args, "--manifests", d)
 	}
+	sharing := Share{}
+	if cfg.Engine.Share {
+		if share, tok, err := m.prepareShare(cfg.Engine.SharePort); err != nil {
+			m.log.Warn("not sharing this GPU", "err", err)
+		} else {
+			token, sharing = tok, share
+			args = append(args, "--share-host", "0.0.0.0", "--share-port", strconv.FormatInt(share.Port, 10),
+				"--tls-cert", share.cert, "--tls-key", share.key)
+		}
+	}
 	cmd := exec.Command(base[0], args...)
 	cmd.Env = append(os.Environ(), "FORJA_ENGINE_TOKEN="+token, "PYTHONUNBUFFERED=1")
 	if err := os.MkdirAll(filepath.Dir(m.logPath), 0o755); err != nil {
@@ -202,7 +213,7 @@ func (m *Manager) start(ctx context.Context) error {
 	}
 	select {
 	case port := <-portCh:
-		m.cmd, m.group, m.exit, m.token = cmd, group, exit, token
+		m.cmd, m.group, m.exit, m.token, m.share = cmd, group, exit, token, sharing
 		m.url = "http://127.0.0.1:" + strconv.Itoa(port)
 		m.log.Info("engine ready", "url", m.url)
 		if m.Started != nil {

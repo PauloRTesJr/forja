@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import ipaddress
 import logging
 import os
@@ -29,6 +30,10 @@ def main(argv: list[str] | None = None) -> None:
     serve.add_argument("--log-level", default="info")
     serve.add_argument("--envs", type=Path, help="family environments (default: <store>/../envs)")
     serve.add_argument("--models", type=Path, help="model weights (default: <store>/../models)")
+    serve.add_argument(
+        "--share-host", help="also serve other computers on this address over TLS (needs a token)"
+    )
+    serve.add_argument("--share-port", type=int, default=7861)
 
     inst = sub.add_parser("install", help="build a model's family environment and fetch its weights")
     inst.add_argument("model", nargs="+")
@@ -54,6 +59,8 @@ def main(argv: list[str] | None = None) -> None:
     loopback = _is_loopback(args.host)
     if not loopback and not (token and args.tls_cert and args.tls_key):
         sys.exit("binding beyond loopback requires FORJA_ENGINE_TOKEN, --tls-cert and --tls-key")
+    if args.share_host and not (token and args.tls_cert and args.tls_key):
+        sys.exit("sharing requires FORJA_ENGINE_TOKEN, --tls-cert and --tls-key")
 
     logging.basicConfig(level=args.log_level.upper(), format="%(asctime)s %(levelname)s %(name)s %(message)s")
     cfg = EngineConfig(
@@ -66,17 +73,42 @@ def main(argv: list[str] | None = None) -> None:
         envs_dir=args.envs,
         models_dir=args.models,
     )
-    config = uvicorn.Config(
-        create_app(cfg),
-        host=args.host,
-        port=args.port,
-        log_level=args.log_level,
-        ssl_certfile=args.tls_cert,
-        ssl_keyfile=args.tls_key,
-    )
-    server = uvicorn.Server(config)
+    app = create_app(cfg)
+    # When sharing, the core's own listener stays plain loopback HTTP; TLS is for the network.
+    tls = {} if args.share_host else {"ssl_certfile": args.tls_cert, "ssl_keyfile": args.tls_key}
+    local = uvicorn.Config(app, host=args.host, port=args.port, log_level=args.log_level, **tls)
+    server = uvicorn.Server(local)
     _announce_port(server)
-    server.run()
+    if not args.share_host:
+        server.run()
+        return
+    lan = uvicorn.Server(
+        uvicorn.Config(
+            app,
+            host=args.share_host,
+            port=args.share_port,
+            log_level=args.log_level,
+            ssl_certfile=args.tls_cert,
+            ssl_keyfile=args.tls_key,
+            lifespan="off",  # the scheduler and idle unloader run once, under the loopback server
+        )
+    )
+    asyncio.run(_serve_shared(server, lan, f"{args.share_host}:{args.share_port}"))
+
+
+async def _serve_shared(local: uvicorn.Server, lan: uvicorn.Server, where: str) -> None:
+    """Serve the core and the network; the core's listener decides how long the engine lives."""
+
+    async def network() -> None:
+        try:
+            await lan.serve()
+        except SystemExit:  # uvicorn exits when it cannot bind; the engine keeps serving the core
+            logging.getLogger(__name__).error("could not share on %s; is the port in use?", where)
+
+    shared = asyncio.create_task(network())
+    await local.serve()
+    lan.should_exit = True
+    await shared
 
 
 def install(args: argparse.Namespace) -> None:

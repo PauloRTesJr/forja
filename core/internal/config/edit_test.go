@@ -105,3 +105,30 @@ func TestEditRestoresTheFileWhenValidationFails(t *testing.T) {
 		t.Fatalf("not restored:\n%s", raw)
 	}
 }
+
+func TestProvidersAreAddedAndRemovedWithoutTouchingTheRest(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	os.WriteFile(path, []byte(handWritten), 0o644)
+	p := Provider{ID: "studio", Label: "Studio PC", Kind: "engine", URL: "https://10.0.0.5:7861", Secret: "provider-studio", Fingerprint: "ab12"}
+	if err := AddProvider(path, p, nil); err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := os.ReadFile(path)
+	if !strings.HasPrefix(string(raw), handWritten) || !strings.Contains(string(raw), `label = "Studio PC"`) {
+		t.Fatalf("got:\n%s", raw)
+	}
+	if err := RemoveProvider(path, "desktop", nil); err != nil {
+		t.Fatal(err)
+	}
+	raw, _ = os.ReadFile(path)
+	got := string(raw)
+	if strings.Contains(got, `id = "desktop"`) || !strings.Contains(got, `id = "studio"`) || !strings.Contains(got, "# Point the app") {
+		t.Fatalf("got:\n%s", got)
+	}
+	if err := RemoveProvider(path, "studio", nil); err != nil {
+		t.Fatal(err)
+	}
+	if raw, _ = os.ReadFile(path); strings.Contains(string(raw), "providers") {
+		t.Fatalf("got:\n%s", raw)
+	}
+}

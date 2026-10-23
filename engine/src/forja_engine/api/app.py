@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hmac
 import json
+import platform
 import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -53,6 +54,22 @@ class EngineConfig:
 
     def models(self) -> Path:
         return self.models_dir or self.store_root.parent / "models"
+
+
+# Request bodies live at module level: FastAPI resolves annotations by name, and a class
+# defined inside create_app would be read as a query parameter.
+class InstallRequest(BaseModel):
+    lane: str | None = None
+    weights: bool = True
+
+
+class PairingRequest(BaseModel):
+    code: str
+    expires_in: float = 600
+
+
+class PairRequest(BaseModel):
+    code: str
 
 
 def _problem(status: int, title: str, detail: str) -> JSONResponse:
@@ -243,10 +260,6 @@ def create_app(cfg: EngineConfig) -> FastAPI:
         steps = (("run", check.fix.label), ("verify", "Check again"))
         return tasks.start("fix", check_id, steps, work, serial=False).to_json()
 
-    class InstallRequest(BaseModel):
-        lane: str | None = None
-        weights: bool = True
-
     @app.post("/v1/models/{model_id}/install", dependencies=guarded, status_code=202)
     async def model_install(model_id: str, req: InstallRequest | None = None) -> dict[str, Any]:
         m = manifests([model_id])[0]
@@ -293,6 +306,29 @@ def create_app(cfg: EngineConfig) -> FastAPI:
             done=lambda _: refresh(),
         )
         return task.to_json()
+
+    # Pairing: the core on this machine sets a short code; another computer trades it, once,
+    # for the token. Few attempts per code, so guessing six digits does not pay.
+    pairing: dict[str, Any] = {"code": None, "expires": 0.0, "attempts": 0}
+
+    @app.post("/v1/pairing", dependencies=[*guarded, Depends(local_caller)], status_code=204)
+    async def pairing_set(req: PairingRequest) -> None:
+        if not (req.code.isdigit() and len(req.code) >= 6):
+            raise HTTPException(422, "a pairing code is at least six digits")
+        pairing.update(code=req.code, expires=time.monotonic() + req.expires_in, attempts=0)
+
+    @app.post("/v1/pair")
+    async def pair(req: PairRequest) -> dict[str, Any]:
+        if cfg.token is None or pairing["code"] is None or time.monotonic() > pairing["expires"]:
+            raise HTTPException(410, "no pairing code is active: show one on the other computer")
+        pairing["attempts"] += 1
+        if pairing["attempts"] > 5:
+            pairing["code"] = None
+            raise HTTPException(429, "too many wrong codes: show a new one on the other computer")
+        if not hmac.compare_digest(req.code.encode(), str(pairing["code"]).encode()):
+            raise HTTPException(403, "wrong pairing code")
+        pairing["code"] = None
+        return {"token": cfg.token, "name": platform.node(), "version": __version__}
 
     @app.get("/v1/tasks", dependencies=guarded)
     async def tasks_list() -> list[dict[str, Any]]:

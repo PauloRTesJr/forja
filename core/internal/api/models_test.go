@@ -8,7 +8,9 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -20,12 +22,14 @@ import (
 	"forja/internal/installs"
 	"forja/internal/jobs"
 	"forja/internal/library"
+	"forja/internal/localengine"
 	"forja/internal/provider"
+	"forja/internal/secrets"
 	"forja/internal/store"
 )
 
-// engine fakes a local engine that installs models instantly.
-type engine struct {
+// fakeEngine fakes a local engine that installs models instantly.
+type fakeEngine struct {
 	provider.Provider
 	mu        sync.Mutex
 	installed map[string]bool
@@ -34,16 +38,16 @@ type engine struct {
 
 var gpu = "cuda:0"
 
-func (e *engine) ID() string          { return jobs.LocalProvider }
-func (e *engine) Kind() provider.Kind { return provider.KindLocal }
-func (e *engine) Paid() bool          { return false }
-func (e *engine) Info(context.Context) (*engineapi.Info, error) {
+func (e *fakeEngine) ID() string          { return jobs.LocalProvider }
+func (e *fakeEngine) Kind() provider.Kind { return provider.KindLocal }
+func (e *fakeEngine) Paid() bool          { return false }
+func (e *fakeEngine) Info(context.Context) (*engineapi.Info, error) {
 	return &engineapi.Info{Stages: map[string]string{"framing": "1", "mesh.cleanup": "1", "mesh.decimate": "1",
 		"texture.match": "1", "bake": "1", "mesh.lods": "1", "export": "1"},
 		System: map[string]any{"devices": []any{map[string]any{"id": "cuda:0", "name": "Test GPU"}}}}, nil
 }
 
-func (e *engine) Models(context.Context) ([]engineapi.Model, error) {
+func (e *fakeEngine) Models(context.Context) ([]engineapi.Model, error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	model := func(id, task string, rank int, fit string, lic engineapi.License) engineapi.Model {
@@ -64,7 +68,7 @@ func (e *engine) Models(context.Context) ([]engineapi.Model, error) {
 	}, nil
 }
 
-func (e *engine) Install(_ context.Context, model string, _ engineapi.InstallRequest) (*engineapi.Task, error) {
+func (e *fakeEngine) Install(_ context.Context, model string, _ engineapi.InstallRequest) (*engineapi.Task, error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.installed[model] = true
@@ -73,7 +77,7 @@ func (e *engine) Install(_ context.Context, model string, _ engineapi.InstallReq
 	return &t, nil
 }
 
-func (e *engine) FollowTask(_ context.Context, id string, states chan<- engineapi.Task) error {
+func (e *fakeEngine) FollowTask(_ context.Context, id string, states chan<- engineapi.Task) error {
 	e.mu.Lock()
 	t := e.tasks[id]
 	e.mu.Unlock()
@@ -82,14 +86,14 @@ func (e *engine) FollowTask(_ context.Context, id string, states chan<- engineap
 	return nil
 }
 
-func (e *engine) Checks(context.Context, []string) (*engineapi.Checks, error) {
+func (e *fakeEngine) Checks(context.Context, []string) (*engineapi.Checks, error) {
 	return &engineapi.Checks{}, nil
 }
-func (e *engine) Fix(context.Context, string) (*engineapi.Task, error)    { return nil, nil }
-func (e *engine) Remove(context.Context, string) (*engineapi.Task, error) { return nil, nil }
-func (e *engine) CancelTask(context.Context, string) error                { return nil }
+func (e *fakeEngine) Fix(context.Context, string) (*engineapi.Task, error)    { return nil, nil }
+func (e *fakeEngine) Remove(context.Context, string) (*engineapi.Task, error) { return nil, nil }
+func (e *fakeEngine) CancelTask(context.Context, string) error                { return nil }
 
-func server(t *testing.T) (*httptest.Server, *engine, *events.Hub) {
+func server(t *testing.T) (*httptest.Server, *fakeEngine, *events.Hub) {
 	t.Helper()
 	dir := t.TempDir()
 	t.Setenv("FORJA_CONFIG_DIR", filepath.Join(dir, "config"))
@@ -99,7 +103,7 @@ func server(t *testing.T) (*httptest.Server, *engine, *events.Hub) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { db.Close() })
-	eng := &engine{installed: map[string]bool{}, tasks: map[string]engineapi.Task{}}
+	eng := &fakeEngine{installed: map[string]bool{}, tasks: map[string]engineapi.Task{}}
 	reg := provider.NewRegistry()
 	reg.Add(eng)
 	hub := events.NewHub()
@@ -110,6 +114,7 @@ func server(t *testing.T) (*httptest.Server, *engine, *events.Hub) {
 		DB: db, Store: st, Hub: hub, Providers: reg, Catalog: cat, Log: log, Config: cfg,
 		Runner:   jobs.NewRunner(db, st, hub, reg, cat, cfg, log, "test", 2),
 		Installs: installs.New(reg, cat, hub, log),
+		Engine:   localengine.New(func() (*config.Loaded, error) { return config.Load("", nil) }, st.Root, dir, log),
 	}
 	ts := httptest.NewServer(s.Handler())
 	t.Cleanup(ts.Close)
@@ -257,5 +262,53 @@ func TestSettingsSayWhereEachValueComesFromAndSaveToTheUserFile(t *testing.T) {
 	call(t, ts, "PATCH", "/v1/settings", map[string]any{"set": map[string]any{"engine.idle_unload_minutes": nil}}, nil)
 	if cfg, _ := config.Load("", nil); cfg.Engine.IdleUnloadMinutes != 15 {
 		t.Fatalf("got %d", cfg.Engine.IdleUnloadMinutes)
+	}
+}
+
+func TestAddingAComputerByCodeStoresItsTokenInTheKeychainOnly(t *testing.T) {
+	secrets.InMemory()
+	ts, _, _ := server(t)
+	remote := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/pair":
+			_, _ = w.Write([]byte(`{"token":"tok-0123456789","name":"Studio PC"}`))
+		case "/v1/info":
+			_ = json.NewEncoder(w).Encode(engineapi.Info{APIVersion: engineapi.APIVersion, Version: "test"})
+		case "/v1/health":
+			_, _ = w.Write([]byte(`{"status":"ok"}`))
+		}
+	}))
+	defer remote.Close()
+	var added map[string]any
+	if code := call(t, ts, "POST", "/v1/providers", map[string]string{"url": remote.URL, "code": "482913"}, &added); code != 201 {
+		t.Fatalf("status %d: %v", code, added)
+	}
+	if added["id"] != "studio-pc" {
+		t.Fatalf("added %v", added)
+	}
+	raw, _ := os.ReadFile(config.UserFile())
+	if strings.Contains(string(raw), "tok-0123456789") || !strings.Contains(string(raw), `fingerprint = "`) {
+		t.Fatalf("config.toml:\n%s", raw)
+	}
+	if v, err := secrets.Get("provider-studio-pc"); err != nil || v != "tok-0123456789" {
+		t.Fatalf("keychain: %q %v", v, err)
+	}
+	cfg, _ := config.Load("", nil)
+	if strings.Join(cfg.Routing.Priority, ",") != "local,studio-pc" {
+		t.Fatalf("priority %v", cfg.Routing.Priority)
+	}
+	var rows []providerRow
+	call(t, ts, "GET", "/v1/providers", nil, &rows)
+	if len(rows) != 2 || rows[1].Key == nil || rows[1].Key.Hint != "…6789" || !rows[1].Healthy {
+		t.Fatalf("rows %+v", rows)
+	}
+	if code := call(t, ts, "DELETE", "/v1/providers/studio-pc", nil, nil); code != 204 {
+		t.Fatalf("remove: %d", code)
+	}
+	if _, err := secrets.Get("provider-studio-pc"); err == nil {
+		t.Fatal("the token outlived its provider")
+	}
+	if cfg, _ := config.Load("", nil); len(cfg.Providers) != 0 || strings.Join(cfg.Routing.Priority, ",") != "local" {
+		t.Fatalf("left behind: %+v %v", cfg.Providers, cfg.Routing.Priority)
 	}
 }

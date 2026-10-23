@@ -60,6 +60,14 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/diagnostics", s.diagnostics)
 	mux.HandleFunc("GET /v1/presets", s.presets)
 	mux.HandleFunc("GET /v1/providers", s.providers)
+	mux.HandleFunc("GET /v1/provider-kinds", s.providerKinds)
+	mux.HandleFunc("POST /v1/providers/test", s.providerTest)
+	mux.HandleFunc("POST /v1/providers", s.providerAdd)
+	mux.HandleFunc("DELETE /v1/providers/{id}", s.providerRemove)
+	mux.HandleFunc("PUT /v1/providers/{id}/token", s.providerToken)
+	mux.HandleFunc("GET /v1/share", s.shareGet)
+	mux.HandleFunc("PUT /v1/share", s.sharePut)
+	mux.HandleFunc("POST /v1/share/code", s.shareCode)
 	mux.HandleFunc("GET /v1/models", s.models)
 	mux.HandleFunc("POST /v1/models/{id}/install", s.modelInstall)
 	mux.HandleFunc("DELETE /v1/models/{id}", s.modelRemove)
@@ -214,43 +222,6 @@ func (s *Server) presets(w http.ResponseWriter, r *http.Request) {
 		list[i] = v
 	}
 	writeJSON(w, 200, list)
-}
-
-func (s *Server) providers(w http.ResponseWriter, r *http.Request) {
-	type row struct {
-		ID      string `json:"id"`
-		Kind    string `json:"kind"`
-		Paid    bool   `json:"paid"`
-		Healthy bool   `json:"healthy"`
-		Latency int64  `json:"latency_ms"`
-		Error   string `json:"error,omitempty"`
-	}
-	all := s.Providers.All()
-	rows := make([]row, len(all))
-	var wg sync.WaitGroup
-	for i, p := range all {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			rows[i] = row{ID: p.ID(), Kind: string(p.Kind()), Paid: p.Paid()}
-			// Asking about the local engine must not start it.
-			if p.Kind() == provider.KindLocal && !s.Engine.Running() {
-				rows[i].Error = "idle"
-				return
-			}
-			ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
-			defer cancel()
-			start := time.Now()
-			err := p.Health(ctx)
-			rows[i].Latency = time.Since(start).Milliseconds()
-			rows[i].Healthy = err == nil
-			if err != nil {
-				rows[i].Error = err.Error()
-			}
-		}()
-	}
-	wg.Wait()
-	writeJSON(w, 200, rows)
 }
 
 // engineUnload frees all VRAM now, for the "pause engine" toggle while gaming or in Unity.

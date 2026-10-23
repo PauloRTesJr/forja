@@ -47,6 +47,9 @@ type Engine struct {
 	FairnessCap       int64    `toml:"fairness_cap" json:"fairness_cap"`
 	StartTimeout      string   `toml:"start_timeout" json:"start_timeout"`
 	ManifestDirs      []string `toml:"manifest_dirs" json:"manifest_dirs"`
+	// Share serves this machine's engine to other computers on the network, over TLS.
+	Share     bool  `toml:"share" json:"share"`
+	SharePort int64 `toml:"share_port" json:"share_port"`
 }
 
 type Routing struct {
@@ -64,10 +67,13 @@ type Budget struct {
 }
 
 type Provider struct {
-	ID                string  `toml:"id" json:"id"`
-	Kind              string  `toml:"kind" json:"kind"` // engine | serverless | api | comfyui
-	URL               string  `toml:"url" json:"url"`
-	Secret            string  `toml:"secret" json:"secret"` // keychain entry name, never the value
+	ID     string `toml:"id" json:"id"`
+	Kind   string `toml:"kind" json:"kind"` // engine | serverless | api | comfyui
+	URL    string `toml:"url" json:"url"`
+	Secret string `toml:"secret" json:"secret"` // keychain entry name, never the value
+	Label  string `toml:"label" json:"label,omitempty"`
+	// Fingerprint pins the TLS certificate (SHA-256 of its DER) of an engine that signs its own.
+	Fingerprint       string  `toml:"fingerprint" json:"fingerprint,omitempty"`
 	Vendor            string  `toml:"vendor" json:"vendor,omitempty"`
 	EndpointID        string  `toml:"endpoint_id" json:"endpoint_id,omitempty"`
 	PriceUSDPerSecond float64 `toml:"price_usd_per_second" json:"price_usd_per_second,omitempty"`

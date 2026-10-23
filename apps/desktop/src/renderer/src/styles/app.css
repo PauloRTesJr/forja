@@ -2032,3 +2032,53 @@ select.input {
 .provider .grow {
   flex: 1;
 }
+
+/* Providers and sharing. */
+.provider-item {
+  align-items: flex-start;
+}
+.provider-item .dot {
+  margin-top: 8px;
+}
+.provider-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 14px;
+  font-size: 14px;
+}
+.provider-key {
+  margin-top: 4px;
+  color: var(--text-2);
+  font-size: 14px;
+}
+.key-form {
+  margin-top: 8px;
+}
+.key-form .input {
+  flex: 1;
+  min-width: 220px;
+}
+.share {
+  align-items: flex-start;
+}
+.share-details {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  margin-top: 8px;
+  animation: fade-in var(--dur-2) var(--ease-out) both;
+}
+.pairing-code {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+}
+.pairing-code b {
+  color: #f3dcb0;
+  font-size: 26px;
+  letter-spacing: 0.12em;
+}
+.dialog .field .input {
+  width: 100%;
+}
