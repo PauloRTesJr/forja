@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -60,6 +61,10 @@ type ProblemError struct {
 func (e *ProblemError) Error() string {
 	return fmt.Sprintf("engine: %s (%d): %s", e.Title, e.Status, e.Detail)
 }
+
+// StatusCode and ProblemDetail let the core pass an engine's refusal on to its own clients.
+func (e *ProblemError) StatusCode() int       { return e.Status }
+func (e *ProblemError) ProblemDetail() string { return e.Detail }
 
 func (p *Provider) do(ctx context.Context, method, path string, body io.Reader, out any) (*http.Response, error) {
 	base, token, err := p.endpoint(ctx)
@@ -253,3 +258,93 @@ func (p *Provider) Cancel(ctx context.Context, runID string) error {
 }
 
 var _ provider.Provider = (*Provider)(nil)
+
+func (p *Provider) Checks(ctx context.Context, models []string) (*engineapi.Checks, error) {
+	var out engineapi.Checks
+	_, err := p.do(ctx, http.MethodGet, "/v1/checks?models="+url.QueryEscape(strings.Join(models, ",")), nil, &out)
+	return &out, err
+}
+
+func (p *Provider) Fix(ctx context.Context, check string) (*engineapi.Task, error) {
+	return p.task(ctx, http.MethodPost, "/v1/checks/"+url.PathEscape(check)+"/fix", nil)
+}
+
+func (p *Provider) Install(ctx context.Context, model string, req engineapi.InstallRequest) (*engineapi.Task, error) {
+	body, _ := json.Marshal(req)
+	return p.task(ctx, http.MethodPost, "/v1/models/"+url.PathEscape(model)+"/install", bytes.NewReader(body))
+}
+
+func (p *Provider) Remove(ctx context.Context, model string) (*engineapi.Task, error) {
+	return p.task(ctx, http.MethodDelete, "/v1/models/"+url.PathEscape(model), nil)
+}
+
+func (p *Provider) CancelTask(ctx context.Context, id string) error {
+	resp, err := p.do(ctx, http.MethodDelete, "/v1/tasks/"+url.PathEscape(id), nil, nil)
+	if err == nil {
+		resp.Body.Close()
+	}
+	return err
+}
+
+func (p *Provider) task(ctx context.Context, method, path string, body io.Reader) (*engineapi.Task, error) {
+	var t engineapi.Task
+	if _, err := p.do(ctx, method, path, body, &t); err != nil {
+		return nil, err
+	}
+	return &t, nil
+}
+
+// FollowTask reads the task's event stream, reconnecting from the last state it saw.
+func (p *Provider) FollowTask(ctx context.Context, id string, states chan<- engineapi.Task) error {
+	seen, failures := 0, 0
+	for {
+		done, err := p.followOnce(ctx, id, &seen, states)
+		if done || ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if failures++; failures > 5 {
+			return fmt.Errorf("lost the progress of task %s: %w", id, err)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(time.Duration(failures) * 300 * time.Millisecond):
+		}
+	}
+}
+
+func (p *Provider) followOnce(ctx context.Context, id string, seen *int, states chan<- engineapi.Task) (bool, error) {
+	path := "/v1/tasks/" + url.PathEscape(id) + "/events?after=" + strconv.Itoa(*seen)
+	resp, err := p.do(ctx, http.MethodGet, path, nil, nil)
+	if err != nil {
+		return false, err
+	}
+	defer resp.Body.Close()
+	sc := bufio.NewScanner(resp.Body)
+	sc.Buffer(make([]byte, 64*1024), 4*1024*1024)
+	for sc.Scan() {
+		line, ok := strings.CutPrefix(sc.Text(), "data: ")
+		if !ok {
+			continue
+		}
+		var t engineapi.Task
+		if err := json.Unmarshal([]byte(line), &t); err != nil {
+			continue
+		}
+		*seen = t.Version
+		select {
+		case states <- t:
+		case <-ctx.Done():
+			return false, ctx.Err()
+		}
+		if t.Done() {
+			return true, nil
+		}
+	}
+	if err := sc.Err(); err != nil {
+		return false, err
+	}
+	return false, io.ErrUnexpectedEOF
+}
+
+var _ provider.Installer = (*Provider)(nil)

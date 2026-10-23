@@ -39,6 +39,18 @@ type Provider interface {
 	Cancel(ctx context.Context, runID string) error
 }
 
+// Installer is implemented by providers that manage models on their own machine (engines).
+// Callers type-assert for it; a managed API has nothing to install.
+type Installer interface {
+	Checks(ctx context.Context, models []string) (*engineapi.Checks, error)
+	Fix(ctx context.Context, check string) (*engineapi.Task, error)
+	Install(ctx context.Context, model string, req engineapi.InstallRequest) (*engineapi.Task, error)
+	Remove(ctx context.Context, model string) (*engineapi.Task, error)
+	CancelTask(ctx context.Context, id string) error
+	// FollowTask sends the task's state each time it changes, until it ends or ctx does.
+	FollowTask(ctx context.Context, id string, states chan<- engineapi.Task) error
+}
+
 // Registry holds configured providers by id.
 type Registry struct {
 	byID  map[string]Provider

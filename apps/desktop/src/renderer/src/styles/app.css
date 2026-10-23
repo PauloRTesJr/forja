@@ -1483,3 +1483,407 @@ pre.code {
     animation: none;
   }
 }
+
+/* Setup: a guided path with numbered steps that turn gold as they complete. */
+.setup {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  margin-bottom: 28px;
+  padding: 20px 22px;
+  border: 1px solid var(--frame);
+  border-radius: var(--r-3);
+  background: #19150f;
+}
+.setup.done {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+}
+.setup-head {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.setup-head .eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.setup-head strong {
+  font-family: var(--display);
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: #f3dcb0;
+}
+.setup-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  counter-reset: step;
+}
+.setup-steps > li {
+  position: relative;
+  padding-left: 40px;
+  counter-increment: step;
+}
+.setup-steps > li::before {
+  content: counter(step);
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border: 1px solid var(--gold-dim);
+  border-radius: 50%;
+  color: var(--accent);
+  font-family: var(--display);
+  font-size: 12px;
+  font-weight: 600;
+}
+.setup-steps > li.complete::before {
+  content: '✓';
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--on-accent);
+}
+.setup-step-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+.setup-step-head h3,
+.setup-test h3 {
+  margin: 0;
+  font-family: var(--display);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+.setup-install {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 12px;
+}
+.setup-test {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.small {
+  font-size: 14px;
+}
+.ready-line {
+  margin-bottom: 8px;
+}
+
+/* Checks: what a machine needs, each with its fix. */
+.checks {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.check {
+  display: flex;
+  gap: 12px;
+  padding: 10px 14px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r-1);
+  background: var(--surface);
+}
+.check.bad {
+  border-color: #5a4630;
+}
+.check-mark {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  margin-top: 1px;
+  border-radius: 50%;
+  background: color-mix(in oklab, var(--ok) 20%, transparent);
+  color: var(--ok);
+  font-size: 12px;
+  font-weight: 700;
+}
+.check.bad .check-mark {
+  background: color-mix(in oklab, var(--warn) 18%, transparent);
+  color: var(--warn);
+}
+.check-body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+.check-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 12px;
+}
+.check-head strong {
+  color: #f3e6cc;
+  font-size: 16px;
+  font-weight: 600;
+}
+.check-head .mono {
+  overflow-wrap: anywhere;
+}
+.check-why {
+  margin: 0;
+  color: var(--text-2);
+  font-size: 15px;
+}
+.how {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 14px;
+  border-left: 2px solid var(--frame);
+  color: var(--text-2);
+  font-size: 15px;
+  animation: fade-in var(--dur-2) var(--ease-out) both;
+}
+.how ol {
+  margin: 0;
+  padding-left: 20px;
+}
+.how a {
+  color: var(--accent-hi);
+  overflow-wrap: anywhere;
+}
+.how code {
+  color: var(--text-3);
+  font-size: 11.5px;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+.accept {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-top: 6px;
+  font-size: 15.5px;
+  cursor: pointer;
+}
+.accept input {
+  margin-top: 4px;
+  accent-color: var(--accent);
+}
+
+/* Task progress: steps, a byte bar that scales on the compositor, the log on request. */
+.task {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.task-steps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  color: var(--text-3);
+  font-size: 14.5px;
+}
+.task-steps li {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.task-steps li.running {
+  color: var(--live-hi);
+}
+.task-steps li.done {
+  color: var(--text-2);
+}
+.task-steps li.failed {
+  color: var(--bad-hi);
+}
+.task-steps li.running .task-glyph {
+  animation: pulse-dot 1.6s var(--ease-in-out) infinite;
+}
+.task-glyph {
+  display: inline-grid;
+  place-items: center;
+  width: 14px;
+}
+.task-bytes {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--text-3);
+}
+.task-actions {
+  gap: 8px;
+}
+.task-log {
+  max-height: 220px;
+  font-size: 11.5px;
+  white-space: pre-wrap;
+}
+.bar {
+  position: relative;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--border-soft);
+  overflow: hidden;
+}
+.bar > i {
+  position: absolute;
+  inset: 0;
+  background: var(--live);
+  transform: scaleX(var(--p, 0));
+  transform-origin: left;
+  transition: transform var(--dur-3) var(--ease-out);
+}
+.bar > i.indeterminate {
+  transform: none;
+  animation: indeterminate 1.4s var(--ease-in-out) infinite;
+}
+
+/* Model cards, grouped by stage. */
+.model-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(330px, 1fr));
+  gap: 14px;
+}
+.model-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-2);
+  background: var(--surface);
+}
+.model-card.installed {
+  border-color: #4a3d2b;
+}
+.model-card .model-cell > div {
+  flex: 1;
+  min-width: 0;
+}
+.model-desc {
+  margin: 0;
+  color: var(--text-2);
+  font-size: 15.5px;
+}
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.chip {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 9px;
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  color: var(--text-2);
+  font-size: 13px;
+  white-space: nowrap;
+}
+.chip.fit-fits {
+  border-color: #3f5a4b;
+  color: var(--ok);
+}
+.chip.fit-offload,
+.chip.warn {
+  border-color: #6b5236;
+  color: var(--warn);
+}
+.chip.fit-too-big,
+.chip.fit-unsupported {
+  border-style: dashed;
+  color: var(--text-3);
+}
+.chip.used {
+  border-color: var(--frame);
+  color: var(--accent-hi);
+}
+.license-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 8px;
+  color: var(--text-2);
+  font-size: 14.5px;
+}
+.license-line a {
+  color: var(--accent);
+}
+.model-actions {
+  gap: 8px;
+  margin-top: auto;
+}
+.btn.danger {
+  border-color: #6b3a33;
+  color: var(--bad-hi);
+}
+
+/* Dialog: the backdrop fades, the panel rises; both on the compositor. */
+.dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgb(8 7 5 / 0.66);
+  animation: fade-in var(--dur-2) var(--ease-out) both;
+}
+.dialog {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  width: min(640px, 100%);
+  max-height: calc(100vh - 48px);
+  padding: 22px 24px;
+  border: 1px solid var(--frame);
+  border-radius: var(--r-3);
+  background: var(--bg);
+  box-shadow: var(--shadow);
+  overflow-y: auto;
+  outline: none;
+  animation: enter-up var(--dur-3) var(--ease-out) both;
+}
+.dialog h2 {
+  margin: 0;
+  font-family: var(--display);
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: #f3dcb0;
+}
+.dialog p {
+  margin: 0;
+}
+.dialog-actions {
+  justify-content: flex-end;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .task-steps li.running .task-glyph,
+  .bar > i.indeterminate {
+    animation: none;
+  }
+}

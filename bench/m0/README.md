@@ -53,6 +53,10 @@ upstream code and weights by commit and sha256 and verifies them. It ends with a
 test. It is safe to re-run: a failed step resumes where it stopped. `./core/bin/forja models ls`
 should show all three as `ready` with device `cuda:0`.
 
+The app does the same from the Models screen, with each check above as a row and a button to
+fix it. `./core/bin/forja models checks` prints the checks here; the install asks you to accept
+Hunyuan's license once (`--accept-license` skips the question).
+
 Hunyuan3D-2 is under the Tencent Hunyuan 3D 2.0 Community License. That license does not
 apply in the EU, the UK or South Korea, and installing accepts it.
 

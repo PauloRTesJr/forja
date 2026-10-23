@@ -254,6 +254,11 @@ class DeviceLane:
                 self._loaded.pop(other.id, None)
         await worker.load(m.adapter, self.device, _weights(m), offload=self._offload.get(m.id, False))
 
+    async def unload_family(self, family: str) -> None:
+        for model, m in list(self._loaded.items()):
+            if m.family == family:
+                await self._unload(model)
+
     async def _unload(self, model: str) -> None:
         self.vram.did_unload(model)
         m = self._loaded.pop(model, None)
@@ -304,6 +309,33 @@ class Scheduler:
             await lane.stop()
         await self.workers.stop_all()
         self.pool.shutdown(wait=False, cancel_futures=True)
+
+    async def release(self, family: str) -> None:
+        """Unloads a family's models and stops its worker, so its environment can change on disk
+        (Windows keeps a running interpreter's files locked)."""
+        for lane in self.lanes.values():
+            await lane.unload_family(family)
+        await self.workers.stop(family)
+
+    def fit(self, manifest: Manifest) -> tuple[str | None, str]:
+        """Where a model would run here, installed or not, and how well.
+
+        "fits" in the device's budget, "offload" runs with part of it in RAM (slower), "too-big"
+        is below the model's minimum, "unsupported" has no device the model can use.
+        """
+        req = manifest.requirements
+        for dev, lane in self.lanes.items():
+            backend = dev.split(":")[0]
+            spec = req.get(backend) or {}
+            status = spec.get("status", "supported" if backend in req else None)
+            if status not in ("supported", "experimental"):
+                continue
+            if lane.vram.budget < float(spec.get("min_vram_gb", 0)) * GB:
+                return dev, "too-big"
+            if manifest.vram_bytes > lane.vram.budget:
+                return dev, "offload"
+            return dev, "fits"
+        return None, "unsupported"
 
     def place(self, manifest: Manifest) -> str:
         """The device a model runs on here, by the order of preference in its requirements."""

@@ -18,6 +18,7 @@ import (
 	"forja/internal/catalog"
 	"forja/internal/config"
 	"forja/internal/events"
+	"forja/internal/installs"
 	"forja/internal/ipc"
 	"forja/internal/jobs"
 	"forja/internal/library"
@@ -119,7 +120,7 @@ func start(opts Options, base *config.Loaded, dataDir string) (*Core, error) {
 	c := &Core{Address: addr, engine: eng, db: db, done: make(chan struct{})}
 	srv := &api.Server{
 		Version: opts.Version, DataDir: dataDir, DB: db, Store: st, Hub: hub, Runner: runner,
-		Providers: providers, Catalog: cat, Engine: eng, Config: cfgFn, Log: log, Shutdown: c.Stop,
+		Providers: providers, Catalog: cat, Installs: installs.New(providers, cat, hub, log), Engine: eng, Config: cfgFn, Log: log, Shutdown: c.Stop,
 	}
 	c.server = &http.Server{Handler: srv.Handler(), ReadHeaderTimeout: 10 * time.Second}
 	ln, err := ipc.Listen(addr)

@@ -42,20 +42,30 @@ func (c *Client) Do(ctx context.Context, method, path string, in, out any) error
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 400 {
-		var prob struct {
-			Detail string `json:"detail"`
-		}
 		raw, _ := io.ReadAll(resp.Body)
-		if json.Unmarshal(raw, &prob) == nil && prob.Detail != "" {
-			return fmt.Errorf("%s", prob.Detail)
+		e := &APIError{Status: resp.StatusCode, Body: map[string]any{}}
+		if json.Unmarshal(raw, &e.Body) == nil {
+			e.Detail, _ = e.Body["detail"].(string)
 		}
-		return fmt.Errorf("%s: %s", resp.Status, raw)
+		if e.Detail == "" {
+			e.Detail = fmt.Sprintf("%s: %s", resp.Status, raw)
+		}
+		return e
 	}
 	if out != nil {
 		return json.NewDecoder(resp.Body).Decode(out)
 	}
 	return nil
 }
+
+// APIError is a problem document from the core; Body holds its extension members.
+type APIError struct {
+	Status int
+	Detail string
+	Body   map[string]any
+}
+
+func (e *APIError) Error() string { return e.Detail }
 
 type Event struct {
 	Seq  uint64          `json:"seq"`

@@ -37,7 +37,12 @@ def torch_cuda(backend: str) -> tuple[int, int]:
     return int(m.group(1)), int(m.group(2))
 
 
-def cuda_home() -> Path | None:
+def cuda_home(want: tuple[int, int] | None = None) -> Path | None:
+    """The CUDA toolkit to build with: the environment's, then the standard install folders.
+
+    The folders matter right after the app installs a toolkit: the running engine still has the
+    environment from before, without CUDA_PATH.
+    """
     for var in ("CUDA_HOME", "CUDA_PATH"):
         if (d := os.environ.get(var)) and Path(d).is_dir():
             return Path(d)
@@ -45,7 +50,30 @@ def cuda_home() -> Path | None:
         return Path(nvcc).resolve().parents[1]
     if sys.platform.startswith("linux") and Path("/usr/local/cuda").is_dir():
         return Path("/usr/local/cuda")
+    if sys.platform == "win32":
+        root = (
+            Path(os.environ.get("PROGRAMFILES", r"C:\Program Files"))
+            / "NVIDIA GPU Computing Toolkit"
+            / "CUDA"
+        )
+        found = sorted(_versioned(root), reverse=True)
+        if want is not None:
+            # Prefer a toolkit this torch can build with when several are installed.
+            usable = [v for v in found if v[0][0] == want[0] and v[0][1] >= want[1]]
+            found = usable or found
+        if found:
+            return found[0][1]
     return None
+
+
+def _versioned(root: Path) -> list[tuple[tuple[int, int], Path]]:
+    out = []
+    if root.is_dir():
+        for d in root.iterdir():
+            m = re.fullmatch(r"v(\d+)\.(\d+)", d.name)
+            if m and (d / "bin" / "nvcc.exe").is_file():
+                out.append(((int(m.group(1)), int(m.group(2))), d))
+    return out
 
 
 def nvcc_version(home: Path) -> tuple[int, int]:
@@ -62,7 +90,7 @@ def nvcc_version(home: Path) -> tuple[int, int]:
 def check_cuda(want: tuple[int, int]) -> tuple[Path, tuple[int, int]]:
     """Find nvcc whose major version matches torch's and whose minor is at least torch's."""
     label = f"{want[0]}.{want[1]}+"
-    home = cuda_home()
+    home = cuda_home(want)
     if home is None:
         raise ToolchainError("nvcc not found: " + _INSTALL_CUDA.format(want=label))
     have = nvcc_version(home)
@@ -83,6 +111,32 @@ def max_msvc_toolset(cuda: tuple[int, int]) -> tuple[int, int]:
     if cuda[0] <= 12:
         return (14, 49)
     raise ToolchainError(f"no known MSVC toolset limit for CUDA {cuda[0]}.{cuda[1]}; add it here")
+
+
+def windows_sdk() -> str | None:
+    """The newest Windows 10/11 SDK with C runtime headers, by version; None if there is none."""
+    root = (
+        Path(os.environ.get("PROGRAMFILES(X86)", r"C:\Program Files (x86)"))
+        / "Windows Kits"
+        / "10"
+        / "Include"
+    )
+    if not root.is_dir():
+        return None
+    found = [d.name for d in root.iterdir() if (d / "ucrt" / "stdio.h").is_file()]
+    return max(found, key=lambda v: tuple(int(p) for p in v.split(".") if p.isdigit()), default=None)
+
+
+def vs_installer() -> Path | None:
+    """The Visual Studio Installer's setup.exe, which adds components to existing installs."""
+    exe = Path(os.environ.get("PROGRAMFILES(X86)", r"C:\Program Files (x86)")) / (
+        r"Microsoft Visual Studio\Installer\setup.exe"
+    )
+    return exe if exe.is_file() else None
+
+
+def vs_installs() -> list[Path]:
+    return _vs_installs()
 
 
 def _vs_installs() -> list[Path]:

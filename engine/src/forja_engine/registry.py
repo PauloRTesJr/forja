@@ -29,6 +29,7 @@ class License:
     spdx: str
     commercial: bool
     restrictions: tuple[str, ...] = ()
+    url: str = ""
 
 
 @dataclass(frozen=True)
@@ -47,6 +48,9 @@ class Manifest:
     weights: dict[str, Any] = field(default_factory=dict)
     # Peak VRAM at default params, from the publisher; replaced by measured peaks per device.
     vram_gb: float = 0.0
+    # One line for the Models screen, and the disk an install takes (environment plus weights).
+    description: str = ""
+    disk_gb: float = 0.0
     # Orders models for the same stage when a preset leaves the model open (higher first).
     rank: int = 0
     # Deterministic stand-ins for tests and machines without a GPU; picked only when asked for.
@@ -84,10 +88,13 @@ class Manifest:
                 "spdx": self.license.spdx,
                 "commercial": self.license.commercial,
                 "restrictions": list(self.license.restrictions),
+                "url": self.license.url,
             },
             "requirements": self.requirements,
             "params": self.params,
             "vram_gb": self.vram_gb,
+            "description": self.description,
+            "disk_gb": self.disk_gb,
             "installed": self.installed,
             "weights": {k: self.weights[k] for k in ("repo", "revision") if k in self.weights},
             "adapter_version": self.adapter_version,
@@ -122,7 +129,14 @@ def parse(doc: dict[str, Any], source: str) -> Manifest:
             family=doc["family"],
             adapter=doc["adapter"],
             tasks=tuple(StageType(t) for t in doc["tasks"]),
-            license=License(lic["spdx"], bool(lic["commercial"]), tuple(lic.get("restrictions", []))),
+            license=License(
+                lic["spdx"],
+                bool(lic["commercial"]),
+                tuple(lic.get("restrictions", [])),
+                str(lic.get("url", "")),
+            ),
+            description=str(doc.get("description", "")),
+            disk_gb=float(doc.get("disk_gb", 0)),
             adapter_version=str(doc.get("adapter_version", "1")),
             requirements=doc.get("requirements", {}),
             params=doc.get("params", {}),

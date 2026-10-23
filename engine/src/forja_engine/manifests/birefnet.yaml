@@ -4,7 +4,10 @@ family: birefnet
 adapter: forja_birefnet:BiRefNet
 tasks: [background-removal]
 rank: 10
-license: { spdx: MIT, commercial: true }
+description: Cuts the object out of the reference image.
+# Measured on the reference Windows PC: environment 2.9 GB, weights 0.9 GB.
+disk_gb: 3.8
+license: { spdx: MIT, commercial: true, url: "https://github.com/ZhengPeng7/BiRefNet/blob/main/LICENSE" }
 # Measured on an RTX 4070 Ti: the CUDA arena holds about 7 GB after a 1024x1024 pass,
 # because cuDNN's algorithm search sizes its workspace to the free memory.
 vram_gb: 8

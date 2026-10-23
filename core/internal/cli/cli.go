@@ -23,6 +23,7 @@ import (
 
 	"forja/internal/config"
 	"forja/internal/daemon"
+	"forja/internal/engineapi"
 	"forja/internal/ipc"
 	"forja/internal/library"
 	"forja/internal/localengine"
@@ -374,15 +375,76 @@ func (a *app) jobsCmd() *cobra.Command {
 
 func (a *app) modelsCmd() *cobra.Command {
 	cmd := &cobra.Command{Use: "models", Short: "Install and inspect models"}
-	cmd.AddCommand(&cobra.Command{
-		Use:   "install <model>... [--lane cuda|mps|cpu] [--no-weights]",
+	var (
+		accept, noWeights bool
+		lane, prov        string
+	)
+	install := &cobra.Command{
+		Use:   "install <model>...",
 		Short: "Build a model's environment and fetch its pinned weights",
 		Long: "Builds the model family's isolated environment with uv, downloads pinned upstream code\n" +
-			"and weights, verifies them by sha256, and smoke-tests the device. Safe to re-run.",
-		DisableFlagParsing: true,
-		Args:               cobra.MinimumNArgs(1),
+			"and weights, verifies them by sha256, and smoke-tests the device. Safe to re-run.\n" +
+			"Run `forja models checks <model>` first to see what this computer still needs.",
+		Args: cobra.MinimumNArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
-			return engineExec("install", args)
+			body := map[string]any{"provider": prov, "lane": lane}
+			if noWeights {
+				body["weights"] = false
+			}
+			for _, id := range args {
+				if err := a.runTask(id, "POST", "/v1/models/"+id+"/install", body, accept); err != nil {
+					return err
+				}
+			}
+			return nil
+		},
+	}
+	install.Flags().BoolVar(&accept, "accept-license", false, "accept restrictive model licenses without asking")
+	install.Flags().BoolVar(&noWeights, "no-weights", false, "build the environment only")
+	install.Flags().StringVar(&lane, "lane", "", "torch lane: cuda, rocm, mps or cpu (default: detected)")
+	install.Flags().StringVar(&prov, "provider", "", "provider to install on (default: this computer)")
+	cmd.AddCommand(install)
+	cmd.AddCommand(&cobra.Command{
+		Use: "rm <model>...", Short: "Remove a model's weights, and its environment once unused",
+		Args: cobra.MinimumNArgs(1),
+		RunE: func(_ *cobra.Command, args []string) error {
+			for _, id := range args {
+				if err := a.runTask(id, "DELETE", "/v1/models/"+id, nil, false); err != nil {
+					return err
+				}
+			}
+			return nil
+		},
+	})
+	cmd.AddCommand(&cobra.Command{
+		Use: "checks [model]...", Short: "Show what this computer needs before models install",
+		RunE: func(_ *cobra.Command, args []string) error {
+			c, err := a.client()
+			if err != nil {
+				return err
+			}
+			var out engineapi.Checks
+			if err := c.Do(context.Background(), "GET", "/v1/checks?models="+strings.Join(args, ","), nil, &out); err != nil {
+				return err
+			}
+			a.print(out, func() {
+				for _, ch := range out.Checks {
+					mark := "ok "
+					if !ch.OK {
+						mark = "NO "
+					}
+					fmt.Printf("%s %-16s found %s; needs %s\n", mark, ch.Label, ch.Found, ch.Need)
+					if ch.Fix != nil {
+						for _, s := range ch.Fix.Steps {
+							fmt.Println("      " + s)
+						}
+						if ch.Fix.Command != "" {
+							fmt.Println("      or run: " + ch.Fix.Command)
+						}
+					}
+				}
+			})
+			return nil
 		},
 	})
 	cmd.AddCommand(&cobra.Command{

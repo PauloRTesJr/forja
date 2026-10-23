@@ -131,3 +131,8 @@ func best(models []engineapi.Model, use string, stubs bool) *engineapi.Model {
 	}
 	return out
 }
+
+// BestModel is the model a preset stage of this type gets on a provider when nothing pins one.
+func BestModel(models []engineapi.Model, use string, stubs bool) *engineapi.Model {
+	return best(models, use, stubs)
+}

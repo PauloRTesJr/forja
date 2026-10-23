@@ -2,6 +2,7 @@ id: stub-shape
 name: Stub shape (silhouette inflation)
 family: stub
 stub: true
+description: Deterministic stand-in for tests; its output is not a real asset.
 adapter: forja_engine.adapters.stub:StubShape
 tasks: [shape]
 license: { spdx: Apache-2.0, commercial: true }

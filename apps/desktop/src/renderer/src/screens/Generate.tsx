@@ -2,6 +2,7 @@ import { useMutation, useQuery } from '@tanstack/react-query'
 import { useState, type DragEvent } from 'react'
 import { Corners, DropSigil, Folder, PresetEmblem, Sparkle } from '../components/icons'
 import { ScreenHead, SectionHead } from '../components/ScreenHead'
+import { Setup } from '../components/Setup'
 import { api, submitJobs, type Preset } from '../lib/api'
 import { keys } from '../lib/events'
 import { listOf, roman, taskNoun } from '../lib/format'
@@ -109,17 +110,12 @@ export function Generate() {
     <div className="screen">
       <ScreenHead eyebrow={['Arcanum I', 'The Forge']} title="Generate" sub="Drop reference images. Each becomes a game-ready GLB." />
 
-      {blocked && current && (
-        <div className="notice enter" role="status">
-          <div>
-            <strong>{current.name} needs {current.error ? 'the engine' : `a ${listOf(missingOf(current))} model`}</strong>
-            <span>{current.error ?? 'Install it once on the Models screen; every preset that needs it can use it after that.'}</span>
-          </div>
-          <button className="btn primary" onClick={() => transition(() => navigate({ screen: 'models' }))}>
-            Set up models
-          </button>
+      {blocked && current?.error && (
+        <div className="error" role="status">
+          {current.name} cannot run: {current.error}
         </div>
       )}
+      {blocked && !current?.error && <Setup />}
 
       <div
         className={`drop enter ${over && !blocked ? 'over' : ''} ${submit.isPending ? 'busy' : ''} ${blocked ? 'blocked' : ''}`}

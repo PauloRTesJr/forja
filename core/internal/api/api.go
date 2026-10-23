@@ -19,6 +19,7 @@ import (
 	"forja/internal/catalog"
 	"forja/internal/config"
 	"forja/internal/events"
+	"forja/internal/installs"
 	"forja/internal/jobs"
 	"forja/internal/library"
 	"forja/internal/localengine"
@@ -39,6 +40,7 @@ type Server struct {
 	Runner    *jobs.Runner
 	Providers *provider.Registry
 	Catalog   *catalog.Catalog
+	Installs  *installs.Tracker
 	Engine    *localengine.Manager
 	Config    func(project string) (*config.Loaded, error)
 	Shutdown  func()
@@ -55,6 +57,15 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/presets", s.presets)
 	mux.HandleFunc("GET /v1/providers", s.providers)
 	mux.HandleFunc("GET /v1/models", s.models)
+	mux.HandleFunc("POST /v1/models/{id}/install", s.modelInstall)
+	mux.HandleFunc("DELETE /v1/models/{id}", s.modelRemove)
+	mux.HandleFunc("PUT /v1/models/stages/{use}", s.modelStage)
+	mux.HandleFunc("GET /v1/checks", s.checks)
+	mux.HandleFunc("POST /v1/checks/{id}/fix", s.checkFix)
+	mux.HandleFunc("GET /v1/installs", s.installList)
+	mux.HandleFunc("DELETE /v1/installs/{provider}/{id}", s.installCancel)
+	mux.HandleFunc("GET /v1/setup", s.setup)
+	mux.HandleFunc("POST /v1/setup/test", s.setupTest)
 	mux.HandleFunc("POST /v1/engine/unload", s.engineUnload)
 	mux.HandleFunc("POST /v1/jobs", s.jobCreate)
 	mux.HandleFunc("GET /v1/jobs", s.jobList)
@@ -83,11 +94,18 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 
 // problem writes an RFC 9457 problem document.
 func problem(w http.ResponseWriter, status int, detail string) {
+	problemWith(w, status, detail, nil)
+}
+
+// problemWith adds extension members, such as the license a request must accept.
+func problemWith(w http.ResponseWriter, status int, detail string, extra map[string]any) {
+	doc := map[string]any{"type": "about:blank", "title": http.StatusText(status), "status": status, "detail": detail}
+	for k, v := range extra {
+		doc[k] = v
+	}
 	w.Header().Set("Content-Type", "application/problem+json")
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(map[string]any{
-		"type": "about:blank", "title": http.StatusText(status), "status": status, "detail": detail,
-	})
+	_ = json.NewEncoder(w).Encode(doc)
 }
 
 func (s *Server) info(w http.ResponseWriter, r *http.Request) {
@@ -225,27 +243,6 @@ func (s *Server) providers(w http.ResponseWriter, r *http.Request) {
 	}
 	wg.Wait()
 	writeJSON(w, 200, rows)
-}
-
-func (s *Server) models(w http.ResponseWriter, r *http.Request) {
-	id := r.URL.Query().Get("provider")
-	if id == "" {
-		id = jobs.LocalProvider
-	}
-	if _, ok := s.Providers.Get(id); !ok {
-		problem(w, 404, "no provider "+id)
-		return
-	}
-	get := s.Catalog.Get
-	if fresh(r) {
-		get = s.Catalog.Ask
-	}
-	e, err := get(r.Context(), id)
-	if err != nil {
-		problem(w, 502, err.Error())
-		return
-	}
-	writeJSON(w, 200, e.Models)
 }
 
 // engineUnload frees all VRAM now, for the "pause engine" toggle while gaming or in Unity.
