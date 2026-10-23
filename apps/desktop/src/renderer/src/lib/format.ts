@@ -47,6 +47,16 @@ const stageLabels: Record<string, string> = {
 
 export const stageLabel = (use: string): string => stageLabels[use] ?? use
 
+/** A stage type as a noun in a sentence: "a background removal model". */
+export const taskNoun = (use: string): string =>
+  use === 'background-removal' ? 'background removal' : stageLabel(use).toLowerCase()
+
+/** "a", "a and b", "a, b and c". */
+export function listOf(items: string[]): string {
+  if (items.length <= 1) return items.join('')
+  return `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`
+}
+
 const numerals: [number, string][] = [
   [100, 'C'],
   [90, 'XC'],

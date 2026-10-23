@@ -27,6 +27,7 @@ type Config struct {
 	Routing   Routing                   `toml:"routing" json:"routing"`
 	Providers []Provider                `toml:"providers" json:"providers"`
 	Project   Project                   `toml:"project" json:"project"`
+	Models    Models                    `toml:"models" json:"models"`
 	Presets   map[string]PresetOverride `toml:"presets" json:"presets"`
 }
 
@@ -46,6 +47,9 @@ type Engine struct {
 	FairnessCap       int64    `toml:"fairness_cap" json:"fairness_cap"`
 	StartTimeout      string   `toml:"start_timeout" json:"start_timeout"`
 	ManifestDirs      []string `toml:"manifest_dirs" json:"manifest_dirs"`
+	// Share serves this machine's engine to other computers on the network, over TLS.
+	Share     bool  `toml:"share" json:"share"`
+	SharePort int64 `toml:"share_port" json:"share_port"`
 }
 
 type Routing struct {
@@ -63,10 +67,13 @@ type Budget struct {
 }
 
 type Provider struct {
-	ID                string  `toml:"id" json:"id"`
-	Kind              string  `toml:"kind" json:"kind"` // engine | serverless | api | comfyui
-	URL               string  `toml:"url" json:"url"`
-	Secret            string  `toml:"secret" json:"secret"` // keychain entry name, never the value
+	ID     string `toml:"id" json:"id"`
+	Kind   string `toml:"kind" json:"kind"` // engine | serverless | api | comfyui
+	URL    string `toml:"url" json:"url"`
+	Secret string `toml:"secret" json:"secret"` // keychain entry name, never the value
+	Label  string `toml:"label" json:"label,omitempty"`
+	// Fingerprint pins the TLS certificate (SHA-256 of its DER) of an engine that signs its own.
+	Fingerprint       string  `toml:"fingerprint" json:"fingerprint,omitempty"`
 	Vendor            string  `toml:"vendor" json:"vendor,omitempty"`
 	EndpointID        string  `toml:"endpoint_id" json:"endpoint_id,omitempty"`
 	PriceUSDPerSecond float64 `toml:"price_usd_per_second" json:"price_usd_per_second,omitempty"`
@@ -80,6 +87,14 @@ type Project struct {
 	CommercialSafeOnly bool   `toml:"commercial_safe_only" json:"commercial_safe_only"`
 	// Root is the folder holding forja.toml; set by the loader, never by a file.
 	Root string `toml:"-" json:"root"`
+}
+
+// Models picks the model for preset stages that leave it open (docs/decisions.md, decision 12).
+type Models struct {
+	// Stages maps a stage type to a model id, e.g. shape = "triposg".
+	Stages map[string]string `toml:"stages" json:"stages"`
+	// Stubs lets the deterministic stub models be picked: tests, CI, UI work without a GPU.
+	Stubs bool `toml:"stubs" json:"stubs"`
 }
 
 // PresetOverride maps "stage.param" to a value, e.g. "lowpoly.target_tris" = 3000.

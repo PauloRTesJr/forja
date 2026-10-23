@@ -279,3 +279,11 @@ def test_every_manifest_mirrors_its_adapter_version():
         module, _, name = m.adapter.partition(":")
         version = getattr(importlib.import_module(module), name).version
         assert m.adapter_version == version, f"{m.id}: set adapter_version: {version!r} in its manifest"
+
+
+def test_license_restrictions_stay_whole():
+    from forja_engine.registry import Registry
+
+    # A YAML flow list splits at commas inside an unquoted item.
+    restrictions = Registry.load().models["hunyuan3d2-paint"].license.restrictions
+    assert restrictions[0] == "not licensed in the EU, UK or South Korea"

@@ -39,3 +39,59 @@ func TestRejectsForwardReferences(t *testing.T) {
 		t.Fatal("forward reference accepted")
 	}
 }
+
+func TestBuiltinsNameNoModels(t *testing.T) {
+	all, _ := Load()
+	for id, p := range all {
+		for _, s := range p.Stages {
+			if s.Model != "" {
+				t.Errorf("built-in %s pins model %s on stage %s; models are picked at submit", id, s.Model, s.ID)
+			}
+		}
+	}
+}
+
+func TestOptionalStagesSwitchAndRewire(t *testing.T) {
+	all, _ := Load()
+	mp := all["mobile-prop"]
+	ids := func(p *Preset) (out []string) {
+		for _, s := range p.Stages {
+			out = append(out, s.ID)
+		}
+		return out
+	}
+	bakeInputs := func(p *Preset) []string {
+		for _, s := range p.Stages {
+			if s.ID == "bake" {
+				return s.Inputs
+			}
+		}
+		return nil
+	}
+	off := mp.Active()
+	if got := bakeInputs(off); got[0] != "paint" || got[1] != "cleanup" {
+		t.Fatalf("with match off, bake reads %v", got)
+	}
+	for _, id := range ids(off) {
+		if id == "match" {
+			t.Fatal("match is on by default")
+		}
+	}
+	on, err := mp.WithOverrides(map[string]any{"match.enabled": "true"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := bakeInputs(on.Active()); got[0] != "match" {
+		t.Fatalf("with match on, bake reads %v", got)
+	}
+	if _, err := mp.WithOverrides(map[string]any{"paint.enabled": false}); err == nil {
+		t.Fatal("switched off a stage that is not optional")
+	}
+}
+
+func TestOptionalStagesNeedALabel(t *testing.T) {
+	_, err := Parse([]byte("id: x\nstages:\n  - {id: a, use: shape, optional: {default: true}}\n  - {id: b, use: export}\n"), "t")
+	if err == nil {
+		t.Fatal("unlabelled optional stage accepted")
+	}
+}

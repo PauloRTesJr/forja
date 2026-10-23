@@ -6,6 +6,8 @@ package provider
 
 import (
 	"context"
+	"slices"
+	"sync"
 
 	"forja/internal/engineapi"
 )
@@ -39,8 +41,22 @@ type Provider interface {
 	Cancel(ctx context.Context, runID string) error
 }
 
-// Registry holds configured providers by id.
+// Installer is implemented by providers that manage models on their own machine (engines).
+// Callers type-assert for it; a managed API has nothing to install.
+type Installer interface {
+	Checks(ctx context.Context, models []string) (*engineapi.Checks, error)
+	Fix(ctx context.Context, check string) (*engineapi.Task, error)
+	Install(ctx context.Context, model string, req engineapi.InstallRequest) (*engineapi.Task, error)
+	Remove(ctx context.Context, model string) (*engineapi.Task, error)
+	CancelTask(ctx context.Context, id string) error
+	// FollowTask sends the task's state each time it changes, until it ends or ctx does.
+	FollowTask(ctx context.Context, id string, states chan<- engineapi.Task) error
+}
+
+// Registry holds configured providers by id. Providers come and go at runtime, as the user
+// adds and removes them.
 type Registry struct {
+	mu    sync.RWMutex
 	byID  map[string]Provider
 	order []string
 }
@@ -48,18 +64,31 @@ type Registry struct {
 func NewRegistry() *Registry { return &Registry{byID: map[string]Provider{}} }
 
 func (r *Registry) Add(p Provider) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	if _, ok := r.byID[p.ID()]; !ok {
 		r.order = append(r.order, p.ID())
 	}
 	r.byID[p.ID()] = p
 }
 
+func (r *Registry) Remove(id string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.byID, id)
+	r.order = slices.DeleteFunc(r.order, func(x string) bool { return x == id })
+}
+
 func (r *Registry) Get(id string) (Provider, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	p, ok := r.byID[id]
 	return p, ok
 }
 
 func (r *Registry) All() []Provider {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	out := make([]Provider, 0, len(r.order))
 	for _, id := range r.order {
 		out = append(out, r.byID[id])

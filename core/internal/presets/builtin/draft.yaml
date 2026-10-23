@@ -2,8 +2,8 @@ id: draft
 name: Draft
 description: Fast untextured shape to judge the silhouette.
 stages:
-  - { id: bg, use: background-removal, model: stub-background, inputs: [input:image] }
-  - { id: frame, use: framing }
-  - { id: shape, use: shape, model: stub-shape, params: { resolution: 64 } }
+  - { id: bg, use: background-removal, inputs: [input:image] }
+  - { id: frame, use: framing, params: { size: 1024 } }
+  - { id: shape, use: shape }
   - { id: cleanup, use: mesh.cleanup }
   - { id: export, use: export, params: { format: glb } }

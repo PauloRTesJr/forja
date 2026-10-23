@@ -19,6 +19,9 @@ const bridge = {
   pickFolder: (): Promise<string | null> => ipcRenderer.invoke('dialog:pickFolder'),
   pickImages: (): Promise<string[]> => ipcRenderer.invoke('dialog:pickImages'),
   showItem: (path: string): Promise<void> => ipcRenderer.invoke('shell:showItem', path),
+  openConfig: (): Promise<void> => ipcRenderer.invoke('settings:openConfig'),
+  openDataFolder: (): Promise<void> => ipcRenderer.invoke('settings:openData'),
+  copyText: (text: string): Promise<void> => ipcRenderer.invoke('clipboard:write', text),
 }
 
 export type Bridge = typeof bridge

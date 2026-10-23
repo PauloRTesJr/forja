@@ -2,13 +2,17 @@ id: mobile-prop
 name: Mobile prop
 description: 5k triangles, 1K base color with baked normal and AO maps, two LODs.
 stages:
-  - { id: bg, use: background-removal, model: stub-background, inputs: [input:image] }
-  - { id: frame, use: framing }
-  - { id: shape, use: shape, model: stub-shape }
+  - { id: bg, use: background-removal, inputs: [input:image] }
+  - { id: frame, use: framing, params: { size: 1024 } }
+  - { id: shape, use: shape }
   - { id: cleanup, use: mesh.cleanup }
   - { id: lowpoly, use: mesh.decimate, params: { target_tris: 5000 } }
-  - { id: uv, use: mesh.uv }
-  - { id: paint, use: texture, model: stub-paint, params: { resolution: 1024 }, inputs: [uv, frame] }
-  - { id: bake, use: bake, inputs: [paint, cleanup] }
+  # Painters unwrap UVs themselves, so there is no separate UV stage.
+  - { id: paint, use: texture, params: { resolution: 1024 }, inputs: [lowpoly, frame] }
+  - id: match
+    use: texture.match
+    inputs: [paint, frame]
+    optional: { label: Match the reference colors, default: false }
+  - { id: bake, use: bake, inputs: [match, cleanup] }
   - { id: lods, use: mesh.lods, params: { ratios: [0.5, 0.25] } }
   - { id: export, use: export, params: { format: glb, compression: meshopt } }

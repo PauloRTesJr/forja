@@ -1,5 +1,5 @@
 import { join } from 'node:path'
-import { app, BrowserWindow, dialog, ipcMain, nativeTheme, shell } from 'electron'
+import { app, BrowserWindow, clipboard, dialog, ipcMain, nativeTheme, shell } from 'electron'
 import { Core } from './core'
 import { handleScheme, registerScheme } from './protocol'
 
@@ -62,6 +62,27 @@ ipcMain.handle('dialog:pickImages', async () => {
   return res.canceled ? [] : res.filePaths
 })
 ipcMain.handle('shell:showItem', (_e, path: string) => shell.showItemInFolder(path))
+
+// The renderer never names a path to open: these ask the core where its files are.
+async function coreJSON<T>(method: string, path: string): Promise<T> {
+  const res = await core.request(method, path, {})
+  let body = ''
+  res.setEncoding('utf8')
+  for await (const chunk of res) body += chunk
+  if ((res.statusCode ?? 500) >= 400) throw new Error(`core ${method} ${path}: ${res.statusCode}`)
+  return JSON.parse(body) as T
+}
+ipcMain.handle('settings:openConfig', async () => {
+  const { path } = await coreJSON<{ path: string }>('POST', '/v1/settings/file')
+  const err = await shell.openPath(path)
+  if (err) throw new Error(err)
+})
+ipcMain.handle('settings:openData', async () => {
+  const { data_dir } = await coreJSON<{ data_dir: string }>('POST', '/v1/settings/file')
+  const err = await shell.openPath(data_dir)
+  if (err) throw new Error(err)
+})
+ipcMain.handle('clipboard:write', (_e, text: string) => clipboard.writeText(String(text)))
 
 app.whenReady().then(async () => {
   handleScheme(core)

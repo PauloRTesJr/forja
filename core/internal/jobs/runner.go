@@ -13,6 +13,7 @@ import (
 
 	"github.com/oklog/ulid/v2"
 
+	"forja/internal/catalog"
 	"forja/internal/config"
 	"forja/internal/engineapi"
 	"forja/internal/events"
@@ -62,17 +63,11 @@ type Runner struct {
 	// holding hundreds of open event streams.
 	slots chan struct{}
 
+	// catalog is what each provider runs: it keys stages and picks models.
+	catalog *catalog.Catalog
+
 	mu     sync.Mutex
 	active map[string]*active
-	// lastRuns is each provider's latest answer to "what do you run?", for keying jobs while
-	// it is unreachable.
-	lastRuns map[string]*runs
-}
-
-// runs is what one provider runs: built-in stage versions and its models.
-type runs struct {
-	stages map[string]string
-	models map[string]engineapi.Model
 }
 
 type active struct {
@@ -81,13 +76,23 @@ type active struct {
 	mu     sync.Mutex
 }
 
-func NewRunner(db *library.DB, st *store.Store, hub *events.Hub, providers *provider.Registry,
+func NewRunner(db *library.DB, st *store.Store, hub *events.Hub, providers *provider.Registry, cat *catalog.Catalog,
 	cfg func(project string) (*config.Loaded, error), log *slog.Logger, version string, maxInFlight int,
 ) *Runner {
 	return &Runner{
-		db: db, store: st, hub: hub, providers: providers, config: cfg, log: log, version: version,
-		slots: make(chan struct{}, maxInFlight), active: map[string]*active{}, lastRuns: map[string]*runs{},
+		db: db, store: st, hub: hub, providers: providers, catalog: cat, config: cfg, log: log, version: version,
+		slots: make(chan struct{}, maxInFlight), active: map[string]*active{},
 	}
+}
+
+// Config loads the configuration a job in project would see.
+func (r *Runner) Config(project string) (*config.Loaded, error) { return r.config(project) }
+
+// Busy reports whether any job is queued or running.
+func (r *Runner) Busy() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.active) > 0
 }
 
 func (r *Runner) Presets(project string) (map[string]*presets.Preset, error) {
@@ -145,19 +150,26 @@ func (r *Runner) Submit(ctx context.Context, req SubmitRequest) (*library.Job, e
 	for k, v := range req.Overrides {
 		overrides[k] = v
 	}
-	preset, err := base.WithOverrides(overrides)
+	withOverrides, err := base.WithOverrides(overrides)
 	if err != nil {
 		return nil, err
 	}
+	preset := withOverrides.Active()
 	seed := 42
 	if req.Seed != nil {
 		seed = *req.Seed
 	}
+	picks, err := r.resolve(ctx, cfg, preset)
+	if err != nil {
+		return nil, err
+	}
+	if err := missingError(picks); err != nil {
+		return nil, err
+	}
 	routes := map[string]string{}
-	for _, s := range preset.Stages {
-		if routes[s.ID], err = r.route(cfg, s); err != nil {
-			return nil, err
-		}
+	for i := range preset.Stages {
+		preset.Stages[i].Model = picks[i].Model
+		routes[preset.Stages[i].ID] = picks[i].Provider
 	}
 	priority := req.Priority
 	if priority != "interactive" {
@@ -190,7 +202,7 @@ func (r *Runner) Submit(ctx context.Context, req SubmitRequest) (*library.Job, e
 // fingerprints asks each provider the job routes to what it runs, once per job: keys depend on
 // it, so a new adapter or new weights on that provider never reuse outputs cached before.
 func (r *Runner) fingerprints(ctx context.Context, routes map[string]string) planner.Fingerprints {
-	asked := map[string]*runs{}
+	asked := map[string]*catalog.Entry{}
 	return func(s presets.Stage) (planner.Fingerprint, error) {
 		id := routes[s.ID]
 		got, ok := asked[id]
@@ -202,9 +214,9 @@ func (r *Runner) fingerprints(ctx context.Context, routes map[string]string) pla
 			asked[id] = got
 		}
 		if s.Model == "" {
-			return planner.Fingerprint{Adapter: got.stages[s.Use]}, nil
+			return planner.Fingerprint{Adapter: got.Stages[s.Use]}, nil
 		}
-		m, ok := got.models[s.Model]
+		m, ok := got.Model(s.Model)
 		if !ok {
 			return planner.Fingerprint{}, fmt.Errorf("provider %s has no model %q", id, s.Model)
 		}
@@ -213,36 +225,22 @@ func (r *Runner) fingerprints(ctx context.Context, routes map[string]string) pla
 }
 
 // askRuns asks a provider what it runs. One that cannot answer now (a LAN box that is off) is
-// keyed by its last answer, so a job whose stages are all cached still finishes.
-func (r *Runner) askRuns(ctx context.Context, id string) (*runs, error) {
-	p, ok := r.providers.Get(id)
-	if !ok {
-		return nil, fmt.Errorf("provider %q is not configured", id)
-	}
-	info, err := p.Info(ctx)
-	var models []engineapi.Model
+// keyed by its last answer in this session, so a job whose stages are all cached still finishes.
+func (r *Runner) askRuns(ctx context.Context, id string) (*catalog.Entry, error) {
+	e, err := r.catalog.Ask(ctx, id)
 	if err == nil {
-		models, err = p.Models(ctx)
+		return e, nil
 	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if err != nil {
-		if last, ok := r.lastRuns[id]; ok && ctx.Err() == nil {
-			r.log.Warn("keying stages with the provider's last answer", "provider", id, "err", err)
-			return last, nil
-		}
-		return nil, fmt.Errorf("provider %s did not say what it runs: %w", id, err)
+	if last, ok := r.catalog.Live(id); ok && ctx.Err() == nil {
+		r.log.Warn("keying stages with the provider's last answer", "provider", id, "err", err)
+		return last, nil
 	}
-	got := &runs{stages: info.Stages, models: map[string]engineapi.Model{}}
-	for _, m := range models {
-		got.models[m.ID] = m
-	}
-	r.lastRuns[id] = got
-	return got, nil
+	return nil, err
 }
 
-// route picks a provider for a stage: explicit, then project routing, then the priority list.
-func (r *Runner) route(cfg *config.Loaded, s presets.Stage) (string, error) {
+// candidates lists the providers a stage may run on, in order: explicit, then project
+// routing, then the priority list.
+func (r *Runner) candidates(cfg *config.Loaded, s presets.Stage) ([]string, error) {
 	want := s.Provider
 	if want == "auto" {
 		want = ""
@@ -250,27 +248,31 @@ func (r *Runner) route(cfg *config.Loaded, s presets.Stage) (string, error) {
 	if want == "" {
 		want = cfg.Routing.Stages[s.Use]
 	}
-	if want == "" {
-		for _, id := range cfg.Routing.Priority {
-			p, ok := r.providers.Get(id)
-			if !ok || (p.Paid() && !cfg.Routing.AllowPaidFallback) {
-				continue
-			}
-			want = id
-			break
+	offline := func(p provider.Provider) bool {
+		return cfg.Routing.Policy != "offline-only" || p.Kind() == provider.KindLocal || p.Kind() == provider.KindEngine
+	}
+	if want != "" {
+		p, ok := r.providers.Get(want)
+		if !ok {
+			return nil, fmt.Errorf("stage %s routes to provider %q, which is not configured", s.ID, want)
 		}
+		if !offline(p) {
+			return nil, fmt.Errorf("stage %s: policy offline-only forbids provider %q", s.ID, want)
+		}
+		return []string{want}, nil
 	}
-	if want == "" {
-		want = LocalProvider
+	var ids []string
+	for _, id := range cfg.Routing.Priority {
+		p, ok := r.providers.Get(id)
+		if !ok || (p.Paid() && !cfg.Routing.AllowPaidFallback) || !offline(p) {
+			continue
+		}
+		ids = append(ids, id)
 	}
-	p, ok := r.providers.Get(want)
-	if !ok {
-		return "", fmt.Errorf("stage %s routes to provider %q, which is not configured", s.ID, want)
+	if len(ids) == 0 {
+		ids = []string{LocalProvider}
 	}
-	if cfg.Routing.Policy == "offline-only" && p.Kind() != provider.KindLocal && p.Kind() != provider.KindEngine {
-		return "", fmt.Errorf("stage %s: policy offline-only forbids provider %q", s.ID, want)
-	}
-	return want, nil
+	return ids, nil
 }
 
 func (r *Runner) Cancel(id string) bool {
@@ -603,18 +605,12 @@ func (r *Runner) license(ctx context.Context, providerID, model string) string {
 	if model == "" {
 		return ""
 	}
-	p, ok := r.providers.Get(providerID)
-	if !ok {
-		return ""
-	}
-	models, err := p.Models(ctx)
+	e, err := r.catalog.Get(ctx, providerID)
 	if err != nil {
 		return ""
 	}
-	for _, m := range models {
-		if m.ID == model {
-			return m.License.SPDX
-		}
+	if m, ok := e.Model(model); ok {
+		return m.License.SPDX
 	}
 	return ""
 }

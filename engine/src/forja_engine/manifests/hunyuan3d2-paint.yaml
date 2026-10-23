@@ -3,10 +3,15 @@ name: Hunyuan3D-2 Paint (turbo)
 family: hunyuan3d2
 adapter: forja_hunyuan3d2:Hunyuan3D2Paint
 tasks: [texture]
+rank: 10
+description: Paints the low-poly mesh in the colors of the reference; it unwraps UVs itself.
+# Measured on the reference Windows PC: environment 5.1 GB, weights 18 GB.
+disk_gb: 23.1
 license:
   spdx: LicenseRef-Tencent-Hunyuan-3D-2.0-Community
   commercial: true
-  restrictions: [not licensed in the EU, UK or South Korea, separate license above 1M monthly active users]
+  restrictions: ["not licensed in the EU, UK or South Korea", "separate license above 1M monthly active users"]
+  url: https://github.com/Tencent-Hunyuan/Hunyuan3D-2/blob/f8db63096c8282cb27354314d896feba5ba6ff8a/LICENSE
 # Measured on an RTX 4070 Ti at render_size 2048: torch reserves 12.7 GB with both pipelines on the GPU.
 vram_gb: 12.5
 requirements:

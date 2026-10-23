@@ -3,7 +3,11 @@ name: BiRefNet lite
 family: birefnet
 adapter: forja_birefnet:BiRefNet
 tasks: [background-removal]
-license: { spdx: MIT, commercial: true }
+# Smaller and less precise than BiRefNet general; picked only when that one is missing.
+rank: 5
+description: Cuts the object out of the reference image; smaller and faster, less precise.
+disk_gb: 3.1
+license: { spdx: MIT, commercial: true, url: "https://github.com/ZhengPeng7/BiRefNet/blob/main/LICENSE" }
 vram_gb: 0.8
 requirements:
   cuda: { status: supported }

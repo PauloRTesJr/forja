@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"sort"
 	"strconv"
 	"sync"
 	"time"
@@ -15,14 +16,20 @@ import (
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
 
+	"forja/internal/catalog"
 	"forja/internal/config"
 	"forja/internal/events"
+	"forja/internal/installs"
 	"forja/internal/jobs"
 	"forja/internal/library"
 	"forja/internal/localengine"
+	"forja/internal/presets"
 	"forja/internal/provider"
 	"forja/internal/store"
 )
+
+// EvModelsChanged tells clients that a provider's models changed: re-read models and presets.
+const EvModelsChanged = "models.changed"
 
 type Server struct {
 	Version   string
@@ -32,6 +39,8 @@ type Server struct {
 	Hub       *events.Hub
 	Runner    *jobs.Runner
 	Providers *provider.Registry
+	Catalog   *catalog.Catalog
+	Installs  *installs.Tracker
 	Engine    *localengine.Manager
 	Config    func(project string) (*config.Loaded, error)
 	Shutdown  func()
@@ -45,9 +54,30 @@ func (s *Server) Handler() http.Handler {
 	})
 	mux.HandleFunc("GET /v1/info", s.info)
 	mux.HandleFunc("GET /v1/config/effective", s.configEffective)
+	mux.HandleFunc("GET /v1/settings", s.settingsGet)
+	mux.HandleFunc("PATCH /v1/settings", s.settingsPatch)
+	mux.HandleFunc("POST /v1/settings/file", s.settingsFile)
+	mux.HandleFunc("GET /v1/diagnostics", s.diagnostics)
 	mux.HandleFunc("GET /v1/presets", s.presets)
 	mux.HandleFunc("GET /v1/providers", s.providers)
+	mux.HandleFunc("GET /v1/provider-kinds", s.providerKinds)
+	mux.HandleFunc("POST /v1/providers/test", s.providerTest)
+	mux.HandleFunc("POST /v1/providers", s.providerAdd)
+	mux.HandleFunc("DELETE /v1/providers/{id}", s.providerRemove)
+	mux.HandleFunc("PUT /v1/providers/{id}/token", s.providerToken)
+	mux.HandleFunc("GET /v1/share", s.shareGet)
+	mux.HandleFunc("PUT /v1/share", s.sharePut)
+	mux.HandleFunc("POST /v1/share/code", s.shareCode)
 	mux.HandleFunc("GET /v1/models", s.models)
+	mux.HandleFunc("POST /v1/models/{id}/install", s.modelInstall)
+	mux.HandleFunc("DELETE /v1/models/{id}", s.modelRemove)
+	mux.HandleFunc("PUT /v1/models/stages/{use}", s.modelStage)
+	mux.HandleFunc("GET /v1/checks", s.checks)
+	mux.HandleFunc("POST /v1/checks/{id}/fix", s.checkFix)
+	mux.HandleFunc("GET /v1/installs", s.installList)
+	mux.HandleFunc("DELETE /v1/installs/{provider}/{id}", s.installCancel)
+	mux.HandleFunc("GET /v1/setup", s.setup)
+	mux.HandleFunc("POST /v1/setup/test", s.setupTest)
 	mux.HandleFunc("POST /v1/engine/unload", s.engineUnload)
 	mux.HandleFunc("POST /v1/jobs", s.jobCreate)
 	mux.HandleFunc("GET /v1/jobs", s.jobList)
@@ -76,11 +106,18 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 
 // problem writes an RFC 9457 problem document.
 func problem(w http.ResponseWriter, status int, detail string) {
+	problemWith(w, status, detail, nil)
+}
+
+// problemWith adds extension members, such as the license a request must accept.
+func problemWith(w http.ResponseWriter, status int, detail string, extra map[string]any) {
+	doc := map[string]any{"type": "about:blank", "title": http.StatusText(status), "status": status, "detail": detail}
+	for k, v := range extra {
+		doc[k] = v
+	}
 	w.Header().Set("Content-Type", "application/problem+json")
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(map[string]any{
-		"type": "about:blank", "title": http.StatusText(status), "status": status, "detail": detail,
-	})
+	_ = json.NewEncoder(w).Encode(doc)
 }
 
 func (s *Server) info(w http.ResponseWriter, r *http.Request) {
@@ -90,8 +127,12 @@ func (s *Server) info(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out := map[string]any{
-		"version": s.Version, "data_dir": s.DataDir, "config_files": cfg.Files,
+		"version": s.Version, "data_dir": s.DataDir, "config_files": cfg.Files, "user_config": config.UserFile(),
 		"engine": map[string]any{"running": s.Engine.Running()},
+	}
+	// The hardware the engine last reported, so Settings shows it without starting the engine.
+	if e, ok := s.Catalog.Last(jobs.LocalProvider); ok {
+		out["system"] = e.System
 	}
 	if s.Engine.Running() {
 		if p, ok := s.Providers.Get(jobs.LocalProvider); ok {
@@ -114,78 +155,73 @@ func (s *Server) configEffective(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, cfg)
 }
 
+// presetView is a preset plus how it would run right now: the model and provider per stage.
+type presetView struct {
+	*presets.Preset
+	Builtin bool        `json:"builtin"`
+	Plan    []jobs.Pick `json:"plan"`
+	Ready   bool        `json:"ready"`
+	Error   string      `json:"error,omitempty"`
+}
+
+// fresh is ?fresh=1: ask providers now, even if that starts the local engine, instead of
+// answering from what they said last.
+func fresh(r *http.Request) bool { return r.URL.Query().Get("fresh") == "1" }
+
+// askAll asks every provider what it runs, in parallel; the catalog keeps the answers.
+func (s *Server) askAll(ctx context.Context) {
+	var wg sync.WaitGroup
+	for _, p := range s.Providers.All() {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, _ = s.Catalog.Ask(ctx, p.ID())
+		}()
+	}
+	wg.Wait()
+}
+
 func (s *Server) presets(w http.ResponseWriter, r *http.Request) {
-	all, err := s.Runner.Presets(r.URL.Query().Get("project"))
+	project := r.URL.Query().Get("project")
+	all, err := s.Runner.Presets(project)
 	if err != nil {
 		problem(w, 422, err.Error())
 		return
 	}
-	list := make([]any, 0, len(all))
+	ordered := make([]*presets.Preset, 0, len(all))
 	for _, id := range []string{"draft", "mobile-prop", "environment-piece", "hero-character"} {
 		if p, ok := all[id]; ok {
-			list = append(list, p)
+			ordered = append(ordered, p)
 			delete(all, id)
 		}
 	}
+	rest := make([]*presets.Preset, 0, len(all))
 	for _, p := range all {
-		list = append(list, p)
+		rest = append(rest, p)
+	}
+	sort.Slice(rest, func(i, j int) bool { return rest[i].Name < rest[j].Name })
+	ordered = append(ordered, rest...)
+
+	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+	defer cancel()
+	if fresh(r) {
+		s.askAll(ctx)
+	}
+	list := make([]presetView, len(ordered))
+	for i, p := range ordered {
+		v := presetView{Preset: p, Builtin: p.Builtin(), Plan: []jobs.Pick{}}
+		plan, err := s.Runner.Resolve(ctx, project, p)
+		if err != nil {
+			v.Error = err.Error()
+		} else {
+			v.Plan, v.Ready = plan, true
+			for _, pick := range plan {
+				v.Ready = v.Ready && !pick.Missing
+			}
+		}
+		list[i] = v
 	}
 	writeJSON(w, 200, list)
-}
-
-func (s *Server) providers(w http.ResponseWriter, r *http.Request) {
-	type row struct {
-		ID      string `json:"id"`
-		Kind    string `json:"kind"`
-		Paid    bool   `json:"paid"`
-		Healthy bool   `json:"healthy"`
-		Latency int64  `json:"latency_ms"`
-		Error   string `json:"error,omitempty"`
-	}
-	all := s.Providers.All()
-	rows := make([]row, len(all))
-	var wg sync.WaitGroup
-	for i, p := range all {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			rows[i] = row{ID: p.ID(), Kind: string(p.Kind()), Paid: p.Paid()}
-			// Asking about the local engine must not start it.
-			if p.Kind() == provider.KindLocal && !s.Engine.Running() {
-				rows[i].Error = "idle"
-				return
-			}
-			ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
-			defer cancel()
-			start := time.Now()
-			err := p.Health(ctx)
-			rows[i].Latency = time.Since(start).Milliseconds()
-			rows[i].Healthy = err == nil
-			if err != nil {
-				rows[i].Error = err.Error()
-			}
-		}()
-	}
-	wg.Wait()
-	writeJSON(w, 200, rows)
-}
-
-func (s *Server) models(w http.ResponseWriter, r *http.Request) {
-	id := r.URL.Query().Get("provider")
-	if id == "" {
-		id = jobs.LocalProvider
-	}
-	p, ok := s.Providers.Get(id)
-	if !ok {
-		problem(w, 404, "no provider "+id)
-		return
-	}
-	models, err := p.Models(r.Context())
-	if err != nil {
-		problem(w, 502, err.Error())
-		return
-	}
-	writeJSON(w, 200, models)
 }
 
 // engineUnload frees all VRAM now, for the "pause engine" toggle while gaming or in Unity.

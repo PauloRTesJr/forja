@@ -23,6 +23,7 @@ import (
 
 	"forja/internal/config"
 	"forja/internal/daemon"
+	"forja/internal/engineapi"
 	"forja/internal/ipc"
 	"forja/internal/library"
 	"forja/internal/localengine"
@@ -46,7 +47,8 @@ func Execute(version string) int {
 		Version:       version,
 	}
 	root.PersistentFlags().BoolVar(&a.json, "json", false, "print machine-readable JSON")
-	root.PersistentFlags().StringVar(&a.address, "socket", "", "core socket or pipe (default: per-user)")
+	// FORJA_SOCKET lets a development build run next to an installed app without sharing its core.
+	root.PersistentFlags().StringVar(&a.address, "socket", os.Getenv("FORJA_SOCKET"), "core socket or pipe (default: $FORJA_SOCKET, else per-user)")
 	root.AddCommand(a.daemonCmd(), a.generateCmd(), a.jobsCmd(), a.modelsCmd(), a.presetsCmd(),
 		a.configCmd(), a.engineCmd(), a.secretCmd(), a.infoCmd(), a.socketCmd())
 	err := root.Execute()
@@ -374,15 +376,76 @@ func (a *app) jobsCmd() *cobra.Command {
 
 func (a *app) modelsCmd() *cobra.Command {
 	cmd := &cobra.Command{Use: "models", Short: "Install and inspect models"}
-	cmd.AddCommand(&cobra.Command{
-		Use:   "install <model>... [--lane cuda|mps|cpu] [--no-weights]",
+	var (
+		accept, noWeights bool
+		lane, prov        string
+	)
+	install := &cobra.Command{
+		Use:   "install <model>...",
 		Short: "Build a model's environment and fetch its pinned weights",
 		Long: "Builds the model family's isolated environment with uv, downloads pinned upstream code\n" +
-			"and weights, verifies them by sha256, and smoke-tests the device. Safe to re-run.",
-		DisableFlagParsing: true,
-		Args:               cobra.MinimumNArgs(1),
+			"and weights, verifies them by sha256, and smoke-tests the device. Safe to re-run.\n" +
+			"Run `forja models checks <model>` first to see what this computer still needs.",
+		Args: cobra.MinimumNArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
-			return engineExec("install", args)
+			body := map[string]any{"provider": prov, "lane": lane}
+			if noWeights {
+				body["weights"] = false
+			}
+			for _, id := range args {
+				if err := a.runTask(id, "POST", "/v1/models/"+id+"/install", body, accept); err != nil {
+					return err
+				}
+			}
+			return nil
+		},
+	}
+	install.Flags().BoolVar(&accept, "accept-license", false, "accept restrictive model licenses without asking")
+	install.Flags().BoolVar(&noWeights, "no-weights", false, "build the environment only")
+	install.Flags().StringVar(&lane, "lane", "", "torch lane: cuda, rocm, mps or cpu (default: detected)")
+	install.Flags().StringVar(&prov, "provider", "", "provider to install on (default: this computer)")
+	cmd.AddCommand(install)
+	cmd.AddCommand(&cobra.Command{
+		Use: "rm <model>...", Short: "Remove a model's weights, and its environment once unused",
+		Args: cobra.MinimumNArgs(1),
+		RunE: func(_ *cobra.Command, args []string) error {
+			for _, id := range args {
+				if err := a.runTask(id, "DELETE", "/v1/models/"+id, nil, false); err != nil {
+					return err
+				}
+			}
+			return nil
+		},
+	})
+	cmd.AddCommand(&cobra.Command{
+		Use: "checks [model]...", Short: "Show what this computer needs before models install",
+		RunE: func(_ *cobra.Command, args []string) error {
+			c, err := a.client()
+			if err != nil {
+				return err
+			}
+			var out engineapi.Checks
+			if err := c.Do(context.Background(), "GET", "/v1/checks?models="+strings.Join(args, ","), nil, &out); err != nil {
+				return err
+			}
+			a.print(out, func() {
+				for _, ch := range out.Checks {
+					mark := "ok "
+					if !ch.OK {
+						mark = "NO "
+					}
+					fmt.Printf("%s %-16s found %s; needs %s\n", mark, ch.Label, ch.Found, ch.Need)
+					if ch.Fix != nil {
+						for _, s := range ch.Fix.Steps {
+							fmt.Println("      " + s)
+						}
+						if ch.Fix.Command != "" {
+							fmt.Println("      or run: " + ch.Fix.Command)
+						}
+					}
+				}
+			})
+			return nil
 		},
 	})
 	cmd.AddCommand(&cobra.Command{
@@ -393,7 +456,7 @@ func (a *app) modelsCmd() *cobra.Command {
 				return err
 			}
 			var models []map[string]any
-			if err := c.Do(context.Background(), "GET", "/v1/models", nil, &models); err != nil {
+			if err := c.Do(context.Background(), "GET", "/v1/models?fresh=1", nil, &models); err != nil {
 				return err
 			}
 			a.print(models, func() {
@@ -443,14 +506,29 @@ func (a *app) presetsCmd() *cobra.Command {
 				return err
 			}
 			var list []map[string]any
-			if err := c.Do(context.Background(), "GET", "/v1/presets", nil, &list); err != nil {
+			if err := c.Do(context.Background(), "GET", "/v1/presets?fresh=1", nil, &list); err != nil {
 				return err
 			}
 			a.print(list, func() {
 				tw := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)
-				fmt.Fprintln(tw, "ID\tNAME\tSOURCE\tDESCRIPTION")
+				fmt.Fprintln(tw, "ID\tNAME\tREADY\tMODELS\tSOURCE")
 				for _, p := range list {
-					fmt.Fprintf(tw, "%v\t%v\t%v\t%v\n", p["id"], p["name"], p["source"], p["description"])
+					var models []string
+					plan, _ := p["plan"].([]any)
+					for _, s := range plan {
+						pick, _ := s.(map[string]any)
+						switch {
+						case pick["missing"] == true:
+							models = append(models, fmt.Sprintf("%v: none ready", pick["use"]))
+						case pick["model"] != nil:
+							models = append(models, fmt.Sprint(pick["model"]))
+						}
+					}
+					ready := "yes"
+					if p["ready"] != true {
+						ready = "no"
+					}
+					fmt.Fprintf(tw, "%v\t%v\t%v\t%v\t%v\n", p["id"], p["name"], ready, strings.Join(models, ", "), p["source"])
 				}
 				tw.Flush()
 			})

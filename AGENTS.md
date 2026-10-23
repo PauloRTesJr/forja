@@ -53,7 +53,7 @@ Three processes; each owns exactly one thing.
 - Each change keeps all three test suites green: `make test`. CI-equivalent checks: `make check`.
 - Real models live in **model families** (`engine/families/<name>/`): `family.yaml` pins the Python version, lanes, upstream source (URL + sha256) and CUDA builds; `requirements/<lane>.txt` lists dependencies per torch lane; `src/forja_<name>/` is the adapter. `forja models install <id>` builds `<data>/envs/<family>` with uv and fetches weights pinned in the model's manifest (`engine/src/forja_engine/manifests/`). Pin every new upstream commit, weight revision and file hash; adapter tests run against fake upstream modules (`engine/tests/test_families.py`).
 - When an adapter's output changes for the same inputs, bump its `version` (for a model, also `adapter_version` in its manifest). The cache key includes it, so the bump is what retires stale cached outputs.
-- Stub models (`engine/src/forja_engine/adapters/stub/`) are deterministic and CPU-only; they stand in for real models in tests and on machines without a GPU. Keep them deterministic for a fixed seed.
+- Stub models (`engine/src/forja_engine/adapters/stub/`) are deterministic and CPU-only; they stand in for real models in tests, and on machines without a GPU when `models.stubs = true`. Presets never name them (decision 12). Keep them deterministic for a fixed seed.
 - The engine API (`/v1`) is a contract shared by the core, remote engines and serverless handlers. Changing it means bumping the API version in `engine/src/forja_engine/api/version.py` and `core/internal/engineapi/version.go` together.
 - Write comments only for the *why* a reader cannot see in the code.
 - Commits follow Conventional Commits (the changelog is generated from them).

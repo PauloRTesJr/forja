@@ -76,6 +76,33 @@ type Model struct {
 	// AdapterVersion and Upstream (the family's pinned source sha256) arrive with API 1.2.
 	AdapterVersion string `json:"adapter_version"`
 	Upstream       string `json:"upstream"`
+	// Rank orders models for the same stage when a preset leaves the model open; Stub marks
+	// the deterministic stand-ins (API 1.3).
+	Rank int  `json:"rank"`
+	Stub bool `json:"stub"`
+	// What the Models screen shows (API 1.4): where the model would run here and how well
+	// ("fits", "offload", "too-big", "unsupported"), its size, and a running install or removal.
+	Description string  `json:"description"`
+	DiskGB      float64 `json:"disk_gb"`
+	VRAMGB      float64 `json:"vram_gb"`
+	RunsOn      *string `json:"runs_on"`
+	Fit         string  `json:"fit"`
+	Task        *string `json:"task"`
+}
+
+// Ready reports whether the model can run on the provider now.
+func (m *Model) Ready() bool {
+	return (m.Status == "ready" || m.Status == "loaded") && m.Device != nil
+}
+
+// Does reports whether the model provides a stage type.
+func (m *Model) Does(task string) bool {
+	for _, t := range m.Tasks {
+		if t == task {
+			return true
+		}
+	}
+	return false
 }
 
 type Weights struct {
@@ -87,6 +114,13 @@ type License struct {
 	SPDX         string   `json:"spdx"`
 	Commercial   bool     `json:"commercial"`
 	Restrictions []string `json:"restrictions"`
+	URL          string   `json:"url"`
+}
+
+// NeedsAcceptance is true for licenses the user must accept before installing: custom ones,
+// non-commercial ones and ones with restrictions (spec section 7).
+func (l License) NeedsAcceptance() bool {
+	return len(l.Restrictions) > 0 || !l.Commercial || strings.HasPrefix(l.SPDX, "LicenseRef-")
 }
 
 // CheckCompatible refuses engines with a different major API version.
@@ -97,4 +131,70 @@ func CheckCompatible(engineVersion string) error {
 			engineVersion, major(APIVersion))
 	}
 	return nil
+}
+
+// Check is one thing a machine needs before models install (API 1.4).
+type Check struct {
+	ID     string   `json:"id"`
+	Label  string   `json:"label"`
+	OK     bool     `json:"ok"`
+	Found  string   `json:"found"`
+	Need   string   `json:"need"`
+	Why    string   `json:"why"`
+	Fix    *Fix     `json:"fix"`
+	Models []string `json:"models"`
+}
+
+type Fix struct {
+	Label string `json:"label"`
+	// Runnable fixes run on the provider's machine on request; the rest are steps or a link.
+	Runnable bool     `json:"runnable"`
+	Command  string   `json:"command"`
+	URL      string   `json:"url"`
+	Steps    []string `json:"steps"`
+	Admin    bool     `json:"admin"`
+}
+
+type Checks struct {
+	Lane   string  `json:"lane"`
+	OK     bool    `json:"ok"`
+	Checks []Check `json:"checks"`
+}
+
+// Task is an install, removal or fix running on a provider, as its latest state.
+type Task struct {
+	ID         string         `json:"id"`
+	Kind       string         `json:"kind"`
+	Target     string         `json:"target"`
+	Status     string         `json:"status"`
+	Steps      []TaskStep     `json:"steps"`
+	Progress   *TaskProgress  `json:"progress"`
+	Log        []string       `json:"log"`
+	Error      *string        `json:"error"`
+	Result     map[string]any `json:"result"`
+	CreatedAt  float64        `json:"created_at"`
+	FinishedAt *float64       `json:"finished_at"`
+	Version    int            `json:"version"`
+}
+
+func (t *Task) Done() bool {
+	return t.Status == "succeeded" || t.Status == "failed" || t.Status == "cancelled"
+}
+
+type TaskStep struct {
+	ID     string `json:"id"`
+	Label  string `json:"label"`
+	Status string `json:"status"`
+}
+
+type TaskProgress struct {
+	Step  string `json:"step"`
+	Done  int64  `json:"done"`
+	Total int64  `json:"total"`
+}
+
+// InstallRequest picks the torch lane (default: detected) and whether to fetch weights.
+type InstallRequest struct {
+	Lane    string `json:"lane,omitempty"`
+	Weights *bool  `json:"weights,omitempty"`
 }

@@ -131,6 +131,17 @@ CREATE TABLE IF NOT EXISTS assets (
 	created_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS assets_created ON assets(created_at DESC);
+CREATE TABLE IF NOT EXISTS license_acceptances (
+	model TEXT NOT NULL,
+	license TEXT NOT NULL,
+	accepted_at INTEGER NOT NULL,
+	PRIMARY KEY (model, license)
+);
+CREATE TABLE IF NOT EXISTS provider_catalog (
+	provider TEXT PRIMARY KEY,
+	entry TEXT NOT NULL,
+	at INTEGER NOT NULL
+);
 `
 
 func Open(dataDir string) (*DB, error) {
@@ -339,6 +350,65 @@ func (d *DB) Assets(ctx context.Context, limit int, before time.Time, query stri
 			return nil, err
 		}
 		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
+// SaveCatalog remembers a provider's latest answer to "what do you run?".
+func (d *DB) SaveCatalog(ctx context.Context, provider string, entry []byte) error {
+	_, err := d.sql.ExecContext(ctx,
+		`INSERT INTO provider_catalog (provider, entry, at) VALUES (?, ?, ?)
+		 ON CONFLICT(provider) DO UPDATE SET entry = excluded.entry, at = excluded.at`,
+		provider, string(entry), time.Now().UnixMilli())
+	return err
+}
+
+// Catalogs returns every remembered provider answer by provider id.
+func (d *DB) Catalogs(ctx context.Context) (map[string][]byte, error) {
+	rows, err := d.sql.QueryContext(ctx, `SELECT provider, entry FROM provider_catalog`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string][]byte{}
+	for rows.Next() {
+		var id, entry string
+		if err := rows.Scan(&id, &entry); err != nil {
+			return nil, err
+		}
+		out[id] = []byte(entry)
+	}
+	return out, rows.Err()
+}
+
+func (d *DB) ForgetCatalog(ctx context.Context, provider string) error {
+	_, err := d.sql.ExecContext(ctx, `DELETE FROM provider_catalog WHERE provider = ?`, provider)
+	return err
+}
+
+// AcceptLicense records that the user accepted a model's license, with the time.
+func (d *DB) AcceptLicense(ctx context.Context, model, license string) error {
+	_, err := d.sql.ExecContext(ctx,
+		`INSERT INTO license_acceptances (model, license, accepted_at) VALUES (?, ?, ?)
+		 ON CONFLICT(model, license) DO NOTHING`, model, license, time.Now().UnixMilli())
+	return err
+}
+
+// Acceptances maps "model license" to when it was accepted.
+func (d *DB) Acceptances(ctx context.Context) (map[string]time.Time, error) {
+	rows, err := d.sql.QueryContext(ctx, `SELECT model, license, accepted_at FROM license_acceptances`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]time.Time{}
+	for rows.Next() {
+		var model, license string
+		var at int64
+		if err := rows.Scan(&model, &license, &at); err != nil {
+			return nil, err
+		}
+		out[model+" "+license] = time.UnixMilli(at)
 	}
 	return out, rows.Err()
 }

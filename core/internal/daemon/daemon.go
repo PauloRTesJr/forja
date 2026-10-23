@@ -15,14 +15,17 @@ import (
 	"github.com/gofrs/flock"
 
 	"forja/internal/api"
+	"forja/internal/catalog"
 	"forja/internal/config"
 	"forja/internal/events"
+	"forja/internal/installs"
 	"forja/internal/ipc"
 	"forja/internal/jobs"
 	"forja/internal/library"
 	"forja/internal/localengine"
 	"forja/internal/provider"
 	"forja/internal/provider/engine"
+	configured "forja/internal/providers"
 	"forja/internal/secrets"
 	"forja/internal/store"
 )
@@ -74,7 +77,7 @@ func Start(opts Options) (*Core, error) {
 }
 
 func start(opts Options, base *config.Loaded, dataDir string) (*Core, error) {
-	log := opts.Log
+	log := slog.New(secrets.Redacting(opts.Log.Handler()))
 	st, err := store.Open(filepath.Join(dataDir, "store"))
 	if err != nil {
 		return nil, err
@@ -86,26 +89,36 @@ func start(opts Options, base *config.Loaded, dataDir string) (*Core, error) {
 	_ = db.FailUnfinished(context.Background())
 
 	cfgFn := func(project string) (*config.Loaded, error) { return config.Load(project, nil) }
-	eng := localengine.New(base, st.Root, filepath.Join(dataDir, "logs"), log)
+	eng := localengine.New(func() (*config.Loaded, error) { return config.Load("", nil) }, st.Root, filepath.Join(dataDir, "logs"), log)
 	providers := provider.NewRegistry()
 	providers.Add(engine.New(jobs.LocalProvider, provider.KindLocal, false, true, eng.Endpoint, st))
 	for _, pc := range base.Providers {
-		switch provider.Kind(pc.Kind) {
-		case provider.KindEngine:
-			token := ""
-			if pc.Secret != "" {
-				if token, err = secrets.Get(pc.Secret); err != nil {
-					log.Warn("provider secret unavailable", "provider", pc.ID, "secret", pc.Secret, "err", err)
-				}
-			}
-			providers.Add(engine.New(pc.ID, provider.KindEngine, pc.Paid, false, engine.Static(pc.URL, token), st))
-		default:
-			log.Warn("provider kind not implemented yet; skipping", "provider", pc.ID, "kind", pc.Kind)
+		p, err := configured.Build(pc, st)
+		if err != nil {
+			log.Warn("skipping provider", "provider", pc.ID, "err", err)
+			continue
 		}
+		providers.Add(p)
 	}
 
 	hub := events.NewHub()
-	runner := jobs.NewRunner(db, st, hub, providers, cfgFn, log, opts.Version, 8)
+	cat := catalog.New(providers, db,
+		func(id string) bool { return id == jobs.LocalProvider && !eng.Running() },
+		func(id string) { hub.Publish(api.EvModelsChanged, map[string]string{"provider": id}) })
+	// Models installed while the engine was stopped show up as soon as it runs again.
+	eng.Started = func() {
+		hub.Publish(api.EvProvidersChanged, map[string]string{"provider": jobs.LocalProvider})
+		_, _ = cat.Ask(context.Background(), jobs.LocalProvider)
+	}
+	if base.Engine.Share {
+		// A shared GPU answers other computers even when nobody here is generating.
+		go func() {
+			if _, _, err := eng.Endpoint(context.Background()); err != nil {
+				log.Warn("could not start the shared engine", "err", err)
+			}
+		}()
+	}
+	runner := jobs.NewRunner(db, st, hub, providers, cat, cfgFn, log, opts.Version, 8)
 	addr := opts.Address
 	if addr == "" {
 		addr = ipc.DefaultAddress(dataDir)
@@ -113,7 +126,7 @@ func start(opts Options, base *config.Loaded, dataDir string) (*Core, error) {
 	c := &Core{Address: addr, engine: eng, db: db, done: make(chan struct{})}
 	srv := &api.Server{
 		Version: opts.Version, DataDir: dataDir, DB: db, Store: st, Hub: hub, Runner: runner,
-		Providers: providers, Engine: eng, Config: cfgFn, Log: log, Shutdown: c.Stop,
+		Providers: providers, Catalog: cat, Installs: installs.New(providers, cat, hub, log), Engine: eng, Config: cfgFn, Log: log, Shutdown: c.Stop,
 	}
 	c.server = &http.Server{Handler: srv.Handler(), ReadHeaderTimeout: 10 * time.Second}
 	ln, err := ipc.Listen(addr)

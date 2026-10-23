@@ -1,5 +1,6 @@
 import io
 import json
+import sys
 import tarfile
 from pathlib import Path
 
@@ -44,7 +45,7 @@ def test_install_plan(tmp_path, monkeypatch):
     """The command sequence for a CUDA family, without running anything."""
     commands = []
     monkeypatch.setattr(
-        install, "_run", lambda cmd, log, env=None, cwd=None: commands.append([str(c) for c in cmd])
+        install, "_run", lambda cmd, log, env=None, cwd=None, **kw: commands.append([str(c) for c in cmd])
     )
     monkeypatch.setattr(install, "uv_binary", lambda: "uv")
     monkeypatch.setattr(install.toolchain, "build_env", lambda backend, log: {"CUDA_HOME": "/cuda"})
@@ -87,9 +88,9 @@ def test_uninstalled_models_are_refused_at_placement(tmp_path):
 def test_install_stops_before_building_anything_without_nvcc(tmp_path, monkeypatch):
     commands = []
     monkeypatch.setattr(
-        install, "_run", lambda cmd, log, env=None, cwd=None: commands.append([str(c) for c in cmd])
+        install, "_run", lambda cmd, log, env=None, cwd=None, **kw: commands.append([str(c) for c in cmd])
     )
-    monkeypatch.setattr(install.toolchain, "cuda_home", lambda: None)
+    monkeypatch.setattr(install.toolchain, "cuda_home", lambda want=None: None)
     inst = install.Installer(Registry.load(), tmp_path / "envs", tmp_path / "models", log=lambda s: None)
     with pytest.raises(install.InstallError, match="nvcc not found"):
         inst.install("triposg", lane="cuda")
@@ -102,7 +103,7 @@ def test_torch_cuda_version():
 
 
 def test_nvcc_must_match_torch(monkeypatch, tmp_path):
-    monkeypatch.setattr(toolchain, "cuda_home", lambda: tmp_path)
+    monkeypatch.setattr(toolchain, "cuda_home", lambda want=None: tmp_path)
     for have, ok in (((12, 6), True), ((12, 4), True), ((12, 3), False), ((13, 0), False)):
         monkeypatch.setattr(toolchain, "nvcc_version", lambda home, have=have: have)
         if ok:
@@ -125,3 +126,87 @@ def test_msvc_toolset_nvcc_accepts_wins_over_newer_ones(tmp_path):
     assert toolset == "14.44.35207" and bat.name == "vcvarsall.bat"
     with pytest.raises(toolchain.ToolchainError, match=r"VC\.14\.44"):
         toolchain.find_msvc((14, 30), installs=[vs])
+
+
+class Steps(install.Reporter):
+    def __init__(self) -> None:
+        super().__init__(log=lambda s: None)
+        self.seen: list[tuple[str, str]] = []
+
+    def step(self, step: str, status: str) -> None:
+        self.seen.append((step, status))
+
+
+def test_install_reports_every_step(tmp_path, monkeypatch):
+    monkeypatch.setattr(install, "_run", lambda cmd, log, **kw: None)
+    monkeypatch.setattr(install, "uv_binary", lambda: "uv")
+    monkeypatch.setattr(install.toolchain, "build_env", lambda backend, log: {})
+    monkeypatch.setattr(install, "fetch_verified", lambda url, sha, cache, log: Path("/cache") / sha)
+    monkeypatch.setattr(install, "extract_tarball", lambda archive, dest: dest)
+    site = tmp_path / "site"
+    site.mkdir()
+    monkeypatch.setattr(install, "site_packages", lambda py: site)
+    monkeypatch.setattr(install.Installer, "weights", lambda self, m: None)
+    rep = Steps()
+    inst = install.Installer(Registry.load(), tmp_path / "envs", tmp_path / "models", reporter=rep)
+    inst.install("birefnet", lane="cpu")
+    final = dict(rep.seen)
+    assert [s for s, _ in install.STEPS] == list(final)
+    # BiRefNet has no upstream source and compiles nothing.
+    assert final["upstream"] == "skipped" and final["build"] == "skipped"
+    assert final["environment"] == final["weights"] == final["smoke"] == "done"
+
+
+def test_a_cancelled_install_stops_at_the_next_step(tmp_path, monkeypatch):
+    rep = Steps()
+    monkeypatch.setattr(install, "uv_binary", lambda: "uv")
+
+    def run(cmd, log, **kw):
+        rep.cancel.set()  # the user cancels while the environment builds
+
+    monkeypatch.setattr(install, "_run", run)
+    inst = install.Installer(Registry.load(), tmp_path / "envs", tmp_path / "models", reporter=rep)
+    with pytest.raises(install.InstallCancelled):
+        inst.install("birefnet", lane="cpu")
+    assert ("weights", "running") not in rep.seen
+
+
+def test_run_streams_lines_and_lets_a_caller_claim_some(tmp_path):
+    lines, claimed = [], []
+    script = "print('hello'); print('FORJA_PROGRESS 5 10'); print('bye')"
+
+    def claim(line: str) -> bool:
+        if line.startswith("FORJA_PROGRESS"):
+            claimed.append(line)
+            return True
+        return False
+
+    install._run([sys.executable, "-c", script], lines.append, on_line=claim)
+    assert claimed == ["FORJA_PROGRESS 5 10"]
+    assert "  hello" in lines and "  bye" in lines
+
+
+def test_remove_drops_the_environment_with_its_last_model(tmp_path):
+    envs, models = tmp_path / "envs", tmp_path / "models"
+    env = envs / "birefnet"
+    (env / "Scripts").mkdir(parents=True)
+    (models / "birefnet").mkdir(parents=True)
+    (models / "birefnet-lite").mkdir(parents=True)
+    (env / "forja-installed.json").write_text(json.dumps({"models": {"birefnet": {}, "birefnet-lite": {}}}))
+    inst = install.Installer(Registry.load(), envs, models, log=lambda s: None)
+    inst.remove("birefnet-lite")
+    assert env.is_dir() and not (models / "birefnet-lite").exists()
+    inst.remove("birefnet")
+    assert not env.exists() and not (models / "birefnet").exists()
+    with pytest.raises(install.InstallError, match="part of the engine"):
+        inst.remove("stub-shape")
+
+
+def test_interpreters_live_in_the_data_folder(tmp_path, monkeypatch):
+    envs = {}
+    monkeypatch.delenv("UV_PYTHON_INSTALL_DIR", raising=False)
+    monkeypatch.setattr(install, "_run", lambda cmd, log, env=None, **kw: envs.setdefault(str(cmd[1]), env))
+    monkeypatch.setattr(install, "uv_binary", lambda: "uv")
+    inst = install.Installer(Registry.load(), tmp_path / "envs", tmp_path / "models", log=lambda s: None)
+    inst.environment(families.load("birefnet"), "cpu", tmp_path / "envs" / "birefnet")
+    assert envs["venv"]["UV_PYTHON_INSTALL_DIR"] == str(tmp_path / "_uv" / "python")

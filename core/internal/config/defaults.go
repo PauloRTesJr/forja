@@ -14,11 +14,16 @@ func Defaults() map[string]any {
 			"fit_mode":      "fit-first",
 			"fairness_cap":  int64(8),
 			"start_timeout": "60s",
+			"share":         false,
+			"share_port":    int64(7861),
 		},
 		"routing": map[string]any{
 			"policy":              "prefer-local",
 			"allow_paid_fallback": false,
 			"priority":            []any{"local"},
+		},
+		"models": map[string]any{
+			"stubs": false,
 		},
 		"project": map[string]any{
 			"export_dir":     "Assets/Generated",

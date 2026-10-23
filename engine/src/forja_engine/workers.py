@@ -176,6 +176,11 @@ class WorkerPool:
     def find(self, family: str) -> Worker | None:
         return self._workers.get(family)
 
+    async def stop(self, family: str) -> None:
+        worker = self._workers.pop(family, None)
+        if worker is not None:
+            await worker.stop()
+
     async def stop_all(self) -> None:
         await asyncio.gather(*(w.stop() for w in self._workers.values()), return_exceptions=True)
         self._workers.clear()

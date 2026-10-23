@@ -1,7 +1,8 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { lazy, Suspense, useCallback, useEffect, useState, type CSSProperties } from 'react'
 import { Anvil, BrandMark, Eye, Grimoire, Hourglass, MoonPhases, SidebarSky, Sun } from './components/icons'
-import { api, type Job } from './lib/api'
+import { useInstalls } from './components/Install'
+import { api, taskDone, type Job } from './lib/api'
 import { keys, useCoreEvents } from './lib/events'
 import { isActive } from './lib/jobs'
 import { NavContext, transition, type Route } from './lib/nav'
@@ -28,6 +29,9 @@ export function App() {
   const [route, setRoute] = useState<Route>({ screen: 'generate' })
   const jobs = useQuery({ queryKey: keys.jobs, queryFn: () => api<Job[]>('GET', '/v1/jobs?limit=100') })
   const running = jobs.data?.filter(isActive).length ?? 0
+  const installs = useInstalls()
+  const install = installs.data?.find((t) => t.kind === 'install' && !taskDone(t))
+  const installPct = install?.progress?.total ? Math.round((install.progress.done / install.progress.total) * 100) : undefined
   const navigate = useCallback((r: Route) => setRoute(r), [])
 
   const activeTab = route.screen === 'asset' ? 'library' : route.screen
@@ -82,8 +86,14 @@ export function App() {
           <div className="sidebar-foot">
             <MoonPhases />
             <div className="conn">
-              <span className={`dot ${!connected ? '' : running ? 'live' : 'ok'}`} />
-              {!connected ? 'Reconnecting to core…' : running ? 'Generating' : 'Ready'}
+              <span className={`dot ${!connected ? '' : running || install ? 'live' : 'ok'}`} />
+              {!connected
+                ? 'Reconnecting to core…'
+                : running
+                  ? 'Generating'
+                  : install
+                    ? `Installing ${install.target}${installPct !== undefined ? ` · ${installPct}%` : ''}`
+                    : 'Ready'}
             </div>
           </div>
         </nav>
