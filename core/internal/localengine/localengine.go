@@ -27,7 +27,8 @@ import (
 const listeningPrefix = "FORJA_ENGINE_LISTENING "
 
 type Manager struct {
-	cfg      *config.Loaded
+	// load reads the configuration each time the engine starts, so settings apply on restart.
+	load     func() (*config.Loaded, error)
 	storeDir string
 	logPath  string
 	log      *slog.Logger
@@ -43,8 +44,8 @@ type Manager struct {
 	exit     chan struct{}
 }
 
-func New(cfg *config.Loaded, storeDir, logDir string, log *slog.Logger) *Manager {
-	return &Manager{cfg: cfg, storeDir: storeDir, logPath: filepath.Join(logDir, "engine.log"), log: log}
+func New(load func() (*config.Loaded, error), storeDir, logDir string, log *slog.Logger) *Manager {
+	return &Manager{load: load, storeDir: storeDir, logPath: filepath.Join(logDir, "engine.log"), log: log}
 }
 
 // Endpoint returns the running engine's URL and token, starting it if needed.
@@ -117,19 +118,23 @@ func findRepoEngine() string {
 }
 
 func (m *Manager) start(ctx context.Context) error {
-	base, err := Command(m.cfg)
+	cfg, err := m.load()
+	if err != nil {
+		return err
+	}
+	base, err := Command(cfg)
 	if err != nil {
 		return err
 	}
 	token := randomToken()
 	args := append(append([]string{}, base[1:]...),
 		"serve", "--host", "127.0.0.1", "--port", "0", "--store", m.storeDir,
-		"--fit-mode", m.cfg.Engine.FitMode,
-		"--vram-reserve-gb", strconv.FormatFloat(m.cfg.Engine.VRAMReserveGB, 'f', -1, 64),
-		"--idle-unload-minutes", strconv.FormatInt(m.cfg.Engine.IdleUnloadMinutes, 10),
+		"--fit-mode", cfg.Engine.FitMode,
+		"--vram-reserve-gb", strconv.FormatFloat(cfg.Engine.VRAMReserveGB, 'f', -1, 64),
+		"--idle-unload-minutes", strconv.FormatInt(cfg.Engine.IdleUnloadMinutes, 10),
 		"--log-level", "warning",
 	)
-	for _, d := range m.cfg.Engine.ManifestDirs {
+	for _, d := range cfg.Engine.ManifestDirs {
 		args = append(args, "--manifests", d)
 	}
 	cmd := exec.Command(base[0], args...)
@@ -191,7 +196,7 @@ func (m *Manager) start(ctx context.Context) error {
 		close(exit)
 	}()
 
-	timeout, _ := time.ParseDuration(m.cfg.Engine.StartTimeout)
+	timeout, _ := time.ParseDuration(cfg.Engine.StartTimeout)
 	if timeout <= 0 {
 		timeout = 60 * time.Second
 	}

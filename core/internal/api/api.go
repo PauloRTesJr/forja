@@ -54,6 +54,10 @@ func (s *Server) Handler() http.Handler {
 	})
 	mux.HandleFunc("GET /v1/info", s.info)
 	mux.HandleFunc("GET /v1/config/effective", s.configEffective)
+	mux.HandleFunc("GET /v1/settings", s.settingsGet)
+	mux.HandleFunc("PATCH /v1/settings", s.settingsPatch)
+	mux.HandleFunc("POST /v1/settings/file", s.settingsFile)
+	mux.HandleFunc("GET /v1/diagnostics", s.diagnostics)
 	mux.HandleFunc("GET /v1/presets", s.presets)
 	mux.HandleFunc("GET /v1/providers", s.providers)
 	mux.HandleFunc("GET /v1/models", s.models)
@@ -115,8 +119,12 @@ func (s *Server) info(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out := map[string]any{
-		"version": s.Version, "data_dir": s.DataDir, "config_files": cfg.Files,
+		"version": s.Version, "data_dir": s.DataDir, "config_files": cfg.Files, "user_config": config.UserFile(),
 		"engine": map[string]any{"running": s.Engine.Running()},
+	}
+	// The hardware the engine last reported, so Settings shows it without starting the engine.
+	if e, ok := s.Catalog.Last(jobs.LocalProvider); ok {
+		out["system"] = e.System
 	}
 	if s.Engine.Running() {
 		if p, ok := s.Providers.Get(jobs.LocalProvider); ok {

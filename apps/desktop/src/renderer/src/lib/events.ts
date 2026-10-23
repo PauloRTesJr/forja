@@ -16,6 +16,7 @@ export const keys = {
   installs: ['installs'] as const,
   setup: ['setup'] as const,
   checks: (models: string[]) => ['checks', models.join(',')] as const,
+  settings: ['settings'] as const,
 }
 
 /** Keeps the newest state of each task, newest task first. */
@@ -56,6 +57,12 @@ export function useCoreEvents(qc: QueryClient): boolean {
           void qc.invalidateQueries({ queryKey: keys.models })
           void qc.invalidateQueries({ queryKey: keys.presets })
           void qc.invalidateQueries({ queryKey: keys.setup })
+          break
+        case 'settings.changed':
+          void qc.invalidateQueries({ queryKey: keys.settings })
+          void qc.invalidateQueries({ queryKey: keys.config })
+          void qc.invalidateQueries({ queryKey: keys.presets })
+          void qc.invalidateQueries({ queryKey: keys.models })
           break
         case 'install.updated': {
           const t = ev.data as InstallTask

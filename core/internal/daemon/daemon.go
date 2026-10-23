@@ -88,7 +88,7 @@ func start(opts Options, base *config.Loaded, dataDir string) (*Core, error) {
 	_ = db.FailUnfinished(context.Background())
 
 	cfgFn := func(project string) (*config.Loaded, error) { return config.Load(project, nil) }
-	eng := localengine.New(base, st.Root, filepath.Join(dataDir, "logs"), log)
+	eng := localengine.New(func() (*config.Loaded, error) { return config.Load("", nil) }, st.Root, filepath.Join(dataDir, "logs"), log)
 	providers := provider.NewRegistry()
 	providers.Add(engine.New(jobs.LocalProvider, provider.KindLocal, false, true, eng.Endpoint, st))
 	for _, pc := range base.Providers {

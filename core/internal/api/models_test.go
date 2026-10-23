@@ -217,3 +217,45 @@ func TestPinningAModelWritesTheUserConfig(t *testing.T) {
 		t.Fatal("unpinning left the key")
 	}
 }
+
+func TestSettingsSayWhereEachValueComesFromAndSaveToTheUserFile(t *testing.T) {
+	ts, _, _ := server(t)
+	t.Setenv("FORJA_ENGINE__FIT_MODE", "quality-first")
+	var view settingsView
+	call(t, ts, "GET", "/v1/settings", nil, &view)
+	by := map[string]settingView{}
+	for _, s := range view.Settings {
+		by[s.Key] = s
+	}
+	if by["engine.fit_mode"].Source != "env" || by["engine.idle_unload_minutes"].Source != "default" {
+		t.Fatalf("sources: %+v", by)
+	}
+	if code := call(t, ts, "PATCH", "/v1/settings", map[string]any{"set": map[string]any{
+		"engine.idle_unload_minutes": 5, "models.stubs": true,
+	}}, &view); code != 200 {
+		t.Fatalf("status %d", code)
+	}
+	cfg, _ := config.Load("", nil)
+	if cfg.Engine.IdleUnloadMinutes != 5 || !cfg.Models.Stubs {
+		t.Fatalf("not saved: %+v %+v", cfg.Engine, cfg.Models)
+	}
+	for _, bad := range []map[string]any{
+		{"engine.idle_unload_minutes": 1.5},
+		{"routing.policy": "whatever"},
+		{"project.export_dir": "../outside"},
+		{"project.default_preset": "no-such-preset"},
+		{"engine.command": "rm"},
+	} {
+		if code := call(t, ts, "PATCH", "/v1/settings", map[string]any{"set": bad}, nil); code != 422 {
+			t.Errorf("%v: status %d", bad, code)
+		}
+	}
+	if cfg, _ := config.Load("", nil); cfg.Routing.Policy != "prefer-local" {
+		t.Fatal("a refused change was kept")
+	}
+	// null removes the key, back to the default.
+	call(t, ts, "PATCH", "/v1/settings", map[string]any{"set": map[string]any{"engine.idle_unload_minutes": nil}}, nil)
+	if cfg, _ := config.Load("", nil); cfg.Engine.IdleUnloadMinutes != 15 {
+		t.Fatalf("got %d", cfg.Engine.IdleUnloadMinutes)
+	}
+}

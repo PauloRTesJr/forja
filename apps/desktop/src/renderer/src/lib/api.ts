@@ -246,3 +246,21 @@ export const cancelJob = (id: string): Promise<void> => api('DELETE', `/v1/jobs/
 
 /** Models as the provider reports them now; asking may start the local engine. */
 export const fetchModels = (): Promise<Model[]> => api('GET', '/v1/models?fresh=1')
+
+export interface Setting {
+  key: string
+  value: unknown
+  default: unknown
+  /** The layer that set it: default, system, user, project, env or flag. */
+  source: string
+}
+
+export interface Settings {
+  settings: Setting[]
+  files: { user: string; project?: string }
+  data_dir: string
+  /** When engine settings apply: "restarted" now, or at the "next-start". */
+  engine?: 'restarted' | 'next-start'
+}
+
+export const saveSettings = (set: Record<string, unknown>): Promise<Settings> => api('PATCH', '/v1/settings', { set })
