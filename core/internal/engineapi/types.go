@@ -58,6 +58,8 @@ type Info struct {
 	System     map[string]any `json:"system"`
 	FitMode    string         `json:"fit_mode"`
 	Lanes      map[string]any `json:"lanes"`
+	// Stages maps each built-in stage type to its adapter version (API 1.2+).
+	Stages map[string]string `json:"stages"`
 }
 
 type Model struct {
@@ -70,6 +72,15 @@ type Model struct {
 	Status   string         `json:"status"`
 	Device   *string        `json:"device"`
 	Requires map[string]any `json:"requirements"`
+	Weights  Weights        `json:"weights"`
+	// AdapterVersion and Upstream (the family's pinned source sha256) arrive with API 1.2.
+	AdapterVersion string `json:"adapter_version"`
+	Upstream       string `json:"upstream"`
+}
+
+type Weights struct {
+	Repo     string `json:"repo"`
+	Revision string `json:"revision"`
 }
 
 type License struct {

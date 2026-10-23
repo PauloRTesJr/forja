@@ -5,7 +5,9 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
+from forja_engine.adapters.builtin import BUILTINS
 from forja_engine.api.app import EngineConfig, create_app
+from forja_engine.sdk import StageType
 from forja_engine.store import hash_file
 
 FIXTURE = Path(__file__).parent / "fixtures" / "chest.png"
@@ -61,6 +63,16 @@ def test_health_needs_no_token(tmp_path):
     with TestClient(create_app(EngineConfig(store_root=tmp_path, token="t"))) as c:
         assert c.get("/v1/health").status_code == 200
         assert c.get("/v1/info").status_code == 401
+
+
+def test_info_and_models_say_what_each_stage_runs(client):
+    """The core keys its cache by these: a new adapter or new weights must not reuse old outputs."""
+    info = client.get("/v1/info").json()
+    assert info["stages"]["bake"] == BUILTINS[StageType.BAKE].version
+    assert set(info["stages"]) == {str(t) for t in BUILTINS}
+    models = {m["id"]: m for m in client.get("/v1/models").json()}
+    assert models["stub-shape"]["adapter_version"] == "1" and models["stub-shape"]["upstream"] == ""
+    assert models["triposg"]["weights"]["revision"] and len(models["triposg"]["upstream"]) == 64
 
 
 def test_upload_rejects_wrong_hash(client):

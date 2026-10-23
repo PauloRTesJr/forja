@@ -88,6 +88,7 @@ class Adapter(abc.ABC):
     """One model family. Lives in its own worker process and virtual environment."""
 
     #: Bumped whenever the adapter's output changes for the same inputs; part of the cache key.
+    #: A model's manifest mirrors it as `adapter_version`, which is what the core reads.
     version: str = "1"
     #: Where install put this model's pinned weights. Set by the worker before `load`.
     weights_dir: Path | None = None

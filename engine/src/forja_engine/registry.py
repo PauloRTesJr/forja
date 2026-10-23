@@ -9,6 +9,7 @@ from __future__ import annotations
 import importlib
 import sys
 from dataclasses import dataclass, field, replace
+from functools import cache
 from importlib import resources
 from pathlib import Path
 from typing import Any
@@ -38,6 +39,9 @@ class Manifest:
     adapter: str  # "module:Class"
     tasks: tuple[StageType, ...]
     license: License
+    # Mirrors the adapter class's `version`, so the core can key the cache without importing
+    # code that lives in another environment. tests/test_families.py keeps the two equal.
+    adapter_version: str = "1"
     requirements: dict[str, Any] = field(default_factory=dict)
     params: dict[str, Any] = field(default_factory=dict)
     weights: dict[str, Any] = field(default_factory=dict)
@@ -82,11 +86,25 @@ class Manifest:
             "vram_gb": self.vram_gb,
             "installed": self.installed,
             "weights": {k: self.weights[k] for k in ("repo", "revision") if k in self.weights},
+            "adapter_version": self.adapter_version,
+            "upstream": upstream_pin(self.family),
         }
 
 
 class ManifestError(ValueError):
     pass
+
+
+@cache
+def upstream_pin(family: str) -> str:
+    """The sha256 of the upstream source a family runs, or "" for families with none."""
+    if family in IN_ENGINE_FAMILIES:
+        return ""
+    try:
+        up = families.load(family).upstream
+    except FileNotFoundError:
+        return ""
+    return up.sha256 if up else ""
 
 
 def parse(doc: dict[str, Any], source: str) -> Manifest:
@@ -99,6 +117,7 @@ def parse(doc: dict[str, Any], source: str) -> Manifest:
             adapter=doc["adapter"],
             tasks=tuple(StageType(t) for t in doc["tasks"]),
             license=License(lic["spdx"], bool(lic["commercial"]), tuple(lic.get("restrictions", []))),
+            adapter_version=str(doc.get("adapter_version", "1")),
             requirements=doc.get("requirements", {}),
             params=doc.get("params", {}),
             weights=doc.get("weights", {}),

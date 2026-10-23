@@ -3,6 +3,7 @@ package jobs
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"os"
@@ -26,16 +27,47 @@ type fakeProvider struct {
 	st   *store.Store
 	mu   sync.Mutex
 	runs [][]string // stage ids per run
+	// What it says it runs; tests bump these between jobs. down makes Info and Models fail.
+	stages map[string]string
+	shape  engineapi.Model
+	down   bool
 }
 
-func (f *fakeProvider) ID() string                                    { return LocalProvider }
-func (f *fakeProvider) Kind() provider.Kind                           { return provider.KindLocal }
-func (f *fakeProvider) Paid() bool                                    { return false }
-func (f *fakeProvider) SharesStore() bool                             { return true }
-func (f *fakeProvider) Health(context.Context) error                  { return nil }
-func (f *fakeProvider) Info(context.Context) (*engineapi.Info, error) { return &engineapi.Info{}, nil }
+func (f *fakeProvider) ID() string                   { return LocalProvider }
+func (f *fakeProvider) Kind() provider.Kind          { return provider.KindLocal }
+func (f *fakeProvider) Paid() bool                   { return false }
+func (f *fakeProvider) SharesStore() bool            { return true }
+func (f *fakeProvider) Health(context.Context) error { return nil }
+func (f *fakeProvider) Info(context.Context) (*engineapi.Info, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.down {
+		return nil, errors.New("connection refused")
+	}
+	stages := map[string]string{}
+	for k, v := range f.stages {
+		stages[k] = v
+	}
+	return &engineapi.Info{Stages: stages}, nil
+}
+
 func (f *fakeProvider) Models(context.Context) ([]engineapi.Model, error) {
-	return []engineapi.Model{{ID: "stub-shape", License: engineapi.License{SPDX: "Apache-2.0"}}}, nil
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.down {
+		return nil, errors.New("connection refused")
+	}
+	return []engineapi.Model{
+		{ID: "stub-background", AdapterVersion: "1"},
+		f.shape,
+		{ID: "stub-paint", AdapterVersion: "1"},
+	}, nil
+}
+
+func (f *fakeProvider) set(fn func(f *fakeProvider)) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	fn(f)
 }
 func (f *fakeProvider) HasArtifact(_ context.Context, ref string) (bool, error) {
 	return f.st.Has(ref), nil
@@ -85,7 +117,9 @@ func setup(t *testing.T) (*Runner, *fakeProvider, *events.Hub, *store.Store, str
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { db.Close() })
-	fp := &fakeProvider{st: st}
+	fp := &fakeProvider{st: st, stages: map[string]string{"bake": "1"}, shape: engineapi.Model{
+		ID: "stub-shape", License: engineapi.License{SPDX: "Apache-2.0"}, AdapterVersion: "1",
+	}}
 	reg := provider.NewRegistry()
 	reg.Add(fp)
 	hub := events.NewHub()
@@ -164,5 +198,78 @@ func TestPaidProvidersAreNeverAnAutomaticChoice(t *testing.T) {
 	if _, err := r.Submit(context.Background(), SubmitRequest{Input: img, Preset: "draft",
 		Overrides: map[string]any{"shape.provider": "runpod"}}); err == nil {
 		t.Fatal("unknown provider accepted")
+	}
+}
+
+func (f *fakeProvider) count() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.runs)
+}
+
+// executed returns the stage ids the provider ran in its latest run, or "" when it ran nothing.
+func (f *fakeProvider) executed(before int) string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.runs) == before {
+		return ""
+	}
+	return strings.Join(f.runs[len(f.runs)-1], ",")
+}
+
+func TestNewVersionsOnTheProviderRecomputeFromTheStageThatChanged(t *testing.T) {
+	r, fp, _, _, img := setup(t)
+	ctx := context.Background()
+	submit := func() *library.Job {
+		t.Helper()
+		j, err := r.Submit(ctx, SubmitRequest{Input: img, Preset: "mobile-prop"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := wait(t, r, j.ID)
+		if got.Status != library.Succeeded {
+			t.Fatalf("%s: %s", got.Status, got.Error)
+		}
+		return got
+	}
+	first := submit()
+	fp.set(func(f *fakeProvider) { f.stages["bake"] = "2" })
+	n := fp.count()
+	submit()
+	if got := fp.executed(n); got != "bake,lods,export" {
+		t.Fatalf("after a new bake version the provider ran %q", got)
+	}
+	fp.set(func(f *fakeProvider) { f.shape.Weights.Revision = "next" })
+	n = fp.count()
+	submit()
+	if got := fp.executed(n); got != "shape,cleanup,lowpoly,uv,paint,bake,lods,export" {
+		t.Fatalf("after new shape weights the provider ran %q", got)
+	}
+	if first.Stages[0].Key == "" {
+		t.Fatal("keys are not recorded on the job")
+	}
+}
+
+func TestAnUnreachableProviderKeysWithItsLastAnswer(t *testing.T) {
+	r, fp, _, _, img := setup(t)
+	ctx := context.Background()
+	fp.set(func(f *fakeProvider) { f.down = true })
+	j, _ := r.Submit(ctx, SubmitRequest{Input: img, Preset: "mobile-prop"})
+	if got := wait(t, r, j.ID); got.Status != library.Failed || !strings.Contains(got.Error, "did not say what it runs") {
+		t.Fatalf("with no answer ever: %s %q", got.Status, got.Error)
+	}
+	fp.set(func(f *fakeProvider) { f.down = false })
+	j, _ = r.Submit(ctx, SubmitRequest{Input: img, Preset: "mobile-prop"})
+	if got := wait(t, r, j.ID); got.Status != library.Succeeded {
+		t.Fatalf("first answered job: %s %s", got.Status, got.Error)
+	}
+	fp.set(func(f *fakeProvider) { f.down = true })
+	n := fp.count()
+	j, _ = r.Submit(ctx, SubmitRequest{Input: img, Preset: "mobile-prop"})
+	if got := wait(t, r, j.ID); got.Status != library.Succeeded {
+		t.Fatalf("fully cached job while the provider is down: %s %s", got.Status, got.Error)
+	}
+	if got := fp.executed(n); got != "" {
+		t.Fatalf("a fully cached job ran %q", got)
 	}
 }

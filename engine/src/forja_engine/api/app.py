@@ -16,6 +16,7 @@ from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
 from forja_engine import __version__
+from forja_engine.adapters.builtin import BUILTINS
 from forja_engine.api.version import API_VERSION
 from forja_engine.devices import detect
 from forja_engine.registry import ManifestError, Registry
@@ -124,6 +125,9 @@ def create_app(cfg: EngineConfig) -> FastAPI:
             "api_version": API_VERSION,
             "system": detect(cfg.store_root).to_json(),
             "fit_mode": cfg.fit_mode,
+            # Built-in stage versions; the core puts them in the cache key (model versions are
+            # in /v1/models).
+            "stages": {str(task): cls.version for task, cls in BUILTINS.items()},
             "lanes": {
                 dev: {
                     "budget_bytes": lane.vram.budget,

@@ -5,6 +5,7 @@ owns around them: preprocessing, progress, cancellation, orientation, materials,
 """
 
 import contextlib
+import importlib
 import math
 import sys
 import types
@@ -17,6 +18,7 @@ import xatlas
 from PIL import Image
 
 from forja_engine.ops import mesh as mesh_ops
+from forja_engine.registry import Registry
 from forja_engine.sdk import ArtifactKind, Cancelled, Device, StageContext, StageInput, StageType
 
 FIXTURE = Path(__file__).parent / "fixtures" / "chest.png"
@@ -269,3 +271,11 @@ def test_hunyuan_offload_at_load_builds_in_ram(tmp_path, hunyuan):
     assert {n.device for n in a.pipe.models.values()} == {"cuda"}
     a.run(ctx(tmp_path, StageType.TEXTURE, paint_inputs(tmp_path), offload=True))
     assert log["offload"] == 1  # not enabled a second time at run
+
+
+def test_every_manifest_mirrors_its_adapter_version():
+    """The core keys the cache by a manifest's adapter_version, so it must follow the class."""
+    for m in Registry.load().models.values():
+        module, _, name = m.adapter.partition(":")
+        version = getattr(importlib.import_module(module), name).version
+        assert m.adapter_version == version, f"{m.id}: set adapter_version: {version!r} in its manifest"
