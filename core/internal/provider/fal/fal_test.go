@@ -94,27 +94,39 @@ func newFake(t *testing.T) *fakeFal {
 
 func (f *fakeFal) serve(w http.ResponseWriter, r *http.Request) {
 	auth := r.Header.Get("Authorization")
-	if strings.HasPrefix(r.URL.Path, "/files/") {
+	// Files and the catalog are public: a key sent there is a leak.
+	if strings.HasPrefix(r.URL.Path, "/files/") || r.URL.Path == "/v1/models" {
 		if auth != "" {
 			f.mu.Lock()
 			f.keyLeaks = append(f.keyLeaks, r.URL.Path)
 			f.mu.Unlock()
 		}
-		_, _ = w.Write([]byte("glTF\x02\x00\x00\x00 fake mesh"))
-		return
-	}
-	if auth != "Key "+key {
+	} else if auth != "Key "+key {
 		w.WriteHeader(401)
 		_, _ = w.Write([]byte(`{"error":{"message":"Invalid API key"}}`))
 		return
 	}
 	switch {
+	case strings.HasPrefix(r.URL.Path, "/files/"):
+		_, _ = w.Write([]byte("glTF\x02\x00\x00\x00 fake mesh"))
 	case r.URL.Path == "/v1/models/pricing":
+		// Like Hunyuan3D and TRELLIS 2 on fal: a compute unit, not a price per generation.
 		var prices []map[string]any
 		for _, id := range r.URL.Query()["endpoint_id"] {
-			prices = append(prices, map[string]any{"endpoint_id": id, "unit_price": 0.4, "unit": "generation", "currency": "USD"})
+			prices = append(prices, map[string]any{"endpoint_id": id, "unit_price": 0.015, "unit": "units", "currency": "USD"})
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"prices": prices})
+	case r.URL.Path == "/v1/models/pricing/estimate":
+		var req struct {
+			EstimateType string                    `json:"estimate_type"`
+			Endpoints    map[string]map[string]int `json:"endpoints"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		if req.EstimateType != "historical_api_price" || len(req.Endpoints) != 1 || req.Endpoints["fal-ai/fake-3d"]["call_quantity"] != 1 {
+			w.WriteHeader(404)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"estimate_type": req.EstimateType, "total_cost": 0.4, "currency": "USD"})
 	case r.URL.Path == "/v1/models":
 		ids := r.URL.Query()["endpoint_id"]
 		if len(ids) == 0 {
@@ -168,8 +180,12 @@ func TestARunSendsTheImageInlineAndStoresTheMesh(t *testing.T) {
 		t.Fatal(err)
 	}
 	models, err := p.Models(ctx)
-	if err != nil || len(models) != 1 || models[0].Price == nil || models[0].Price.Amount != 0.4 || !models[0].Ready() {
+	if err != nil || len(models) != 1 || !models[0].Ready() {
 		t.Fatalf("models %+v %v", models, err)
+	}
+	// Priced per compute unit on fal; what one generation costs comes from the estimate.
+	if pr := models[0].Price; pr == nil || pr.Amount != 0.4 || pr.Unit != engineapi.PerCall {
+		t.Fatalf("price %+v", pr)
 	}
 	// The desktop reads these lists without null checks, as engines always send them.
 	if js, _ := json.Marshal(models[0]); !strings.Contains(string(js), `"restrictions":[]`) || strings.Contains(string(js), `"tasks":null`) {
@@ -216,6 +232,15 @@ func TestABadKeyAndAnUnusableModelSaySo(t *testing.T) {
 		if m.ID == "fal-ai/fake-3d" && (!m.Added || m.Problem != "") {
 			t.Fatalf("fake-3d: %+v", m)
 		}
+		// Without an estimate the price stays per compute unit, never passed off as per image.
+		if m.ID == "fal-ai/fake-video" && (m.Price == nil || m.Price.Unit != "units") {
+			t.Fatalf("fake-video price: %+v", m.Price)
+		}
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.keyLeaks) > 0 {
+		t.Fatalf("the API key went to the public catalog: %v", f.keyLeaks)
 	}
 }
 

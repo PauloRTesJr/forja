@@ -20,7 +20,8 @@ func fakeFal(t *testing.T) {
 	file := map[string]any{"type": "object", "properties": map[string]any{"url": map[string]any{"type": "string"},
 		"content_type": map[string]any{"type": "string"}}}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "Key fal-test" {
+		// The catalog is public; everything else needs the key.
+		if r.URL.Path != "/v1/models" && r.Header.Get("Authorization") != "Key fal-test" {
 			w.WriteHeader(401)
 			return
 		}

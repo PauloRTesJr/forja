@@ -123,6 +123,16 @@ func (p *Provider) Download(context.Context, string) error { return nil }
 
 // call sends one request to fal's API or queue with the key. The key never goes anywhere else.
 func (p *Provider) call(ctx context.Context, method, rawURL string, body any, out any) error {
+	return p.request(ctx, method, rawURL, body, out, true)
+}
+
+// public reads fal's catalog, which needs no key. Sent with one, fal answered without the
+// API descriptions Forja maps models from.
+func (p *Provider) public(ctx context.Context, rawURL string, out any) error {
+	return p.request(ctx, http.MethodGet, rawURL, nil, out, false)
+}
+
+func (p *Provider) request(ctx context.Context, method, rawURL string, body any, out any, withKey bool) error {
 	var r io.Reader
 	if body != nil {
 		raw, err := json.Marshal(body)
@@ -135,7 +145,9 @@ func (p *Provider) call(ctx context.Context, method, rawURL string, body any, ou
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Authorization", "Key "+p.key)
+	if withKey {
+		req.Header.Set("Authorization", "Key "+p.key)
+	}
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
@@ -235,7 +247,7 @@ func (p *Provider) describe(ctx context.Context, ids []string) (map[string]*entr
 			q.Add("endpoint_id", id)
 		}
 		var page catalogPage
-		if err := p.call(ctx, http.MethodGet, p.API+"/v1/models?"+q.Encode(), nil, &page); err != nil {
+		if err := p.public(ctx, p.API+"/v1/models?"+q.Encode(), &page); err != nil {
 			return nil, err
 		}
 		for _, m := range page.Models {
@@ -271,10 +283,47 @@ func (p *Provider) prices(ctx context.Context, entries map[string]*entry) {
 		}
 		for _, pr := range page.Prices {
 			if e := entries[pr.EndpointID]; e != nil {
-				e.Price = &engineapi.Price{Amount: pr.UnitPrice, Unit: pr.Unit, Currency: pr.Currency}
+				unit := pr.Unit
+				if slices.Contains(perCallUnits, strings.ToLower(unit)) {
+					unit = engineapi.PerCall
+				}
+				e.Price = &engineapi.Price{Amount: pr.UnitPrice, Unit: unit, Currency: pr.Currency}
 			}
 		}
 	}
+	// Many 3D endpoints are priced per compute unit, which says nothing of what one generation
+	// costs; fal's estimate from past calls does.
+	var wg sync.WaitGroup
+	for id, e := range entries {
+		if e.Price == nil || e.Price.Unit == engineapi.PerCall {
+			continue
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if pr := p.perCall(ctx, id); pr != nil {
+				e.Price = pr
+			}
+		}()
+	}
+	wg.Wait()
+}
+
+// perCallUnits are fal's billing units that mean one generation of an image-to-3D model.
+var perCallUnits = []string{"image", "images", "generation", "generations", "request", "requests", "call", "calls"}
+
+// perCall is fal's estimate of one call to an endpoint, or nil when it has none.
+func (p *Provider) perCall(ctx context.Context, endpoint string) *engineapi.Price {
+	body := map[string]any{"estimate_type": "historical_api_price",
+		"endpoints": map[string]any{endpoint: map[string]int{"call_quantity": 1}}}
+	var est struct {
+		TotalCost float64 `json:"total_cost"`
+		Currency  string  `json:"currency"`
+	}
+	if err := p.call(ctx, http.MethodPost, p.API+"/v1/models/pricing/estimate", body, &est); err != nil || est.TotalCost <= 0 {
+		return nil
+	}
+	return &engineapi.Price{Amount: est.TotalCost, Unit: engineapi.PerCall, Currency: est.Currency}
 }
 
 // load describes the enabled endpoints, at most every few minutes.
@@ -358,7 +407,7 @@ func (p *Provider) Search(ctx context.Context, query, cursor string) (*engineapi
 		q.Set("cursor", cursor)
 	}
 	var page catalogPage
-	if err := p.call(ctx, http.MethodGet, p.API+"/v1/models?"+q.Encode(), nil, &page); err != nil {
+	if err := p.public(ctx, p.API+"/v1/models?"+q.Encode(), &page); err != nil {
 		return nil, err
 	}
 	entries := map[string]*entry{}

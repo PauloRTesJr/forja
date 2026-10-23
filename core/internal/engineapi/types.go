@@ -95,12 +95,16 @@ type Model struct {
 	Thumbnail   string `json:"thumbnail,omitempty"`
 }
 
-// Price is what a hosted model charges, per Unit (a generation, a second...).
+// Price is what a hosted model charges per Unit. PerCall is the unit for one generation, the
+// only price a job's cost can be added up from before it runs; any other unit (a second, a
+// vendor's compute unit) is shown as is.
 type Price struct {
 	Amount   float64 `json:"amount"`
 	Unit     string  `json:"unit"`
 	Currency string  `json:"currency"`
 }
+
+const PerCall = "generation"
 
 // CatalogPage is one page of a model hub's catalog, as Forja can use it.
 type CatalogPage struct {

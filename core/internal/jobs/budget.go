@@ -12,18 +12,9 @@ import (
 )
 
 // perGeneration reports whether a price is charged once per call, so it can be added up
-// before a job runs; per-second or per-megapixel prices cannot.
+// before a job runs.
 func perGeneration(p *engineapi.Price) bool {
-	if p == nil {
-		return false
-	}
-	unit := strings.ToLower(p.Unit)
-	for _, variable := range []string{"second", "minute", "megapixel", "token", "step"} {
-		if strings.Contains(unit, variable) {
-			return false
-		}
-	}
-	return true
+	return p != nil && p.Unit == engineapi.PerCall
 }
 
 // Estimate is what the paid stages of a job will cost, in USD, and the models whose price is
