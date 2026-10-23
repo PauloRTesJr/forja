@@ -47,7 +47,8 @@ func Execute(version string) int {
 		Version:       version,
 	}
 	root.PersistentFlags().BoolVar(&a.json, "json", false, "print machine-readable JSON")
-	root.PersistentFlags().StringVar(&a.address, "socket", "", "core socket or pipe (default: per-user)")
+	// FORJA_SOCKET lets a development build run next to an installed app without sharing its core.
+	root.PersistentFlags().StringVar(&a.address, "socket", os.Getenv("FORJA_SOCKET"), "core socket or pipe (default: $FORJA_SOCKET, else per-user)")
 	root.AddCommand(a.daemonCmd(), a.generateCmd(), a.jobsCmd(), a.modelsCmd(), a.presetsCmd(),
 		a.configCmd(), a.engineCmd(), a.secretCmd(), a.infoCmd(), a.socketCmd())
 	err := root.Execute()
