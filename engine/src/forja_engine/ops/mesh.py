@@ -13,15 +13,17 @@ import xatlas
 from numpy.typing import NDArray
 from PIL import Image
 
+TANGENTS = "tangents"  # Trimesh.metadata key: (n, 4) per-vertex tangents written as TANGENT
+
 
 def load(path: Path) -> trimesh.Trimesh:
     mesh = trimesh.load(path, file_type="glb", force="mesh", process=False)
     if not isinstance(mesh, trimesh.Trimesh):
         raise ValueError(f"{path} does not contain a triangle mesh")
+    # trimesh reads glTF extras into metadata but not the TANGENT attribute. Cached files from
+    # earlier builds still carry tangents in extras; they go stale once a stage edits the mesh.
+    mesh.metadata.pop(TANGENTS, None)
     return mesh
-
-
-TANGENTS = "tangents"  # Trimesh.metadata key: (n, 4) per-vertex tangents written as TANGENT
 
 
 def save(mesh: trimesh.Trimesh | trimesh.Scene, path: Path) -> Path:
@@ -31,8 +33,16 @@ def save(mesh: trimesh.Trimesh | trimesh.Scene, path: Path) -> Path:
     regenerate tangents that may not match the basis a normal map was baked in.
     """
     scene = _as_scene(mesh)
-    glb = trimesh.exchange.gltf.export_glb(scene, include_normals=True)
-    tangents = {name: g.metadata[TANGENTS] for name, g in scene.geometry.items() if TANGENTS in g.metadata}
+    # trimesh writes metadata into the glTF JSON as extras: tangents there would double the
+    # payload as text, and a single NaN would make the whole file invalid JSON.
+    tangents = {
+        name: g.metadata.pop(TANGENTS) for name, g in scene.geometry.items() if TANGENTS in g.metadata
+    }
+    try:
+        glb = trimesh.exchange.gltf.export_glb(scene, include_normals=True)
+    finally:
+        for name, tan in tangents.items():
+            scene.geometry[name].metadata[TANGENTS] = tan
     path.write_bytes(_with_tangents(glb, tangents) if tangents else glb)
     return path
 
@@ -67,7 +77,7 @@ def _with_tangents(glb: bytes, tangents: dict[str, NDArray[np.float32]]) -> byte
     while len(binary) % 4:
         binary.append(0)
     doc["buffers"][0]["byteLength"] = len(binary)
-    raw = json.dumps(doc, separators=(",", ":")).encode()
+    raw = json.dumps(doc, separators=(",", ":"), allow_nan=False).encode()
     raw += b" " * (-len(raw) % 4)
     total = 12 + 8 + len(raw) + 8 + len(binary)
     return (
@@ -88,6 +98,10 @@ def vertex_tangents(mesh: trimesh.Trimesh, uv: NDArray[np.float64]) -> NDArray[n
     v = np.asarray(mesh.vertices, dtype=np.float64)
     f = np.asarray(mesh.faces)
     n = np.asarray(mesh.vertex_normals, dtype=np.float64)
+    # A vertex with only zero-area faces, or faces that cancel out, has no normal. Any frame
+    # suits it; without one the fallback below divides 0 by 0 and writes NaN.
+    n_len = np.linalg.norm(n, axis=1, keepdims=True)
+    n = np.where(n_len > 1e-12, n / np.maximum(n_len, 1e-12), [[0.0, 0.0, 1.0]])
     p0, p1, p2 = v[f[:, 0]], v[f[:, 1]], v[f[:, 2]]
     w0, w1, w2 = uv[f[:, 0]], uv[f[:, 1]], uv[f[:, 2]]
     e1, e2 = p1 - p0, p2 - p0
@@ -140,7 +154,12 @@ def decimate(mesh: trimesh.Trimesh, target_tris: int) -> trimesh.Trimesh:
     verts, tris = fast_simplification.simplify(
         np.asarray(mesh.vertices, dtype=np.float32), np.asarray(mesh.faces, dtype=np.int32), reduction
     )
-    return trimesh.Trimesh(verts, tris, process=True)
+    out = trimesh.Trimesh(verts, tris, process=True)
+    # Collapses leave zero-area slivers behind; they shade as nothing and can leave a vertex
+    # with no normal to build a tangent frame from.
+    out.update_faces(out.nondegenerate_faces())
+    out.remove_unreferenced_vertices()
+    return out
 
 
 def unwrap(mesh: trimesh.Trimesh) -> trimesh.Trimesh:

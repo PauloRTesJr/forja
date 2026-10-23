@@ -15,8 +15,9 @@ import (
 	"forja/internal/presets"
 )
 
-// keyVersion invalidates every cached stage when the key recipe changes.
-const keyVersion = 1
+// keyVersion invalidates every cached stage. Bump it when the key recipe changes, or when
+// outputs cached by earlier builds are wrong: adapter versions are not part of the key yet.
+const keyVersion = 2
 
 type Stage struct {
 	presets.Stage

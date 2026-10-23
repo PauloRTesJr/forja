@@ -546,6 +546,13 @@ h1 {
   object-fit: contain;
   animation: fade-in var(--dur-3) var(--ease-out) both;
 }
+.card-failed {
+  padding: 0 16px;
+  color: var(--warn);
+  font-size: 12px;
+  text-align: center;
+  animation: fade-in var(--dur-3) var(--ease-out) both;
+}
 .card-body {
   padding: 10px 12px 12px;
 }

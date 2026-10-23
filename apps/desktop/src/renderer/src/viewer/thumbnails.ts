@@ -6,6 +6,12 @@ import { Viewer } from './scene'
 let viewer: Viewer | null = null
 let queue: Promise<void> = Promise.resolve()
 const pending = new Set<string>()
+// Keyed by model hash too, so a repaired GLB gets a fresh attempt instead of a stale error.
+const failed = new Map<string, string>()
+const listeners = new Set<() => void>()
+let failures = 0
+
+const failureKey = (asset: Asset): string => `${asset.id}:${asset.glb}`
 
 function offscreenViewer(): Viewer {
   if (viewer) return viewer
@@ -16,8 +22,21 @@ function offscreenViewer(): Viewer {
   return viewer
 }
 
+/** Why this asset's model could not be loaded, if it could not. */
+export function thumbnailError(asset: Asset): string | undefined {
+  return failed.get(failureKey(asset))
+}
+
+/** For useSyncExternalStore: the snapshot changes whenever a thumbnail fails. */
+export function subscribeThumbnailErrors(onChange: () => void): () => void {
+  listeners.add(onChange)
+  return () => listeners.delete(onChange)
+}
+export const thumbnailErrorsVersion = (): number => failures
+
 export function ensureThumbnail(asset: Asset, onDone: () => void): void {
-  if (asset.thumbnail || pending.has(asset.id)) return
+  // A model that failed once fails again: retrying on every library refresh only burns time.
+  if (asset.thumbnail || pending.has(asset.id) || failed.has(failureKey(asset))) return
   pending.add(asset.id)
   queue = queue
     .then(async () => {
@@ -32,6 +51,11 @@ export function ensureThumbnail(asset: Asset, onDone: () => void): void {
       })
       onDone()
     })
-    .catch((err) => console.warn('thumbnail failed', asset.id, err))
+    .catch((err: unknown) => {
+      console.warn('thumbnail failed', asset.id, err)
+      failed.set(failureKey(asset), err instanceof Error ? err.message : String(err))
+      failures++
+      for (const fn of listeners) fn()
+    })
     .finally(() => pending.delete(asset.id))
 }

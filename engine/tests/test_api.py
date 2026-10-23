@@ -1,4 +1,5 @@
 import json
+import struct
 from pathlib import Path
 
 import pytest
@@ -83,6 +84,8 @@ def test_full_pipeline_with_stub_models_in_workers(client):
     glb = final["stages"]["export"]["outputs"][0]["hash"]
     body = client.get(f"/v1/artifacts/{glb}").content
     assert body[:4] == b"glTF"
+    n = struct.unpack_from("<I", body, 12)[0]
+    json.loads(body[20 : 20 + n], parse_constant=lambda c: pytest.fail(f"{c} in the GLB JSON"))
 
 
 def test_same_inputs_give_identical_outputs(client):

@@ -1,16 +1,17 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { useDeferredValue, useEffect, useState } from 'react'
+import { useDeferredValue, useEffect, useState, useSyncExternalStore } from 'react'
 import { Empty } from '../components/Empty'
 import { api, artifactURL, type Asset } from '../lib/api'
 import { keys } from '../lib/events'
 import { count, relative } from '../lib/format'
 import { transition, useNavigate } from '../lib/nav'
-import { ensureThumbnail } from '../viewer/thumbnails'
+import { ensureThumbnail, subscribeThumbnailErrors, thumbnailError, thumbnailErrorsVersion } from '../viewer/thumbnails'
 
 export function Library() {
   const [q, setQ] = useState('')
   const query = useDeferredValue(q.trim())
   const qc = useQueryClient()
+  useSyncExternalStore(subscribeThumbnailErrors, thumbnailErrorsVersion)
   const assets = useQuery({
     queryKey: keys.assets(query),
     queryFn: () => api<Asset[]>('GET', `/v1/assets?limit=200&q=${encodeURIComponent(query)}`),
@@ -44,6 +45,7 @@ export function Library() {
 function AssetCard({ asset, index }: { asset: Asset; index: number }) {
   const navigate = useNavigate()
   const tris = asset.stats?.triangles
+  const error = asset.thumbnail ? undefined : thumbnailError(asset)
   return (
     <button
       className="card enter"
@@ -53,6 +55,10 @@ function AssetCard({ asset, index }: { asset: Asset; index: number }) {
       <div className="card-img">
         {asset.thumbnail ? (
           <img src={artifactURL(asset.thumbnail, 'image/webp')} alt="" decoding="async" loading="lazy" />
+        ) : error ? (
+          <div className="card-failed" title={error}>
+            Could not load this model
+          </div>
         ) : (
           <div className="skeleton" style={{ width: '60%', height: '60%', borderRadius: 12 }} />
         )}

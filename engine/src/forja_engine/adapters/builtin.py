@@ -50,6 +50,8 @@ class Cleanup(Adapter):
 
 
 class Decimate(Adapter):
+    version = "2"
+
     def capabilities(self) -> Capabilities:
         return Capabilities(tasks=(StageType.MESH_DECIMATE,), devices=CPU)
 
@@ -129,6 +131,8 @@ class Bake(Adapter):
     constant factors; the ORM map's G and B are white so those factors pass through.
     """
 
+    version = "2"
+
     def capabilities(self) -> Capabilities:
         return Capabilities(tasks=(StageType.BAKE,), devices=CPU)
 
@@ -180,6 +184,8 @@ class Lods(Adapter):
 
     All levels share LOD0's material, so LODs cost no extra texture memory.
     """
+
+    version = "2"
 
     def capabilities(self) -> Capabilities:
         return Capabilities(tasks=(StageType.MESH_LODS,), devices=CPU)
