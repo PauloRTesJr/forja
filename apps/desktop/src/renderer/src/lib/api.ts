@@ -88,7 +88,7 @@ export interface PresetStage {
   use: string
   model?: string
   params?: Record<string, unknown>
-  optional?: { label: string; default: boolean }
+  optional?: { label: string; help?: string; default: boolean }
 }
 
 /** Where one stage of a preset would run right now, and with which model. */
@@ -330,6 +330,12 @@ export const answerSheet = (id: string, body: { views: SheetPart[] } | { keep: t
 /** Copies a picked file into the core's store and returns its ref. */
 export const importImage = async (path: string): Promise<string> =>
   (await api<{ hash: string }>('POST', '/v1/artifacts/import', { path })).hash
+/** Copies an image that has no file, such as a pasted screenshot, into the core's store. */
+export async function uploadImage(image: Blob): Promise<string> {
+  const res = await fetch(CORE + '/v1/artifacts', { method: 'PUT', body: image })
+  if (!res.ok) throw new ApiError(res.status, res.statusText)
+  return ((await res.json()) as { hash: string }).hash
+}
 /** Presets resolved for a job that also brings these views, so the app sees which model reads them. */
 export const fetchPresets = (views?: View[]): Promise<Preset[]> =>
   api('GET', views?.length ? `/v1/presets?views=${views.join(',')}` : '/v1/presets')

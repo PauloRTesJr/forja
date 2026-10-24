@@ -27,7 +27,7 @@ export function Queue() {
           ))}
         </div>
       )}
-      {jobs.data?.length === 0 && <Empty title="No jobs yet">Drop an image on Generate to start one.</Empty>}
+      {jobs.data?.length === 0 && <Empty title="No jobs yet">Drop or paste an image on Generate to start one.</Empty>}
       <div className="jobs">
         {jobs.data?.map((j, i) => <JobRow key={j.id} job={j} index={i} />)}
       </div>

@@ -1,12 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useEffect, useRef, useState, type DragEvent } from 'react'
+import { useEffect, useEffectEvent, useRef, useState, type DragEvent } from 'react'
 import { Composer } from '../components/Composer'
 import { Corners, DropSigil, Folder } from '../components/icons'
 import { Confirm, isPreparing, Preparing } from '../components/Prepare'
 import { ScreenHead, SectionHead } from '../components/ScreenHead'
 import { Setup } from '../components/Setup'
 import { IMAGE, ViewsCard, type Draft } from '../components/ViewsCard'
-import { api, fetchPresets, importImage, submitJobs, type Job, type SubmitBody } from '../lib/api'
+import { api, fetchPresets, importImage, submitJobs, uploadImage, type Job, type SubmitBody } from '../lib/api'
 import { keys } from '../lib/events'
 import { needsAnswer, upsertJob } from '../lib/jobs'
 import { transition, useNavigate } from '../lib/nav'
@@ -17,6 +17,8 @@ const PROJECT_KEY = 'forja.project'
 const OPTIONS_KEY = 'forja.options'
 // A batch shows this many images being prepared, then a count of the rest.
 const SHOWN_PREPARING = 3
+const IMAGE_TYPE = /^image\/(png|jpeg|webp)$/
+const PASTE_KEY = window.forja.platform === 'darwin' ? '⌘V' : 'Ctrl+V'
 
 // Per-viewer conveniences only: storage may be missing or full, and the screen works without it.
 function read(key: string): string | null {
@@ -137,6 +139,33 @@ export function Generate() {
     void queue(paths)
   }
 
+  // Copied files paste as their paths; a copied bitmap, such as a screenshot, has no file and
+  // goes to the store as bytes.
+  const onPaste = async (e: ClipboardEvent): Promise<void> => {
+    if (draft || blocked || (e.target as Element | null)?.closest('input, textarea, [contenteditable]')) return
+    const files = [...(e.clipboardData?.files ?? [])]
+    if (files.length === 0) return
+    e.preventDefault()
+    const paths = files.map((f) => window.forja.pathForFile(f)).filter((p) => IMAGE.test(p))
+    if (paths.length > 0) return queue(paths)
+    const image = files.find((f) => IMAGE_TYPE.test(f.type))
+    if (!image) return toast('Paste PNG, JPEG or WebP images', true)
+    try {
+      const ref = await uploadImage(image)
+      const name = `pasted.${image.type.slice('image/'.length)}`
+      if (reader) transition(() => setDraft({ front: { path: name, ref }, views: {} }))
+      else submit.mutate({ input: ref, name })
+    } catch (err) {
+      toast((err as Error).message, true)
+    }
+  }
+  const pasted = useEffectEvent(onPaste)
+  useEffect(() => {
+    const handler = (e: ClipboardEvent): void => void pasted(e)
+    document.addEventListener('paste', handler)
+    return () => document.removeEventListener('paste', handler)
+  }, [])
+
   const generate = (d: Draft): void => {
     const views = Object.fromEntries(SIDE_VIEWS.filter((v) => d.views[v]).map((v) => [v, d.views[v]!.ref]))
     submit.mutate({ input: d.front.ref, name: d.front.path, views })
@@ -157,7 +186,7 @@ export function Generate() {
 
   return (
     <div className="screen">
-      <ScreenHead eyebrow={['Arcanum I', 'The Forge']} title="Generate" sub="Drop reference images. Each becomes a game-ready GLB." />
+      <ScreenHead eyebrow={['Arcanum I', 'The Forge']} title="Generate" sub="Drop or paste reference images. Each becomes a game-ready GLB." />
 
       {blocked && current?.error && (
         <div className="error" role="status">
@@ -223,10 +252,10 @@ export function Generate() {
           <div className="drop-inner">
             <DropSigil />
             <strong className="drop-title">
-              {blocked ? 'Set up models to start' : submit.isPending ? 'Queuing…' : over ? 'Release to queue them' : 'Drop images or a folder of images'}
+              {blocked ? 'Set up models to start' : submit.isPending ? 'Queuing…' : over ? 'Release to queue them' : 'Drop or paste images, or a folder of images'}
             </strong>
             <span className="drop-hint">
-              or click to browse · PNG, JPEG, WebP
+              or click to browse · {PASTE_KEY} to paste · PNG, JPEG, WebP
               {reader && !blocked && ' · one image lets you add its other views'}
             </span>
           </div>
