@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Forja model family",
+  "description": "family.yaml: one isolated environment for the models of one family, with the upstream code it runs pinned by commit and sha256.",
+  "type": "object",
+  "required": ["name", "lanes"],
+  "additionalProperties": false,
+  "properties": {
+    "name": {
+      "description": "The family's name; its environment is <data>/envs/<name>. Must match the folder and the manifests' family.",
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9_-]*$"
+    },
+    "python": { "description": "Python version for the environment.", "type": "string", "pattern": "^3\\.[0-9]+$" },
+    "lanes": {
+      "description": "Torch lanes the family installs on; each needs requirements/<lane>.txt.",
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "enum": ["cuda", "rocm", "mps", "cpu"] }
+    },
+    "upstream": {
+      "description": "Upstream model code, downloaded at install time and never committed to Forja.",
+      "type": "object",
+      "required": ["url", "sha256", "license"],
+      "additionalProperties": false,
+      "properties": {
+        "url": {
+          "description": "An archive of one pinned commit, e.g. https://codeload.github.com/<org>/<repo>/tar.gz/<commit sha>.",
+          "type": "string",
+          "pattern": "^https://"
+        },
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "license": { "description": "The upstream code's license.", "type": "string", "minLength": 1 },
+        "pythonpath": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "build": {
+      "description": "Packages compiled against the installed torch, in order; {upstream} is the extracted source.",
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "env": { "type": "object", "additionalProperties": { "type": ["string", "number", "boolean"] } },
+    "torch_backend": {
+      "description": "uv --torch-backend per lane, e.g. cuda: cu124.",
+      "type": "object",
+      "propertyNames": { "enum": ["cuda", "rocm", "mps", "cpu"] },
+      "additionalProperties": { "type": "string", "pattern": "^(cu[0-9]+|rocm[0-9.]+|cpu)$" }
+    },
+    "smoke": { "description": "Imports that prove the upstream code and its extensions load.", "type": "string" }
+  }
+}
