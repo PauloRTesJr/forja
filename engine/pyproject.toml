@@ -48,7 +48,7 @@ forja-engine-sdk = { path = "sdk", editable = true }
 packages = ["src/forja_engine"]
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = ["tests", "../templates/adapter/tests"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 
