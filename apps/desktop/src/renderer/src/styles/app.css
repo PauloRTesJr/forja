@@ -1437,29 +1437,6 @@ h1 {
 .table tbody tr:hover {
   background: #1c1913;
 }
-.model-cell {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-.model-cell strong {
-  font-size: 16.5px;
-  font-weight: 600;
-  color: #f3e6cc;
-}
-.sigil-badge {
-  flex: none;
-  display: grid;
-  place-items: center;
-  width: 38px;
-  height: 38px;
-  border: 1px solid var(--frame);
-  border-radius: 50%;
-  color: #a88a5c;
-}
-.sigil-badge.loaded {
-  color: var(--accent-hi);
-}
 .restrictions {
   margin-top: 3px;
   font-size: 14px;
@@ -1812,32 +1789,334 @@ pre.code {
   animation: indeterminate 1.4s var(--ease-in-out) infinite;
 }
 
-/* Model cards, grouped by stage. */
-.model-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(330px, 1fr));
-  gap: 14px;
-}
-.model-card {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  padding: 16px;
+/* Models: one list per stage, its columns lined up so the models of a stage compare at a glance. */
+.model-list {
+  container-type: inline-size;
   border: 1px solid var(--border);
   border-radius: var(--r-2);
   background: var(--surface);
+  overflow: hidden;
 }
-.model-card.installed {
-  border-color: #4a3d2b;
+.model-list > ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
 }
-.model-card .model-cell > div {
-  flex: 1;
+.model-cols,
+.model-row {
+  display: grid;
+  grid-template-columns: minmax(320px, 1fr) 140px 130px 170px 168px;
+  column-gap: 24px;
+  padding: 0 22px;
+}
+.model-cols {
+  padding-top: 12px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border-soft);
+  font-family: var(--display);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+.model-row {
+  position: relative;
+  isolation: isolate;
+  align-items: start;
+  row-gap: 14px;
+  padding-top: 18px;
+  padding-bottom: 18px;
+}
+.model-row + .model-row {
+  border-top: 1px solid var(--border-soft);
+}
+/* The model in use: a gold edge that grows in and a warm wash behind its row. */
+.model-row::before,
+.model-row::after {
+  content: '';
+  position: absolute;
+  pointer-events: none;
+}
+.model-row::before {
+  inset: 0 auto 0 0;
+  width: 3px;
+  background: var(--accent);
+  transform: scaleY(0);
+  transition: transform var(--dur-3) var(--ease-out);
+}
+.model-row::after {
+  inset: 0;
+  z-index: -1;
+  background: linear-gradient(90deg, var(--accent-soft), transparent 60%);
+  opacity: 0;
+  transition: opacity var(--dur-3) var(--ease-out);
+}
+.model-row.in-use::before {
+  transform: none;
+}
+.model-row.in-use::after {
+  opacity: 1;
+}
+.model-main {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
   min-width: 0;
 }
+.model-name {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+}
+.model-name strong {
+  font-size: 17.5px;
+  font-weight: 600;
+  line-height: 1.3;
+  color: #f3e6cc;
+}
+.tag {
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--text-2);
+  font-family: var(--display);
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.tag.gold {
+  border-color: var(--frame);
+  color: var(--accent-hi);
+}
 .model-desc {
+  max-width: 64ch;
   margin: 0;
   color: var(--text-2);
   font-size: 15.5px;
+}
+.model-limits {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  max-width: 64ch;
+  margin: 2px 0 0;
+  color: var(--warn);
+  font-size: 14.5px;
+  line-height: 1.4;
+}
+.model-limits svg {
+  flex: none;
+  margin-top: 1px;
+}
+.model-id {
+  margin-top: 4px;
+  color: var(--text-3);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+.fact {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  padding-top: 2px;
+}
+/* Column names sit in the list's header; each cell keeps its own for screen readers. */
+.fact-label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.fact-value {
+  color: var(--text);
+  font-size: 15.5px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+.fact-value a {
+  color: var(--accent);
+  text-underline-offset: 3px;
+}
+.fact-detail {
+  color: var(--text-3);
+  font-size: 14px;
+  line-height: 1.35;
+}
+.fact.ok .fact-detail {
+  color: var(--ok);
+}
+.fact.warn .fact-detail {
+  color: var(--warn);
+}
+.fact.dim .fact-value {
+  color: var(--text-3);
+}
+.model-act {
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-end;
+  gap: 4px;
+}
+.model-act .btn {
+  height: 36px;
+}
+.model-act > .status {
+  margin-top: 6px;
+}
+.in-use-mark {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 3px;
+  text-align: right;
+  padding-top: 4px;
+  animation: enter-up var(--dur-2) var(--ease-out) both;
+}
+.in-use-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 26px;
+  margin-bottom: 2px;
+  padding: 0 12px;
+  border: 1px solid var(--frame);
+  border-radius: 13px;
+  background: #221c12;
+  color: var(--accent-hi);
+  font-family: var(--display);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.text-btn {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font-size: 14px;
+  text-decoration: underline;
+  text-decoration-color: transparent;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+.text-btn:hover {
+  text-decoration-color: currentColor;
+}
+.text-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.model-task {
+  grid-column: 1 / -1;
+}
+.btn.icon-btn {
+  width: 36px;
+  padding: 0;
+}
+/* Too narrow for the model column to keep 320px: the facts move under it, each with its own label. */
+@container (max-width: 1080px) {
+  .model-cols {
+    display: none;
+  }
+  .model-row {
+    grid-template-columns: repeat(3, minmax(0, 1fr)) 168px;
+    row-gap: 16px;
+  }
+  .model-main {
+    grid-area: 1 / 1 / 2 / 4;
+  }
+  .model-act {
+    grid-area: 1 / 4 / 2 / 5;
+  }
+  .fact-label {
+    position: static;
+    width: auto;
+    height: auto;
+    margin-bottom: 2px;
+    overflow: visible;
+    clip-path: none;
+    font-family: var(--display);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--text-3);
+  }
+}
+
+/* Rare actions, in a popover anchored to its button: it fades and drops in, on the compositor. */
+.more-menu {
+  position-area: bottom span-left;
+  position-try-fallbacks: flip-block;
+  inset: auto;
+  min-width: 240px;
+  margin: 6px 0;
+  padding: 6px;
+  border: 1px solid var(--frame);
+  border-radius: var(--r-1);
+  background: var(--surface-2);
+  box-shadow: var(--shadow);
+  color: var(--text);
+  opacity: 1;
+  transform: none;
+  transition:
+    opacity var(--dur-2) var(--ease-out),
+    transform var(--dur-2) var(--ease-out),
+    display var(--dur-2) allow-discrete,
+    overlay var(--dur-2) allow-discrete;
+}
+.more-menu:not(:popover-open) {
+  opacity: 0;
+  transform: translateY(-4px);
+}
+@starting-style {
+  .more-menu:popover-open {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+.more-menu button {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  width: 100%;
+  padding: 8px 12px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--accent-hi);
+  font-size: 15.5px;
+  text-align: left;
+  cursor: pointer;
+}
+.more-menu button:hover {
+  background: var(--surface);
+}
+.more-menu button small {
+  color: var(--text-3);
+  font-size: 13.5px;
+}
+.more-menu button.danger {
+  color: var(--bad-hi);
+}
+.more-menu button:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 .chips {
   display: flex;
@@ -1869,10 +2148,6 @@ pre.code {
   border-style: dashed;
   color: var(--text-3);
 }
-.chip.used {
-  border-color: var(--frame);
-  color: var(--accent-hi);
-}
 .license-line {
   display: flex;
   flex-wrap: wrap;
@@ -1883,10 +2158,6 @@ pre.code {
 }
 .license-line a {
   color: var(--accent);
-}
-.model-actions {
-  gap: 8px;
-  margin-top: auto;
 }
 .btn.danger {
   border-color: #6b3a33;

@@ -143,6 +143,14 @@ export const Alert = (p: IconProps) => (
   </Line>
 )
 
+export const More = (p: IconProps) => (
+  <Line size={18} {...p}>
+    <circle cx="5" cy="12" r="1.4" fill="currentColor" stroke="none" />
+    <circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none" />
+    <circle cx="19" cy="12" r="1.4" fill="currentColor" stroke="none" />
+  </Line>
+)
+
 export function CornerOrnament({ className }: { className?: string }) {
   return (
     <svg aria-hidden className={`corner ${className ?? ''}`} width="26" height="26" viewBox="0 0 26 26">
@@ -312,36 +320,4 @@ const presetEmblems: Record<string, () => ReactNode> = {
 export function PresetEmblem({ id }: { id: string }) {
   const E = presetEmblems[id]
   return E ? <E /> : <D20 />
-}
-
-const Veil = (p: IconProps) => (
-  <Line {...p}>
-    <rect x="3.5" y="3.5" width="17" height="17" rx="2" strokeDasharray="2 2.5" />
-    <circle cx="12" cy="10" r="3" />
-    <path d="M6.5 19c.8-3 3-4.5 5.5-4.5s4.7 1.5 5.5 4.5" />
-  </Line>
-)
-
-const Die = (p: IconProps) => (
-  <Line {...p}>
-    <path d="M12 2.5l8.5 5v9L12 21.5l-8.5-5v-9z" />
-    <path d="M12 7l5 8H7z" />
-    <path d="M12 7V2.5M7 15l-3.5 1.5M17 15l3.5 1.5" strokeOpacity="0.6" />
-  </Line>
-)
-
-const Brush = (p: IconProps) => (
-  <Line {...p}>
-    <path d="M14.5 4.5l5 5-7.5 7.5-5-5z" />
-    <path d="M7 12l-2.5 2.5c-1.2 1.2-1.5 3.5-1 5.5 2 .5 4.3.2 5.5-1L11.5 16.5" />
-    <path d="M19 15.5Q19.4 17.6 21.5 18Q19.4 18.4 19 20.5Q18.6 18.4 16.5 18Q18.6 17.6 19 15.5Z" fill="currentColor" stroke="none" />
-  </Line>
-)
-
-/** The sigil for a model's first task: background removal, shape, texture, or anything else. */
-export function TaskSigil({ task }: { task: string | undefined }) {
-  if (task === 'background-removal') return <Veil />
-  if (task === 'shape') return <Die />
-  if (task?.startsWith('texture')) return <Brush />
-  return <Eye />
 }

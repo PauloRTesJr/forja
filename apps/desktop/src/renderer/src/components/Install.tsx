@@ -3,6 +3,7 @@ import { useState, type CSSProperties } from 'react'
 import { api, cancelTask, runFix, taskDone, type Check, type Checks, type Fit, type InstallTask, type License } from '../lib/api'
 import { keys } from '../lib/events'
 import { bytes } from '../lib/format'
+import { fitText, licenseName } from '../lib/models'
 import { useToast } from '../lib/toast'
 import { Alert, Chevron, Star } from './icons'
 
@@ -30,14 +31,6 @@ export function useChecks(models: string[], enabled = true) {
   })
 }
 
-const fitText: Record<Fit, string> = {
-  fits: 'Fits your GPU',
-  offload: 'Runs with offload, slower',
-  'too-big': 'Needs more VRAM',
-  unsupported: 'Cannot run here',
-  hosted: 'Hosted',
-}
-
 export function FitBadge({ fit }: { fit?: Fit }) {
   if (!fit) return null
   return <span className={`chip fit-${fit}`}>{fitText[fit]}</span>
@@ -48,10 +41,10 @@ export function LicenseLine({ license }: { license: License }) {
     <span className="license-line">
       {license.url ? (
         <a href={license.url} target="_blank" rel="noreferrer">
-          {license.spdx}
+          {licenseName(license.spdx)}
         </a>
       ) : (
-        license.spdx
+        licenseName(license.spdx)
       )}
       {!license.commercial && <span className="chip warn">non-commercial</span>}
       {license.restrictions.length > 0 && <span className="restrictions">{license.restrictions.join('; ')}</span>}
