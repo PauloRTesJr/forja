@@ -12,11 +12,14 @@ extraResources:
 mac:
   target: dmg
   category: public.app-category.graphics-design
+  icon: build/icon.icns
 win:
   target: [nsis, zip]
+  icon: build/icon.ico
 nsis:
   perMachine: false
   oneClick: true
 linux:
   target: [AppImage, deb]
   category: Graphics
+  icon: build/icon.png

@@ -42,22 +42,24 @@ export function Star({ size = 18, className }: IconProps) {
   )
 }
 
-export function BrandMark({ size = 36 }: IconProps) {
-  return (
-    <svg aria-hidden width={size} height={size} viewBox="0 0 40 40" fill="none">
-      <path d="M26 5a16 16 0 1 0 9 20a12 12 0 0 1 -9 -20z" stroke="var(--accent)" strokeWidth="1.4" strokeLinejoin="round" />
-      <path d="M31 8Q32 13 37 14Q32 15 31 20Q30 15 25 14Q30 13 31 8Z" fill="var(--accent-hi)" />
-      <circle cx="9" cy="33" r="1" fill="var(--accent)" />
-      <circle cx="4" cy="22" r="0.8" fill="var(--accent)" />
-    </svg>
-  )
+// Traced from the app icon (build/icon.*): coordinates are the source artwork's pixels, the viewBox frames the emblem.
+const EMBLEM = {
+  ring: 'M997.3 524.7A376 376 0 0 0 692.3 219.7M561.7 219.7A376 376 0 0 0 256.7 524.7M256.7 655.3A376 376 0 0 0 997.3 655.3',
+  anvil:
+    'M306 563H958L900 617C830 645 738 642 722 740C722 790 772 826 799 830V868H748C720 823 540 823 507 868H458V832C497 820 540 800 552 770Q560 752 560 740C560 690 450 625 310 601L306 597Z',
+  spark:
+    'M627 130C628.5 300 636 392 690 398C655 405 635 440 635 470V538Q635 559 642 563H612Q619 559 619 538V470C619 440 599 405 564 398C618 392 625.5 300 627 130Z',
 }
 
-export function Crescent({ size = 44 }: IconProps) {
+/** The Forja emblem from the app icon: spark, anvil and broken ring. `muted` is the dim gold of empty states. */
+export function BrandMark({ size = 36, muted = false }: IconProps & { muted?: boolean }) {
+  const gold = muted ? 'var(--gold-dim)' : 'var(--accent)'
   return (
-    <svg aria-hidden width={size} height={size} viewBox="0 0 40 40" fill="none">
-      <path d="M26 5a16 16 0 1 0 9 20a12 12 0 0 1 -9 -20z" stroke="var(--gold-dim)" strokeWidth="1.2" />
-      <path d="M31 9Q31.8 13.2 36 14Q31.8 14.8 31 19Q30.2 14.8 26 14Q30.2 13.2 31 9Z" fill="var(--gold-dim)" />
+    <svg aria-hidden width={size} height={size} viewBox="197 125 860 860">
+      {/* Heavier than in the artwork, so the ring still reads at sidebar size. */}
+      <path d={EMBLEM.ring} fill="none" stroke={gold} strokeWidth="28" />
+      <path d={EMBLEM.anvil} fill={gold} />
+      <path d={EMBLEM.spark} fill={muted ? gold : 'var(--accent-hi)'} />
     </svg>
   )
 }
