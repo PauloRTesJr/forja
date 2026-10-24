@@ -20,6 +20,7 @@ from typing import Any
 
 from forja_engine import gpumem
 from forja_engine.adapters.builtin import BUILTINS
+from forja_engine.metrics import Sampler, rss_of
 from forja_engine.registry import Manifest, instantiate
 from forja_engine.sdk import StageContext, StageType
 from forja_engine.vram import FitMode, VramManager
@@ -40,6 +41,8 @@ class WorkItem:
     priority: int
     on_progress: Callable[[int, int], None]
     seq: int = 0
+    # Sample resident memory and GPU utilization while it runs (a benchmark's run).
+    measure: bool = False
     future: asyncio.Future[dict[str, Any]] = field(
         default_factory=lambda: asyncio.get_running_loop().create_future()
     )
@@ -56,13 +59,16 @@ class LaneStats:
     swaps: int = 0
 
 
-def _run_builtin(task: str, ctx_json: dict[str, Any]) -> dict[str, Any]:
+def _run_builtin(task: str, ctx_json: dict[str, Any], measure: bool = False) -> dict[str, Any]:
     ctx = ctx_from_json(ctx_json)
-    started = time.perf_counter()
-    outputs = BUILTINS[StageType(task)]().run(ctx)
+    with Sampler(rss_of(os.getpid()) if measure else None) as sampler:
+        started = time.perf_counter()
+        outputs = BUILTINS[StageType(task)]().run(ctx)
+        seconds = time.perf_counter() - started
     return {
         "type": "result",
-        "seconds": time.perf_counter() - started,
+        "seconds": seconds,
+        "peak_ram_bytes": sampler.peak_ram_bytes,
         "outputs": [{"path": str(o.path), "kind": str(o.kind), "preview": o.preview} for o in outputs],
     }
 
@@ -80,10 +86,13 @@ class DeviceLane:
         fairness_cap: int,
         in_process: bool,
         used: Callable[[], int] | None = None,
+        util: Callable[[], float | None] | None = None,
     ) -> None:
-        """`used` reads the device's bytes in use; None where it cannot be measured."""
+        """`used` reads the device's bytes in use and `util` its utilization; None where they
+        cannot be measured."""
         self.device = device
         self.used = used
+        self.util = util
         self.vram = vram
         self.workers = workers
         self.fairness_cap = fairness_cap
@@ -170,6 +179,7 @@ class DeviceLane:
         if m.id != self.current_model:
             self.streak = 0
         self.streak += 1
+        load_seconds = 0.0
         if m.id not in self.vram.loaded:
             external = self._external()
             plan = self.vram.plan(m.id, estimate, external)
@@ -187,7 +197,9 @@ class DeviceLane:
                 )
             self._offload[m.id] = plan.offload
             before = self._read()
+            loading = time.perf_counter()
             await self._load(m)
+            load_seconds = time.perf_counter() - loading
             self.vram.did_load(m.id, estimate, offloaded=plan.offload)
             if before is not None:
                 self.vram.record_resident(m.id, max(0, (self._read() or 0) - before))
@@ -199,21 +211,28 @@ class DeviceLane:
         if self.in_process:
             adapter = self._in_process_adapters[m.id]
             item.ctx.progress = item.on_progress
-            started = time.perf_counter()
-            outputs = await asyncio.to_thread(adapter.run, item.ctx)
+            with self._sampler(item, os.getpid()) as sampler:
+                started = time.perf_counter()
+                outputs = await asyncio.to_thread(adapter.run, item.ctx)
+                seconds = time.perf_counter() - started
             return {
-                "seconds": time.perf_counter() - started,
+                "seconds": seconds,
                 "outputs": [
                     {"path": str(o.path), "kind": str(o.kind), "preview": o.preview} for o in outputs
                 ],
+                **self._measured(item, sampler, load_seconds),
             }
         for attempt in (1, 2):
             worker = await self.workers.get(m.family, m.interpreter)
             if worker.adapter != m.adapter:
+                loading = time.perf_counter()
                 await worker.load(m.adapter, self.device, _weights(m), offload=self._offload.get(m.id, False))
+                load_seconds += time.perf_counter() - loading
             try:
                 before = self._read()
-                result = await worker.run(item.key, item.ctx, item.on_progress)
+                with self._sampler(item, worker.pid) as sampler:
+                    result = await worker.run(item.key, item.ctx, item.on_progress)
+                result.update(self._measured(item, sampler, load_seconds))
                 if result.get("peak_vram_bytes"):
                     self.vram.record_peak(m.id, int(result["peak_vram_bytes"]))
                 if before is not None and m.id in self.vram.loaded:
@@ -231,6 +250,22 @@ class DeviceLane:
 
     def _read(self) -> int | None:
         return self.used() if self.used else None
+
+    def _sampler(self, item: WorkItem, pid: int | None) -> Sampler:
+        if not item.measure:
+            return Sampler()
+        return Sampler(rss_of(pid) if pid else None, self.util)
+
+    @staticmethod
+    def _measured(item: WorkItem, sampler: Sampler, load_seconds: float) -> dict[str, Any]:
+        """What a run that asked to measure learns about the stage beyond its time."""
+        if not item.measure:
+            return {}
+        return {
+            "load_seconds": load_seconds,
+            "peak_ram_bytes": sampler.peak_ram_bytes,
+            "gpu_util": sampler.gpu_util,
+        }
 
     def _external(self) -> int:
         """Device bytes held by other processes: what is in use minus what our models hold."""
@@ -293,6 +328,7 @@ class Scheduler:
                 fairness_cap,
                 in_process,
                 used=None if in_process else gpumem.reader(dev),
+                util=gpumem.utilization(dev),
             )
             for dev, budget in devices.items()
         }
@@ -358,16 +394,17 @@ class Scheduler:
         manifest: Manifest | None,
         priority: int,
         on_progress: Callable[[int, int], None],
+        measure: bool = False,
     ) -> dict[str, Any]:
         if manifest is None:
             loop = asyncio.get_running_loop()
-            fut = loop.run_in_executor(self.pool, _run_builtin, str(ctx.task), ctx_to_json(ctx))
+            fut = loop.run_in_executor(self.pool, _run_builtin, str(ctx.task), ctx_to_json(ctx), measure)
             self._cpu_running[key] = fut
             try:
                 return await fut
             finally:
                 self._cpu_running.pop(key, None)
-        item = WorkItem(key, ctx, manifest, priority, on_progress, seq=next(self._seq))
+        item = WorkItem(key, ctx, manifest, priority, on_progress, seq=next(self._seq), measure=measure)
         self.lanes[self.place(manifest)].submit(item)
         return await item.future
 

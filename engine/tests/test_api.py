@@ -193,3 +193,37 @@ def test_asking_for_an_artifact_marks_it_used(client, tmp_path):
         os.utime(path, (old, old))
         assert ask(f"/v1/artifacts/{ref}").status_code in (200, 201)
         assert time.time() - path.stat().st_mtime < 60
+
+
+def test_a_measured_run_reports_metrics_for_every_stage(client):
+    image = upload(client)
+    stages = [{**PIPELINE[0], "inputs": [image]}, *PIPELINE[1:5]]
+    run = client.post("/v1/runs", json={"stages": stages, "measure": True}).json()
+    assert events(client, run["id"])[-1][1]["status"] == "succeeded"
+    got = client.get(f"/v1/runs/{run['id']}").json()["stages"]
+    shape, cleanup = got["shape"]["metrics"], got["cleanup"]["metrics"]
+    # A stub model runs in its worker on the CPU: its load is timed, it has no GPU to watch.
+    assert shape["device"] == "cpu" and shape["load_seconds"] > 0 and shape["gpu_util"] is None
+    assert shape["peak_ram_bytes"] > 0
+    assert shape["outputs"][0]["hash"] == got["shape"]["outputs"][0]["hash"]
+    assert shape["outputs"][0]["triangles"] > 0
+    # Built-in stages run in the CPU pool and load no model.
+    assert cleanup["device"] == "cpu-pool" and cleanup["load_seconds"] is None
+    assert cleanup["peak_ram_bytes"] > 0
+    assert cleanup["outputs"][0]["watertight"] is True
+    assert got["bg"]["metrics"]["outputs"] == []  # images have no mesh stats
+    assert all(st["metrics"]["measure_seconds"] >= 0 for st in got.values())
+
+    # The worker still holds the shape model: running it again loads nothing.
+    framed = got["frame"]["outputs"][0]["hash"]
+    shape_only = [{**PIPELINE[2], "inputs": [framed]}]
+    again = client.post("/v1/runs", json={"stages": shape_only, "measure": True}).json()
+    events(client, again["id"])
+    assert client.get(f"/v1/runs/{again['id']}").json()["stages"]["shape"]["metrics"]["load_seconds"] == 0
+
+
+def test_a_normal_run_measures_nothing(client):
+    image = upload(client)
+    run = client.post("/v1/runs", json={"stages": [{**PIPELINE[0], "inputs": [image]}]}).json()
+    events(client, run["id"])
+    assert client.get(f"/v1/runs/{run['id']}").json()["stages"]["bg"]["metrics"] is None
