@@ -30,6 +30,8 @@ type Config struct {
 	Models    Models                    `toml:"models" json:"models"`
 	Blender   Blender                   `toml:"blender" json:"blender"`
 	Presets   map[string]PresetOverride `toml:"presets" json:"presets"`
+	// Prices is the price table, by entry id: a provider's time, or a hosted model by its id.
+	Prices map[string]Price `toml:"prices" json:"prices"`
 }
 
 type General struct {
@@ -81,6 +83,8 @@ type Provider struct {
 	Paid              bool    `toml:"paid" json:"paid"`
 	// Models are the hub models the user added (endpoint ids), for kind = "api" providers.
 	Models []string `toml:"models" json:"models,omitempty"`
+	// Price names the price table entry for the provider's time, when price_usd_per_second is unset.
+	Price string `toml:"price" json:"price,omitempty"`
 }
 
 type Project struct {
@@ -284,7 +288,7 @@ func (c *Config) validate() error {
 		}
 		seen[p.ID] = true
 	}
-	return nil
+	return c.validatePrices()
 }
 
 // SortedSources lists "key = layer" lines for display.

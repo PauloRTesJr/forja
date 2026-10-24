@@ -16,15 +16,27 @@ import (
 
 // Edit changes keys in one config file. It edits line by line, so comments and layout
 // survive; a file it cannot edit that way is rewritten whole, with the original kept as
-// <file>.bak. Keys are dotted paths ("engine.fit_mode", "models.stages.shape"); a nil value
-// removes the key. validate runs on the result (normally a full Load); when it fails, the
-// file goes back to how it was.
+// <file>.bak. Keys are dotted paths ("engine.fit_mode", "models.stages.shape"), with quoted
+// segments for names that hold dots (Key builds them); a nil value removes the key. validate
+// runs on the result (normally a full Load); when it fails, the file goes back to how it was.
 func Edit(path string, changes map[string]any, validate func() error) error {
 	return rewrite(path, func(want map[string]any) {
 		for k, v := range changes {
-			setPath(want, strings.Split(k, "."), v)
+			setPath(want, keyParts(k), v)
 		}
 	}, func(text string) (string, bool) { return editLines(text, changes) }, validate)
+}
+
+// Key joins segments into a dotted key for Edit, quoting the ones that need it, such as a
+// hosted model's id: Key("prices", "fal-ai/trellis-2", "usd").
+func Key(parts ...string) string { return joinKey(parts) }
+
+// keyParts splits a dotted key, honouring quoted segments.
+func keyParts(k string) []string {
+	if parts, ok := splitKey(k); ok {
+		return parts
+	}
+	return strings.Split(k, ".")
 }
 
 // AddProvider appends a [[providers]] table to a config file, keeping the rest of it.
@@ -61,7 +73,7 @@ func appendProvider(text string, fields map[string]any) string {
 		b.WriteString("\n\n")
 	}
 	b.WriteString("[[providers]]\n")
-	for _, k := range []string{"id", "label", "kind", "vendor", "url", "secret", "fingerprint", "paid", "models"} {
+	for _, k := range []string{"id", "label", "kind", "vendor", "url", "secret", "fingerprint", "paid", "models", "price"} {
 		if v, ok := fields[k]; ok {
 			val, _ := encodeValue(v)
 			b.WriteString(k + " = " + val + "\n")
@@ -91,7 +103,7 @@ func RemoveProvider(path, id string, validate func() error) error {
 func providerFields(p Provider) map[string]any {
 	out := map[string]any{"id": p.ID, "kind": p.Kind}
 	for k, v := range map[string]string{"label": p.Label, "vendor": p.Vendor, "url": p.URL, "secret": p.Secret,
-		"fingerprint": p.Fingerprint} {
+		"fingerprint": p.Fingerprint, "price": p.Price} {
 		if v != "" {
 			out[k] = v
 		}
@@ -225,6 +237,8 @@ type tomlLine struct {
 	key   string // the key a key line sets
 	head  bool
 	array bool // inside an array of tables, which this editor leaves alone
+	// path is the table's segments, for a key line this editor adds.
+	path []string
 }
 
 // editLines applies changes to the text; ok is false where it cannot edit safely.
@@ -265,7 +279,7 @@ func editLines(text string, changes map[string]any) (string, bool) {
 	}
 
 	for k, v := range changes {
-		parts := strings.Split(k, ".")
+		parts := keyParts(k)
 		tbl, leaf := strings.Join(parts[:len(parts)-1], "."), parts[len(parts)-1]
 		if _, isMap := v.(map[string]any); isMap {
 			return "", false
@@ -286,7 +300,7 @@ func editLines(text string, changes map[string]any) (string, bool) {
 		if !ok {
 			return "", false
 		}
-		entry := tomlLine{text: quoteKey(leaf) + " = " + value, table: tbl, key: leaf}
+		entry := tomlLine{text: quoteKey(leaf) + " = " + value, table: tbl, key: leaf, path: parts[:len(parts)-1]}
 		switch {
 		case found >= 0:
 			indent := lines[found].text[:len(lines[found].text)-len(strings.TrimLeft(lines[found].text, " \t"))]
@@ -328,7 +342,7 @@ func insertKey(lines []tomlLine, entry tomlLine) []tomlLine {
 		if n := len(lines); n > 0 && strings.TrimSpace(lines[n-1].text) != "" {
 			lines = append(lines, tomlLine{})
 		}
-		head := tomlLine{text: "[" + joinKey(strings.Split(entry.table, ".")) + "]", table: entry.table, head: true}
+		head := tomlLine{text: "[" + joinKey(entry.path) + "]", table: entry.table, head: true}
 		return append(lines, head, entry)
 	}
 	return append(lines[:at+1], append([]tomlLine{entry}, lines[at+1:]...)...)
