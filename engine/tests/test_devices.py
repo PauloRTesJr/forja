@@ -29,6 +29,23 @@ def test_without_metal_the_budget_is_two_thirds_of_ram():
     assert devices.apple_gpu(None, 8 * GIB, None, None).name == "Apple GPU"
 
 
+def test_metal_is_asked_in_a_child_process(monkeypatch):
+    probe = devices._metal_working_set.__wrapped__
+    if not APPLE_SILICON:
+        assert probe() is None  # no Metal here: the child fails, the engine carries on
+    seen = []
+
+    def run(cmd, **kw):
+        seen.append(cmd)
+        return types.SimpleNamespace(stdout="22906503168\n")
+
+    monkeypatch.setattr(devices.subprocess, "run", run)
+    assert probe() == 22_906_503_168
+    assert seen[0][:3] == [sys.executable, "-I", "-c"] and "recommendedMaxWorkingSetSize" in seen[0][3]
+    monkeypatch.setattr(devices.subprocess, "run", lambda cmd, **kw: types.SimpleNamespace(stdout="0\n"))
+    assert probe() is None  # Metal found no device
+
+
 def test_a_mac_reports_its_apple_gpu_then_its_cpu(fake_mac, tmp_path):
     report = devices.detect(tmp_path)
     assert (report.os, report.arch) == ("darwin", "arm64")

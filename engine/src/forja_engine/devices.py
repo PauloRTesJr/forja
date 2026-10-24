@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import ctypes
 import importlib.util
 import platform
 import shutil
@@ -133,25 +132,35 @@ def _sysctl(name: str) -> str | None:
     return out.stdout.strip() or None
 
 
+# MTLDevice.recommendedMaxWorkingSetSize through the Objective-C runtime, with no dependency.
+_METAL_PROBE = """
+import ctypes
+# A process gets a default Metal device only once Core Graphics is loaded.
+ctypes.CDLL("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics")
+metal = ctypes.CDLL("/System/Library/Frameworks/Metal.framework/Metal")
+objc = ctypes.CDLL("/usr/lib/libobjc.A.dylib")
+metal.MTLCreateSystemDefaultDevice.restype = ctypes.c_void_p
+objc.sel_registerName.restype = ctypes.c_void_p
+objc.sel_registerName.argtypes = [ctypes.c_char_p]
+device = metal.MTLCreateSystemDefaultDevice()
+# objc_msgSend must be called through a prototype of the method's exact signature.
+send = ctypes.CFUNCTYPE(ctypes.c_uint64, ctypes.c_void_p, ctypes.c_void_p)(("objc_msgSend", objc))
+print(send(device, objc.sel_registerName(b"recommendedMaxWorkingSetSize")) if device else 0)
+"""
+
+
 @cache
 def _metal_working_set() -> int | None:
-    """MTLDevice.recommendedMaxWorkingSetSize, read through the Objective-C runtime (no extra
-    dependency); None where Metal cannot answer."""
+    """Metal's recommended working set for the GPU, or None where Metal cannot answer.
+
+    A native call that faults cannot be caught, so the probe runs in a child process.
+    """
     try:
-        # A process gets a default Metal device only once Core Graphics is loaded.
-        ctypes.CDLL("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics")
-        metal = ctypes.CDLL("/System/Library/Frameworks/Metal.framework/Metal")
-        objc = ctypes.CDLL("/usr/lib/libobjc.A.dylib")
-        metal.MTLCreateSystemDefaultDevice.restype = ctypes.c_void_p
-        objc.sel_registerName.restype = ctypes.c_void_p
-        objc.sel_registerName.argtypes = [ctypes.c_char_p]
-        device = metal.MTLCreateSystemDefaultDevice()
-        if not device:
-            return None
-        # objc_msgSend must be called through a prototype of the method's exact signature.
-        send = ctypes.CFUNCTYPE(ctypes.c_uint64, ctypes.c_void_p, ctypes.c_void_p)(("objc_msgSend", objc))
-        return int(send(device, objc.sel_registerName(b"recommendedMaxWorkingSetSize"))) or None
-    except (OSError, AttributeError, ValueError):
+        out = subprocess.run(
+            [sys.executable, "-I", "-c", _METAL_PROBE], capture_output=True, text=True, timeout=20, check=True
+        ).stdout
+        return int(out.strip()) or None
+    except (OSError, subprocess.SubprocessError, ValueError):
         return None
 
 
