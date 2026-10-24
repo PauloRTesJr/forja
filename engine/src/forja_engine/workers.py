@@ -35,6 +35,7 @@ class Worker:
         self.interpreter = interpreter
         self.adapter: str | None = None
         self.proc: asyncio.subprocess.Process | None = None
+        self.pid: int | None = None
         self.stderr_tail: deque[str] = deque(maxlen=_STDERR_TAIL)
         self._control: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
         self._pending: dict[str, asyncio.Future[dict[str, Any]]] = {}
@@ -60,6 +61,9 @@ class Worker:
         msg = await self._control_reply()
         if msg.get("type") != "ready":
             raise WorkerCrashed(self.family, list(self.stderr_tail))
+        # The interpreter may be a launcher (a venv's python.exe on Windows) whose child runs
+        # the worker, so the worker says which process it is.
+        self.pid = msg.get("pid")
 
     async def load(
         self,

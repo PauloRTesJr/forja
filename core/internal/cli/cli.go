@@ -86,6 +86,7 @@ func (a *app) root() *cobra.Command {
 	root.AddCommand(a.daemonCmd(), a.setupCmd(), a.generateCmd(), a.jobsCmd(), a.assetsCmd(), a.modelsCmd(),
 		a.installsCmd(), a.presetsCmd(), a.hubsCmd(), a.spendCmd(), a.providersCmd(), a.shareCmd(), a.configCmd(),
 		a.engineCmd(), a.cacheCmd(), a.secretCmd(), a.infoCmd(), a.diagnosticsCmd(), a.eventsCmd(), a.socketCmd())
+	root.AddCommand(a.benchCmd())
 	return root
 }
 

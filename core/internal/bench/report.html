@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Forja benchmark · {{.R.Suite.Name}} · {{.R.Device.ID}}</title>
+<style>
+  :root {
+    --bg: #fbfaf7; --fg: #1d1b18; --muted: #6b665e; --line: #e4e0d8; --card: #ffffff;
+    --good: #2f7d4f; --bad: #b3261e; --accent: #8a6a2f;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #141311; --fg: #ece8e1; --muted: #a39d93; --line: #2d2a26; --card: #1c1a17;
+      --good: #6cc58f; --bad: #f2867d; --accent: #d9b56c; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg);
+    font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 1180px; margin: 0 auto; padding: 32px 16px 64px; }
+  h1 { font-size: 28px; margin: 0 0 4px; font-weight: 650; letter-spacing: -0.01em; }
+  h2 { font-size: 18px; margin: 40px 0 12px; font-weight: 650; }
+  h3 { font-size: 15px; margin: 24px 0 8px; color: var(--muted); font-weight: 600; }
+  p { margin: 0 0 8px; }
+  .muted { color: var(--muted); }
+  .facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin-top: 20px; }
+  .fact { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
+  .fact b { display: block; font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted);
+    font-weight: 600; margin-bottom: 2px; }
+  .wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; background: var(--card); }
+  table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
+  th, td { padding: 8px 12px; text-align: left; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  th { font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); font-weight: 600; }
+  tr:last-child td { border-bottom: 0; }
+  td.n, th.n { text-align: right; }
+  .ok { color: var(--good); }
+  .bad { color: var(--bad); font-weight: 600; }
+  .status { font-weight: 600; }
+  .status.succeeded { color: var(--good); }
+  .status.failed, .status.cancelled { color: var(--bad); }
+  img.thumb { width: 48px; height: 48px; object-fit: contain; border-radius: 6px; background: var(--line); display: block; }
+  code, .mono { font-family: ui-monospace, "JetBrains Mono", Consolas, monospace; font-size: 13px; }
+  p code, li code { overflow-wrap: anywhere; }
+  .err { white-space: normal; color: var(--bad); max-width: 360px; }
+  ul.skips { padding-left: 20px; }
+</style>
+</head>
+<body>
+<main>
+  <p class="muted">Forja benchmark{{if .R.Label}} · {{.R.Label}}{{end}}</p>
+  <h1>{{.R.Suite.Name}} <span class="muted">v{{.R.Suite.Version}}</span> on {{if .R.Device.GPU}}{{.R.Device.GPU}}{{else}}{{.R.Device.ID}}{{end}}</h1>
+  <p class="muted">{{date .R.StartedAt}} · <span class="status {{.R.Status}}">{{.R.Status}}</span>{{if .R.Error}} · {{.R.Error}}{{end}}</p>
+
+  <div class="facts">
+    <div class="fact"><b>Forja</b>{{.R.Forja.Version}}{{if .R.Forja.Commit}} · <span class="mono">{{short .R.Forja.Commit}}</span>{{if .R.Forja.Modified}} (modified){{end}}{{end}}</div>
+    <div class="fact"><b>Engine</b>{{if .R.Forja.Engine}}{{.R.Forja.Engine}} · API {{.R.Forja.API}}{{else}}—{{end}} · {{.R.Device.Provider}}</div>
+    <div class="fact"><b>Device</b>{{if .R.Device.GPU}}{{.R.Device.GPU}}, {{total .R.Device.VRAMBytes}} VRAM{{if .R.Device.Driver}}, driver {{.R.Device.Driver}}{{end}}{{else}}{{.R.Device.CPU}}{{end}}</div>
+    <div class="fact"><b>Machine</b>{{.R.Device.OS}} {{.R.Device.Arch}} · {{total .R.Device.RAMBytes}} RAM</div>
+    <div class="fact"><b>Run</b>{{if .R.Options.Cold}}cold models{{else}}warm models{{end}} · {{if .R.Options.Batch}}batched{{else}}one image at a time{{end}} · ×{{.R.Options.Repeat}} · seed {{.R.Options.Seed}}</div>
+  </div>
+
+  {{with .R.Summary}}
+  <h2>Budgets</h2>
+  <div class="wrap"><table>
+    <tr><th>Preset</th><th class="n">Images</th><th class="n">Failed</th><th class="n">Median</th><th class="n">p90</th><th class="n">Max</th><th class="n">Budget</th><th class="n">Over budget</th></tr>
+    {{range .Presets}}
+    <tr><td>{{.Preset}}</td><td class="n">{{.Images}}</td><td class="n {{if .Failed}}bad{{end}}">{{.Failed}}</td>
+      <td class="n {{if over .Seconds .BudgetSeconds}}bad{{else if .BudgetSeconds}}ok{{end}}">{{secs .Seconds.Median}}</td>
+      <td class="n">{{secs .Seconds.P90}}</td><td class="n">{{secs .Seconds.Max}}</td>
+      <td class="n">{{budget .BudgetSeconds}}</td><td class="n {{if .OverBudget}}bad{{end}}">{{.OverBudget}}</td></tr>
+    {{end}}
+  </table></div>
+  <h3>Core overhead per job, inference and queueing excluded</h3>
+  <div class="wrap"><table>
+    <tr><th class="n">Jobs</th><th class="n">Median</th><th class="n">p90</th><th class="n">Max</th><th class="n">Budget</th></tr>
+    <tr><td class="n">{{.CoreOverhead.N}}</td>
+      <td class="n {{if overMS .CoreOverhead .CoreOverheadBudgetMS}}bad{{else if .CoreOverheadBudgetMS}}ok{{end}}">{{ms .CoreOverhead.Median}}</td>
+      <td class="n">{{ms .CoreOverhead.P90}}</td><td class="n">{{ms .CoreOverhead.Max}}</td>
+      <td class="n">{{if .CoreOverheadBudgetMS}}{{.CoreOverheadBudgetMS}} ms{{else}}—{{end}}</td></tr>
+  </table></div>
+  {{if .Devices}}
+  <h3>Devices over {{secs .WallSeconds}} of samples</h3>
+  <div class="wrap"><table>
+    <tr><th>Device</th><th class="n">Busy</th><th class="n">Share of the run</th><th class="n">GPU utilization</th></tr>
+    {{range .Devices}}<tr><td class="mono">{{.Device}}</td><td class="n">{{secs .BusySeconds}}</td><td class="n">{{pct .Busy}}</td><td class="n">{{share .GPUUtil}}</td></tr>{{end}}
+  </table></div>
+  {{end}}
+
+  <h2>Stages</h2>
+  <p class="muted">Seconds exclude model loads, which have their own column. Peaks are the highest over the samples; triangles, watertight and UV coverage describe each stage's mesh.</p>
+  <div class="wrap"><table>
+    <tr><th>Preset</th><th>Stage</th><th>Model</th><th class="n">Runs</th><th class="n">Median</th><th class="n">p90</th><th class="n">Max</th><th class="n">Load</th><th class="n">Peak VRAM</th><th class="n">Peak RAM</th><th class="n">GPU</th><th class="n">Triangles</th><th class="n">Watertight</th><th class="n">UV cover</th></tr>
+    {{range .Stages}}
+    <tr><td>{{.Preset}}</td><td>{{.Stage}} <span class="muted">{{.Use}}</span></td><td>{{if .Model}}{{.Model}}{{else}}<span class="muted">built-in</span>{{end}}</td>
+      <td class="n">{{.Seconds.N}}</td><td class="n">{{secs .Seconds.Median}}</td><td class="n">{{secs .Seconds.P90}}</td><td class="n">{{secs .Seconds.Max}}</td>
+      <td class="n">{{load .LoadSeconds}}</td><td class="n">{{bytes .PeakVRAMBytes}}</td><td class="n">{{bytes .PeakRAMBytes}}</td><td class="n">{{util .GPUUtil}}</td>
+      <td class="n">{{count .Triangles}}</td><td class="n">{{share .Watertight}}</td><td class="n">{{share .UVCoverage}}</td></tr>
+    {{end}}
+  </table></div>
+  {{end}}
+
+  <h2>Images</h2>
+  <div class="wrap"><table>
+    <tr><th></th><th>Image</th><th>Preset</th><th>Status</th><th class="n">Image to GLB</th><th class="n">Stages</th><th class="n">Loads</th><th class="n">Core</th><th class="n">Triangles</th><th class="n">LODs</th><th>Job</th></tr>
+    {{range .R.Jobs}}
+    <tr><td>{{with thumb $.Thumbs .Input}}<img class="thumb" src="{{.}}" alt="">{{end}}</td>
+      <td>{{.Image}}{{if .Category}} <span class="muted">{{.Category}}</span>{{end}}{{if gt .Repeat 1}} <span class="muted">#{{.Repeat}}</span>{{end}}</td>
+      <td>{{.Preset}}</td><td class="status {{.Status}}">{{.Status}}</td>
+      <td class="n">{{secs .WallSeconds}}</td><td class="n">{{secs .StageSeconds}}</td><td class="n">{{secs .LoadSeconds}}</td><td class="n">{{ms .CoreOverheadSeconds}}</td>
+      <td class="n">{{with .Asset}}{{stat . "triangles"}}{{else}}—{{end}}</td><td class="n">{{with .Asset}}{{stat . "lods"}}{{else}}—{{end}}</td>
+      <td class="mono muted">{{.Job}}</td></tr>
+    {{if .Error}}<tr><td></td><td colspan="10" class="err">{{.Error}}</td></tr>{{end}}
+    {{end}}
+  </table></div>
+
+  {{if .R.Skipped}}
+  <h2>Skipped</h2>
+  <ul class="skips">{{range .R.Skipped}}<li><code>{{.Path}}</code>: {{.Reason}}</li>{{end}}</ul>
+  {{end}}
+
+  <p class="muted" style="margin-top: 40px">Suite <code>{{.R.Suite.Path}}</code>{{if .R.Suite.Project}}, models pinned by <code>{{.R.Suite.Project}}</code>{{end}}. The quality proxy (CLIP similarity of rendered views) is not measured yet.</p>
+</main>
+</body>
+</html>

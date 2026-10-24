@@ -3,15 +3,17 @@
 from __future__ import annotations
 
 import json
+import re
 import struct
 from pathlib import Path
+from typing import Any
 
 import fast_simplification
 import numpy as np
 import trimesh
 import xatlas
 from numpy.typing import NDArray
-from PIL import Image
+from PIL import Image, ImageDraw
 
 TANGENTS = "tangents"  # Trimesh.metadata key: (n, 4) per-vertex tangents written as TANGENT
 
@@ -276,3 +278,51 @@ def stats(mesh: trimesh.Trimesh) -> dict[str, float | int | bool]:
         "watertight": bool(mesh.is_watertight),
         "extent_m": [round(float(v), 4) for v in mesh.extents],  # type: ignore[dict-item]
     }
+
+
+_LOWER_LOD = re.compile(r"_LOD[1-9]\d*$")
+# Rasterizing UVs is a Python loop per triangle; denser meshes (scans, shape outputs) are
+# never unwrapped anyway.
+_UV_COVERAGE_MAX_TRIS = 500_000
+
+
+def file_stats(path: str) -> dict[str, Any] | None:
+    """Triangles, vertices, watertightness and UV coverage of a GLB's full-detail level (LOD0 when
+    it has levels), or None when the file cannot be read here (a meshopt-compressed export)."""
+    try:
+        scene = trimesh.load(path, file_type="glb", force="scene", process=False)
+    except Exception:
+        return None
+    if not isinstance(scene, trimesh.Scene):
+        return None
+    meshes = []
+    for node in scene.graph.nodes_geometry:
+        if _LOWER_LOD.search(node):
+            continue
+        geometry = scene.geometry.get(scene.graph[node][1])
+        if isinstance(geometry, trimesh.Trimesh):
+            meshes.append(geometry)
+    if not meshes:
+        return None
+    uvs = [(getattr(g.visual, "uv", None), g.faces) for g in meshes]
+    coverage = None
+    unwrapped = all(uv is not None and len(uv) for uv, _ in uvs)
+    if unwrapped and sum(len(f) for _, f in uvs) <= _UV_COVERAGE_MAX_TRIS:
+        coverage = uv_coverage([(np.asarray(uv, dtype=np.float64), f) for uv, f in uvs])
+    return {
+        "triangles": int(sum(len(g.faces) for g in meshes)),
+        "vertices": int(sum(len(g.vertices) for g in meshes)),
+        # UV seams split vertices, so watertightness is judged on positions alone.
+        "watertight": all(trimesh.Trimesh(g.vertices, g.faces, process=True).is_watertight for g in meshes),
+        "uv_coverage": coverage,
+    }
+
+
+def uv_coverage(parts: list[tuple[NDArray[np.float64], NDArray[np.int64]]], size: int = 256) -> float:
+    """Fraction of the 0..1 UV square that triangles cover; overlaps count once."""
+    mask = Image.new("1", (size, size), 0)
+    draw = ImageDraw.Draw(mask)
+    for uv, faces in parts:
+        for tri in uv[faces] * size:
+            draw.polygon([(float(x), float(y)) for x, y in tri], fill=1)
+    return round(float(np.asarray(mask, dtype=bool).mean()), 4)

@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useId, useRef, useState, type CSSProperties, type ReactNode } from 'react'
+import { Benchmark } from '../components/Benchmark'
 import { CheckList, FitBadge, LicenseLine, TaskProgress, taskFor, useChecks, useInstalls } from '../components/Install'
 import { Alert, More, PauseMoon, Sparkle } from '../components/icons'
 import { ScreenHead, SectionHead } from '../components/ScreenHead'
@@ -124,6 +125,7 @@ export function Models() {
           </div>
         )
       )}
+      <Benchmark />
       {installing && <InstallDialog model={installing} onClose={() => setInstalling(undefined)} />}
       {connecting && <ConnectHub onClose={() => setConnecting(false)} />}
       {browsing && hub && <Catalog provider={hub.id} label={hub.label} onClose={() => setBrowsing(false)} />}

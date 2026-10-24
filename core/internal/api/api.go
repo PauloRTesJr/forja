@@ -18,6 +18,7 @@ import (
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
 
+	"forja/internal/bench"
 	"forja/internal/cache"
 	"forja/internal/catalog"
 	"forja/internal/config"
@@ -50,6 +51,9 @@ type Server struct {
 	Config    func(project string) (*config.Loaded, error)
 	Shutdown  func()
 	Log       *slog.Logger
+
+	benchOnce sync.Once
+	bench     *bench.Bench
 }
 
 type route struct {
@@ -113,6 +117,12 @@ func (s *Server) routes() []route {
 		{"GET /v1/events", s.eventsWS},
 		{"GET /v1/events/stream", s.eventsSSE},
 		{"POST /v1/shutdown", s.shutdown},
+		{"POST /v1/bench", s.benchStart},
+		{"GET /v1/bench", s.benchList},
+		{"GET /v1/bench/{id}", s.benchGet},
+		{"DELETE /v1/bench/{id}", s.benchCancel},
+		{"GET /v1/bench/{id}/report", s.benchReport},
+		{"POST /v1/bench/compare", s.benchCompare},
 	}
 }
 
@@ -278,24 +288,30 @@ func (s *Server) presets(w http.ResponseWriter, r *http.Request) {
 
 // engineUnload frees all VRAM now, for the "pause engine" toggle while gaming or in Unity.
 func (s *Server) engineUnload(w http.ResponseWriter, r *http.Request) {
-	if !s.Engine.Running() {
-		w.WriteHeader(204)
-		return
-	}
-	base, token, err := s.Engine.Endpoint(r.Context())
-	if err != nil {
+	if err := s.unloadModels(r.Context()); err != nil {
 		problem(w, 502, err.Error())
 		return
 	}
-	req, _ := http.NewRequestWithContext(r.Context(), http.MethodPost, base+"/v1/models/unload-all", nil)
+	w.WriteHeader(204)
+}
+
+// unloadModels frees every model this computer's engine holds; a stopped engine holds none.
+func (s *Server) unloadModels(ctx context.Context) error {
+	if !s.Engine.Running() {
+		return nil
+	}
+	base, token, err := s.Engine.Endpoint(ctx)
+	if err != nil {
+		return err
+	}
+	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, base+"/v1/models/unload-all", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		problem(w, 502, err.Error())
-		return
+		return err
 	}
 	resp.Body.Close()
-	w.WriteHeader(204)
+	return nil
 }
 
 func (s *Server) jobCreate(w http.ResponseWriter, r *http.Request) {

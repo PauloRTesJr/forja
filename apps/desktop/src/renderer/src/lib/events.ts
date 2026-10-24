@@ -1,7 +1,8 @@
 // Applies pushed core events to the query cache. Nothing in the UI polls.
 import { useEffect, useState } from 'react'
 import type { QueryClient } from '@tanstack/react-query'
-import { taskDone, type Asset, type CacheUsage, type InstallTask, type Job } from './api'
+import { taskDone, type Asset, type BenchList, type BenchResult, type CacheUsage, type InstallTask, type Job } from './api'
+import { withBench } from './bench'
 import { applyProgress, upsertJob } from './jobs'
 import { withoutAsset } from './selection'
 
@@ -25,6 +26,9 @@ export const keys = {
   catalog: (provider: string, q: string) => ['catalog', provider, q] as const,
   exportFormats: ['exportFormats'] as const,
   cache: ['cache'] as const,
+  bench: ['bench'] as const,
+  benchResult: (id: string) => ['bench', id] as const,
+  benchCompare: (baseline: string, current: string) => ['benchCompare', baseline, current] as const,
 }
 
 /** Keeps the newest state of each task, newest task first. */
@@ -99,6 +103,13 @@ export function useCoreEvents(qc: QueryClient): boolean {
           void qc.invalidateQueries({ queryKey: keys.models })
           void qc.invalidateQueries({ queryKey: keys.setup })
           break
+        case 'bench.updated':
+        case 'bench.finished': {
+          const r = ev.data as BenchResult
+          qc.setQueryData(keys.benchResult(r.id), r)
+          qc.setQueryData<BenchList>(keys.bench, (list) => withBench(list, r))
+          break
+        }
         case 'install.updated': {
           const t = ev.data as InstallTask
           qc.setQueryData<InstallTask[]>(keys.installs, (list) => upsertTask(list, t))

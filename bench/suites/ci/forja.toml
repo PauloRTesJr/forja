@@ -1,0 +1,12 @@
+# The CI benchmark's project: it pins the stub models, so it runs on any machine and always
+# measures the same thing (docs/decisions.md, decision 12).
+[project]
+name = "CI benchmark"
+
+[models]
+stubs = true
+
+[models.stages]
+background-removal = "stub-background"
+shape = "stub-shape"
+texture = "stub-paint"

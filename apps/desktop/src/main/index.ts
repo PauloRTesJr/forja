@@ -75,6 +75,13 @@ ipcMain.handle('dialog:saveFile', async (_e, name: string, ext: string, label: s
   return res.canceled || !res.filePath ? null : res.filePath
 })
 ipcMain.handle('shell:showItem', (_e, path: string) => shell.showItemInFolder(path))
+ipcMain.handle('dialog:pickFile', async (_e, label: string, extensions: string[]) => {
+  const res = await dialog.showOpenDialog(win!, {
+    properties: ['openFile'],
+    filters: [{ name: String(label), extensions: extensions.map((x) => String(x).replace(/^\./, '')) }],
+  })
+  return res.canceled ? null : res.filePaths[0]
+})
 
 // The renderer never names a path to open: these ask the core where its files are.
 async function coreJSON<T>(method: string, path: string): Promise<T> {
@@ -93,6 +100,12 @@ ipcMain.handle('settings:openConfig', async () => {
 ipcMain.handle('settings:openData', async () => {
   const { data_dir } = await coreJSON<{ data_dir: string }>('POST', '/v1/settings/file')
   const err = await shell.openPath(data_dir)
+  if (err) throw new Error(err)
+})
+ipcMain.handle('bench:openReport', async (_e, id: string) => {
+  const { report } = await coreJSON<{ report?: string }>('GET', `/v1/bench/${encodeURIComponent(String(id))}`)
+  if (!report) throw new Error('this benchmark has no report yet')
+  const err = await shell.openPath(report)
   if (err) throw new Error(err)
 })
 ipcMain.handle('clipboard:write', (_e, text: string) => clipboard.writeText(String(text)))

@@ -627,3 +627,78 @@ func TestEvictionWaitsForRunningJobsAndHearsWhenTheLastEnds(t *testing.T) {
 		t.Fatalf("the reused shape still looks used at %s", info.ModTime())
 	}
 }
+
+// runsSince lists the provider's runs after the first before, "|" between runs.
+func (f *fakeProvider) runsSince(before int) string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var runs []string
+	for _, ids := range f.runs[before:] {
+		runs = append(runs, strings.Join(ids, ","))
+	}
+	return strings.Join(runs, "|")
+}
+
+func TestASampleRunsEveryStageAndLeavesTheCacheAlone(t *testing.T) {
+	r, fp, _, _, img := setup(t)
+	ctx := context.Background()
+	measure := func() Sample {
+		t.Helper()
+		job, done, err := r.Measure(ctx, SubmitRequest{Input: img, Preset: "draft", Sheet: library.SheetKeep})
+		if err != nil {
+			t.Fatal(err)
+		}
+		select {
+		case s := <-done:
+			if s.Job.ID != job.ID || s.Job.Status != library.Succeeded {
+				t.Fatalf("sample %s: %s %s", s.Job.ID, s.Job.Status, s.Job.Error)
+			}
+			return s
+		case <-time.After(5 * time.Second):
+			t.Fatal("the sample never ended")
+		}
+		return Sample{}
+	}
+	before := fp.count()
+	s := measure()
+	// Background removal ran once, while looking for a sheet of views, and was reused after.
+	if got := fp.runsSince(before); got != "bg,sheet|frame,shape,cleanup,export" {
+		t.Fatalf("the sample ran %s", got)
+	}
+	if s.Job.AssetID != "" || s.Engine <= 0 || s.Overhead() <= 0 || s.Overhead() >= s.Wall {
+		t.Fatalf("sample %+v, overhead %s", s, s.Overhead())
+	}
+	for _, st := range s.Job.Stages {
+		if st.Cached {
+			t.Fatalf("stage %s came from the cache", st.ID)
+		}
+	}
+	// It wrote nothing to the stage cache: a normal job runs everything as well.
+	j, _ := r.Submit(ctx, SubmitRequest{Input: img, Preset: "draft"})
+	for _, st := range wait(t, r, j.ID).Stages {
+		if st.Cached {
+			t.Fatalf("a normal job found %s cached by the sample", st.ID)
+		}
+	}
+	// And it reads nothing from it: with every stage cached now, a sample runs them all again.
+	before = fp.count()
+	measure()
+	if got := fp.runsSince(before); got != "bg,sheet|frame,shape,cleanup,export" {
+		t.Fatalf("the second sample ran %s", got)
+	}
+
+	for deadline := time.Now().Add(5 * time.Second); !r.WhenIdle(func() {}); time.Sleep(5 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatal("the runner never went idle")
+		}
+	}
+	release := r.Hold()
+	if r.WhenIdle(func() {}) {
+		t.Fatal("eviction ran while a benchmark held the runner")
+	}
+	release()
+	release()
+	if !r.WhenIdle(func() {}) {
+		t.Fatal("eviction stayed away after the benchmark let go")
+	}
+}
