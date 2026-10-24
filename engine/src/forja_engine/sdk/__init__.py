@@ -6,6 +6,7 @@ output files, reports progress, and checks for cancellation between steps.
 """
 
 from forja_engine.sdk.types import (
+    VIEWS,
     Adapter,
     ArtifactKind,
     Cancelled,
@@ -18,6 +19,7 @@ from forja_engine.sdk.types import (
 )
 
 __all__ = [
+    "VIEWS",
     "Adapter",
     "ArtifactKind",
     "Cancelled",

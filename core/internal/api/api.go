@@ -8,8 +8,10 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"os"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -88,12 +90,14 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/jobs", s.jobList)
 	mux.HandleFunc("GET /v1/jobs/{id}", s.jobGet)
 	mux.HandleFunc("DELETE /v1/jobs/{id}", s.jobCancel)
+	mux.HandleFunc("POST /v1/jobs/{id}/sheet", s.jobSheet)
 	mux.HandleFunc("GET /v1/assets", s.assetList)
 	mux.HandleFunc("GET /v1/assets/{id}", s.assetGet)
 	mux.HandleFunc("PUT /v1/assets/{id}/thumbnail", s.assetThumbnail)
 	mux.HandleFunc("PATCH /v1/assets/{id}", s.assetPatch)
 	mux.HandleFunc("GET /v1/artifacts/{ref}", s.artifactGet)
 	mux.HandleFunc("PUT /v1/artifacts", s.artifactPut)
+	mux.HandleFunc("POST /v1/artifacts/import", s.artifactImport)
 	mux.HandleFunc("GET /v1/events", s.eventsWS)
 	mux.HandleFunc("GET /v1/events/stream", s.eventsSSE)
 	mux.HandleFunc("POST /v1/shutdown", func(w http.ResponseWriter, _ *http.Request) {
@@ -212,10 +216,16 @@ func (s *Server) presets(w http.ResponseWriter, r *http.Request) {
 	if fresh(r) {
 		s.askAll(ctx)
 	}
+	// ?views=left,back: the plan for a job that brings those views too, so the app can say
+	// which model would read them.
+	var views []string
+	if q := r.URL.Query().Get("views"); q != "" {
+		views = strings.Split(q, ",")
+	}
 	list := make([]presetView, len(ordered))
 	for i, p := range ordered {
 		v := presetView{Preset: p, Builtin: p.Builtin(), Plan: []jobs.Pick{}}
-		plan, err := s.Runner.Resolve(ctx, project, p)
+		plan, err := s.Runner.Resolve(ctx, project, p, views)
 		if err != nil {
 			v.Error = err.Error()
 		} else {
@@ -262,6 +272,10 @@ func (s *Server) jobCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	reqs := []jobs.SubmitRequest{body.SubmitRequest}
 	if len(body.Paths) > 0 {
+		if len(body.Views) > 0 {
+			problem(w, 422, "views belong to one image: submit them with path, not paths")
+			return
+		}
 		reqs = reqs[:0]
 		for _, p := range body.Paths {
 			req := body.SubmitRequest
@@ -279,6 +293,26 @@ func (s *Server) jobCreate(w http.ResponseWriter, r *http.Request) {
 		created = append(created, job)
 	}
 	writeJSON(w, 202, created)
+}
+
+// jobSheet answers a job waiting on a sheet of views: {"views": [{"view", "box"}...]} to cut
+// them out, or {"keep": true} to use the image whole.
+func (s *Server) jobSheet(w http.ResponseWriter, r *http.Request) {
+	var ans jobs.SheetAnswer
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&ans); err != nil {
+		problem(w, 400, "invalid JSON: "+err.Error())
+		return
+	}
+	job, err := s.Runner.AnswerSheet(r.Context(), r.PathValue("id"), ans)
+	if errors.Is(err, library.ErrNotFound) {
+		problem(w, 404, "no job "+r.PathValue("id"))
+		return
+	}
+	if err != nil {
+		problem(w, 422, err.Error())
+		return
+	}
+	writeJSON(w, 202, job)
 }
 
 func page(r *http.Request) (int, time.Time) {
@@ -433,6 +467,28 @@ func (s *Server) artifactPut(w http.ResponseWriter, r *http.Request) {
 	ref, err := s.Store.Put(io.LimitReader(r.Body, 512<<20))
 	if err != nil {
 		problem(w, 500, err.Error())
+		return
+	}
+	writeJSON(w, 201, map[string]string{"hash": ref})
+}
+
+// artifactImport copies a file the user picked into the store, so the app can show it and
+// submit it by ref (the views of one subject, before they become a job).
+func (s *Server) artifactImport(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Path string `json:"path"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&body); err != nil || body.Path == "" {
+		problem(w, 400, "want {\"path\": \"<file>\"}")
+		return
+	}
+	if st, err := os.Stat(body.Path); err != nil || !st.Mode().IsRegular() {
+		problem(w, 422, "cannot read "+body.Path)
+		return
+	}
+	ref, err := s.Store.PutFile(body.Path)
+	if err != nil {
+		problem(w, 422, err.Error())
 		return
 	}
 	writeJSON(w, 201, map[string]string{"hash": ref})

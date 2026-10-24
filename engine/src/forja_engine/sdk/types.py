@@ -20,6 +20,13 @@ class StageType(StrEnum):
     BAKE = "bake"
     MESH_LODS = "mesh.lods"
     EXPORT = "export"
+    VIEWS_DETECT = "views.detect"
+    VIEWS_SPLIT = "views.split"
+
+
+#: The views a reference image can show. "left" shows the subject's left side, so it faces the
+#: image's left edge (as in Hunyuan3D-2mv's examples); "right" is the mirror of that.
+VIEWS = ("front", "left", "back", "right")
 
 
 class ArtifactKind(StrEnum):
@@ -44,6 +51,8 @@ class StageInput:
     path: Path
     kind: ArtifactKind
     hash: str
+    # Which view of the subject an image shows (one of VIEWS), when the job has several.
+    view: str | None = None
 
 
 @dataclass(frozen=True)
@@ -82,6 +91,14 @@ class StageContext:
         if len(matches) <= index:
             raise ValueError(f"stage {self.stage_id} needs input #{index} of kind {kind}")
         return matches[index]
+
+    def views(self) -> dict[str, StageInput]:
+        """Reference images by view. An untagged image is the front; the first one wins."""
+        out: dict[str, StageInput] = {}
+        for i in self.inputs:
+            if i.kind == ArtifactKind.IMAGE_PNG:
+                out.setdefault(i.view or "front", i)
+        return out
 
 
 class Adapter(abc.ABC):

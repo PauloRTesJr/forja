@@ -33,7 +33,9 @@ def ctx_to_json(ctx: StageContext) -> dict[str, Any]:
     return {
         "stage_id": ctx.stage_id,
         "task": str(ctx.task),
-        "inputs": [{"path": str(i.path), "kind": str(i.kind), "hash": i.hash} for i in ctx.inputs],
+        "inputs": [
+            {"path": str(i.path), "kind": str(i.kind), "hash": i.hash, "view": i.view} for i in ctx.inputs
+        ],
         "params": ctx.params,
         "seed": ctx.seed,
         "out_dir": str(ctx.out_dir),
@@ -44,7 +46,10 @@ def ctx_from_json(d: dict[str, Any]) -> StageContext:
     return StageContext(
         stage_id=d["stage_id"],
         task=StageType(d["task"]),
-        inputs=[StageInput(Path(i["path"]), ArtifactKind(i["kind"]), i["hash"]) for i in d["inputs"]],
+        inputs=[
+            StageInput(Path(i["path"]), ArtifactKind(i["kind"]), i["hash"], i.get("view"))
+            for i in d["inputs"]
+        ],
         params=d["params"],
         seed=d["seed"],
         out_dir=Path(d["out_dir"]),

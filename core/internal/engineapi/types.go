@@ -2,8 +2,13 @@ package engineapi
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 )
+
+// Views are what a reference image can show of its subject. "left" shows the subject's left
+// side, so it faces the image's left edge; "right" is the mirror of that.
+var Views = []string{"front", "left", "back", "right"}
 
 // StageSpec is one stage of a run request. Inputs are "stage:<id>" or "blake3:<hex>".
 type StageSpec struct {
@@ -12,6 +17,8 @@ type StageSpec struct {
 	Model  string         `json:"model,omitempty"`
 	Params map[string]any `json:"params,omitempty"`
 	Inputs []string       `json:"inputs"`
+	// Views says which view each input shows ("" for none) when the stage reads several (API 1.6).
+	Views []string `json:"views,omitempty"`
 }
 
 type RunRequest struct {
@@ -93,6 +100,10 @@ type Model struct {
 	Price       *Price `json:"price,omitempty"`
 	Recommended bool   `json:"recommended,omitempty"`
 	Thumbnail   string `json:"thumbnail,omitempty"`
+	// Views the model reads besides the front (API 1.6); empty when it takes one image.
+	// ViewsRequired are the ones it cannot run without: a hosted model may need a back view.
+	Views         []string `json:"views,omitempty"`
+	ViewsRequired []string `json:"views_required,omitempty"`
 }
 
 // Price is what a hosted model charges per Unit. PerCall is the unit for one generation, the
@@ -129,6 +140,28 @@ type CatalogModel struct {
 // Ready reports whether the model can run on the provider now.
 func (m *Model) Ready() bool {
 	return (m.Status == "ready" || m.Status == "loaded") && m.Device != nil
+}
+
+// Reads reports which of views the model can use, in the order of Views.
+func (m *Model) Reads(views []string) []string {
+	var out []string
+	for _, v := range Views {
+		if slices.Contains(views, v) && slices.Contains(m.Views, v) {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
+// Lacks lists the views the model needs that are not in have (the front is always had).
+func (m *Model) Lacks(have []string) []string {
+	var out []string
+	for _, v := range m.ViewsRequired {
+		if v != "front" && !slices.Contains(have, v) {
+			out = append(out, v)
+		}
+	}
+	return out
 }
 
 // Does reports whether the model provides a stage type.

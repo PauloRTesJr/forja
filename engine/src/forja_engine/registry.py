@@ -18,7 +18,7 @@ import yaml
 
 from forja_engine import families
 from forja_engine.adapters.builtin import BUILTINS
-from forja_engine.sdk import Adapter, StageType
+from forja_engine.sdk import VIEWS, Adapter, StageType
 
 # Families whose adapters need nothing beyond the engine's own environment.
 IN_ENGINE_FAMILIES = ("builtin", "stub")
@@ -55,6 +55,9 @@ class Manifest:
     rank: int = 0
     # Deterministic stand-ins for tests and machines without a GPU; picked only when asked for.
     stub: bool = False
+    # The views of the subject the model reads besides the front (see sdk.VIEWS); empty when it
+    # takes one image. The core sends a job's side views only to stages whose model lists them.
+    views: tuple[str, ...] = ()
     # Explicit interpreter; otherwise the family's environment, or the supervisor's own for
     # families that need nothing beyond the engine (built-in, stub).
     python: str | None = None
@@ -101,6 +104,7 @@ class Manifest:
             "upstream": upstream_pin(self.family),
             "rank": self.rank,
             "stub": self.stub,
+            "views": list(self.views),
         }
 
 
@@ -144,10 +148,18 @@ def parse(doc: dict[str, Any], source: str) -> Manifest:
             vram_gb=float(doc.get("vram_gb", 0)),
             rank=int(doc.get("rank", 0)),
             stub=bool(doc.get("stub", False)),
+            views=_views(doc.get("views", [])),
             python=doc.get("python"),
         )
     except (KeyError, ValueError, TypeError) as e:
         raise ManifestError(f"{source}: invalid manifest: {e}") from e
+
+
+def _views(raw: list[str]) -> tuple[str, ...]:
+    views = tuple(str(v) for v in raw)
+    if views and ("front" not in views or not set(views) <= set(VIEWS)):
+        raise ValueError(f"views must include front and name only {', '.join(VIEWS)}")
+    return tuple(v for v in VIEWS if v in views)
 
 
 class Registry:

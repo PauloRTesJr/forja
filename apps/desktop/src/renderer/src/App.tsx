@@ -1,12 +1,13 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { lazy, Suspense, useCallback, useEffect, useState, type CSSProperties } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useRef, useState, type CSSProperties } from 'react'
 import { Anvil, BrandMark, Eye, Grimoire, Hourglass, MoonPhases, SidebarSky, Sun } from './components/icons'
 import { useInstalls } from './components/Install'
 import { ScreenBoundary } from './components/ScreenBoundary'
 import { api, taskDone, type Job } from './lib/api'
 import { keys, useCoreEvents } from './lib/events'
-import { isActive } from './lib/jobs'
+import { isActive, needsAnswer } from './lib/jobs'
 import { NavContext, transition, type Route } from './lib/nav'
+import { useToast } from './lib/toast'
 import { Generate } from './screens/Generate'
 import { Queue } from './screens/Queue'
 
@@ -24,12 +25,28 @@ const tabs = [
   { screen: 'settings', label: 'Settings', numeral: 'V', Icon: Sun },
 ] as const
 
+/** Says once, on any other screen, that a job found several views and waits on Generate. */
+function useAnswerNotices(jobs: Job[] | undefined, onGenerate: boolean): void {
+  const toast = useToast()
+  const told = useRef(new Set<string>())
+  useEffect(() => {
+    for (const j of jobs ?? []) {
+      if (!needsAnswer(j) || told.current.has(j.id)) continue
+      told.current.add(j.id)
+      if (!onGenerate) toast(`${j.name} shows several views: confirm them on Generate`)
+    }
+  }, [jobs, onGenerate, toast])
+}
+
 export function App() {
   const qc = useQueryClient()
   const connected = useCoreEvents(qc)
   const [route, setRoute] = useState<Route>({ screen: 'generate' })
   const jobs = useQuery({ queryKey: keys.jobs, queryFn: () => api<Job[]>('GET', '/v1/jobs?limit=100') })
   const running = jobs.data?.filter(isActive).length ?? 0
+  useAnswerNotices(jobs.data, route.screen === 'generate')
+  // Jobs waiting for an answer count on the badge, but nothing is generating for them.
+  const generating = jobs.data?.some((j) => j.status === 'running' || j.status === 'queued') ?? false
   const installs = useInstalls()
   const install = installs.data?.find((t) => t.kind === 'install' && !taskDone(t))
   const installPct = install?.progress?.total ? Math.round((install.progress.done / install.progress.total) * 100) : undefined
@@ -87,10 +104,10 @@ export function App() {
           <div className="sidebar-foot">
             <MoonPhases />
             <div className="conn">
-              <span className={`dot ${!connected ? '' : running || install ? 'live' : 'ok'}`} />
+              <span className={`dot ${!connected ? '' : generating || install ? 'live' : 'ok'}`} />
               {!connected
                 ? 'Reconnecting to core…'
-                : running
+                : generating
                   ? 'Generating'
                   : install
                     ? `Installing ${install.target}${installPct !== undefined ? ` · ${installPct}%` : ''}`

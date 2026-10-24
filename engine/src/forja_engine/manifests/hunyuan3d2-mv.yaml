@@ -1,0 +1,35 @@
+id: hunyuan3d2-mv
+name: Hunyuan3D-2mv (turbo)
+family: hunyuan3d2
+adapter: forja_hunyuan3d2:Hunyuan3D2MV
+tasks: [shape]
+# Below TripoSG: it is picked for jobs that bring side views, which it is the one to read.
+rank: 5
+views: [front, left, back, right]
+description: Builds the shape from the front and any side or back views of the same subject.
+# The pinned weights; the environment is the one Hunyuan3D-2 Paint already uses.
+disk_gb: 5.0
+license:
+  spdx: LicenseRef-Tencent-Hunyuan-3D-2.0-Community
+  commercial: true
+  restrictions: ["not licensed in the EU, UK or South Korea", "separate license above 1M monthly active users"]
+  url: https://huggingface.co/tencent/Hunyuan3D-2mv/blob/3a761b539b29fe4ff64714813aa9560fd66f5de0/LICENSE
+# Upstream's README: 6 GB for shape generation. The VRAM manager replaces it with measured peaks.
+vram_gb: 6
+requirements:
+  cuda: { status: supported, min_vram_gb: 6 }
+  mps: { status: unsupported }
+  cpu: { status: unsupported }
+weights:
+  hub: huggingface
+  repo: tencent/Hunyuan3D-2mv
+  revision: 3a761b539b29fe4ff64714813aa9560fd66f5de0
+  files:
+    - { path: hunyuan3d-dit-v2-mv-turbo/config.yaml }
+    - { path: hunyuan3d-dit-v2-mv-turbo/model.fp16.safetensors, sha256: 172d7a989b99f66af760da0080d8c6f6350c72609536cf0c55b87a4afa574e45, bytes: 4930777530 }
+params:
+  # Upstream's turbo example runs 5 steps at octree resolution 380.
+  steps: { type: integer, default: 5, minimum: 1, maximum: 50 }
+  guidance_scale: { type: number, default: 5.0, minimum: 1.0, maximum: 15.0 }
+  octree_resolution: { type: integer, default: 380, minimum: 256, maximum: 512 }
+  yaw_degrees: { type: number, default: 0, description: Rotate the output about Y if it faces the wrong way }

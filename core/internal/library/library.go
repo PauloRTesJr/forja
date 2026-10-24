@@ -19,8 +19,11 @@ var ErrNotFound = errors.New("not found")
 type Status string
 
 const (
-	Queued    Status = "queued"
-	Running   Status = "running"
+	Queued  Status = "queued"
+	Running Status = "running"
+	// Waiting jobs need the user's answer (does this image hold several views?). They hold no
+	// slot while they wait, and keep waiting across restarts.
+	Waiting   Status = "waiting"
 	Succeeded Status = "succeeded"
 	Failed    Status = "failed"
 	Cancelled Status = "cancelled"
@@ -51,20 +54,73 @@ type Stage struct {
 }
 
 type Job struct {
-	ID          string         `json:"id"`
-	Name        string         `json:"name"`
-	Preset      string         `json:"preset"`
-	Input       string         `json:"input"`
-	Project     string         `json:"project,omitempty"`
-	Priority    string         `json:"priority"`
-	Overrides   map[string]any `json:"overrides,omitempty"`
-	Status      Status         `json:"status"`
-	Error       string         `json:"error,omitempty"`
-	CreatedAt   time.Time      `json:"created_at"`
-	FinishedAt  *time.Time     `json:"finished_at,omitempty"`
-	AssetID     string         `json:"asset_id,omitempty"`
-	Stages      []Stage        `json:"stages"`
-	EstimateSec float64        `json:"estimate_seconds,omitempty"`
+	ID     string `json:"id"`
+	Name   string `json:"name"`
+	Preset string `json:"preset"`
+	Input  string `json:"input"`
+	// Views are the job's images of its subject by view ("left", "back", "right"). A "front"
+	// stands in for Input, as when the views were cut out of a sheet.
+	Views       map[string]string `json:"views,omitempty"`
+	Sheet       *Sheet            `json:"sheet,omitempty"`
+	Seed        int               `json:"seed"`
+	Project     string            `json:"project,omitempty"`
+	Priority    string            `json:"priority"`
+	Overrides   map[string]any    `json:"overrides,omitempty"`
+	Status      Status            `json:"status"`
+	Error       string            `json:"error,omitempty"`
+	CreatedAt   time.Time         `json:"created_at"`
+	FinishedAt  *time.Time        `json:"finished_at,omitempty"`
+	AssetID     string            `json:"asset_id,omitempty"`
+	Stages      []Stage           `json:"stages"`
+	EstimateSec float64           `json:"estimate_seconds,omitempty"`
+}
+
+// Front is the image the job's front-view stages read.
+func (j *Job) Front() string {
+	if f := j.Views["front"]; f != "" {
+		return f
+	}
+	return j.Input
+}
+
+// SideViews lists the job's views other than the front, in no particular order.
+func (j *Job) SideViews() []string {
+	var out []string
+	for v := range j.Views {
+		if v != "front" {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
+// What a job does when its image holds several views of one subject.
+const (
+	SheetAsk   = "ask"   // wait for the user to confirm or relabel the views
+	SheetSplit = "split" // use the proposed views
+	SheetKeep  = "keep"  // use the image whole; what was found is only recorded
+)
+
+// Sheet is what the views.detect stage found in a job's image (docs/decisions.md, 17).
+type Sheet struct {
+	Mode    string `json:"mode"`
+	Checked bool   `json:"checked"`
+	Found   bool   `json:"found"`
+	// Cutout is the background-removal output the boxes are in; Size is its size in pixels.
+	Cutout string      `json:"cutout,omitempty"`
+	Size   [2]int      `json:"size"`
+	Parts  []SheetPart `json:"parts,omitempty"`
+	// Answer is SheetSplit or SheetKeep once decided; Chosen are the views a split cut out.
+	Answer string      `json:"answer,omitempty"`
+	Chosen []SheetPart `json:"chosen,omitempty"`
+}
+
+// SheetPart is one region of a sheet: Kind is "figure" or "detail" (a close-up cut by its
+// frame), View the view it shows, or empty to leave it out.
+type SheetPart struct {
+	Box  [4]int `json:"box"`
+	Kind string `json:"kind,omitempty"`
+	View string `json:"view"`
 }
 
 type Asset struct {
@@ -99,7 +155,10 @@ CREATE TABLE IF NOT EXISTS jobs (
 	overrides TEXT NOT NULL DEFAULT '{}',
 	stages TEXT NOT NULL DEFAULT '[]',
 	asset_id TEXT NOT NULL DEFAULT '',
-	error TEXT NOT NULL DEFAULT ''
+	error TEXT NOT NULL DEFAULT '',
+	views TEXT NOT NULL DEFAULT '{}',
+	sheet TEXT NOT NULL DEFAULT '',
+	seed INTEGER NOT NULL DEFAULT 42
 );
 CREATE INDEX IF NOT EXISTS jobs_created ON jobs(created_at DESC);
 CREATE TABLE IF NOT EXISTS stage_cache (
@@ -167,7 +226,34 @@ func Open(dataDir string) (*DB, error) {
 		db.Close()
 		return nil, fmt.Errorf("library schema: %w", err)
 	}
+	if err := addColumns(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("library schema: %w", err)
+	}
 	return &DB{sql: db}, nil
+}
+
+// added are columns that came after their table; libraries made before them gain them here.
+var added = []struct{ table, column, ddl string }{
+	{"jobs", "views", "TEXT NOT NULL DEFAULT '{}'"},
+	{"jobs", "sheet", "TEXT NOT NULL DEFAULT ''"},
+	{"jobs", "seed", "INTEGER NOT NULL DEFAULT 42"},
+}
+
+func addColumns(db *sql.DB) error {
+	for _, c := range added {
+		var n int
+		err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = ?`, c.table, c.column).Scan(&n)
+		if err != nil {
+			return err
+		}
+		if n == 0 {
+			if _, err := db.Exec(`ALTER TABLE ` + c.table + ` ADD COLUMN ` + c.column + ` ` + c.ddl); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func (d *DB) Close() error { return d.sql.Close() }
@@ -175,29 +261,38 @@ func (d *DB) Close() error { return d.sql.Close() }
 func (d *DB) SaveJob(ctx context.Context, j *Job) error {
 	overrides, _ := json.Marshal(j.Overrides)
 	stages, _ := json.Marshal(j.Stages)
+	views, _ := json.Marshal(j.Views)
+	sheet := ""
+	if j.Sheet != nil {
+		raw, _ := json.Marshal(j.Sheet)
+		sheet = string(raw)
+	}
 	var finished any
 	if j.FinishedAt != nil {
 		finished = j.FinishedAt.UnixMilli()
 	}
 	_, err := d.sql.ExecContext(ctx, `
-		INSERT INTO jobs (id, created_at, finished_at, status, name, preset, input, project, priority, overrides, stages, asset_id, error)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO jobs (id, created_at, finished_at, status, name, preset, input, project, priority, overrides, stages,
+			asset_id, error, views, sheet, seed)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET finished_at=excluded.finished_at, status=excluded.status,
-			stages=excluded.stages, asset_id=excluded.asset_id, error=excluded.error`,
+			stages=excluded.stages, asset_id=excluded.asset_id, error=excluded.error, views=excluded.views,
+			sheet=excluded.sheet`,
 		j.ID, j.CreatedAt.UnixMilli(), finished, j.Status, j.Name, j.Preset, j.Input, j.Project, j.Priority,
-		string(overrides), string(stages), j.AssetID, j.Error)
+		string(overrides), string(stages), j.AssetID, j.Error, string(views), sheet, j.Seed)
 	return err
 }
 
-const jobColumns = `id, created_at, finished_at, status, name, preset, input, project, priority, overrides, stages, asset_id, error`
+const jobColumns = `id, created_at, finished_at, status, name, preset, input, project, priority, overrides, stages,
+	asset_id, error, views, sheet, seed`
 
 func scanJob(row interface{ Scan(...any) error }) (*Job, error) {
 	var j Job
 	var created int64
 	var finished sql.NullInt64
-	var overrides, stages string
+	var overrides, stages, views, sheet string
 	if err := row.Scan(&j.ID, &created, &finished, &j.Status, &j.Name, &j.Preset, &j.Input, &j.Project,
-		&j.Priority, &overrides, &stages, &j.AssetID, &j.Error); err != nil {
+		&j.Priority, &overrides, &stages, &j.AssetID, &j.Error, &views, &sheet, &j.Seed); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
@@ -210,6 +305,11 @@ func scanJob(row interface{ Scan(...any) error }) (*Job, error) {
 	}
 	_ = json.Unmarshal([]byte(overrides), &j.Overrides)
 	_ = json.Unmarshal([]byte(stages), &j.Stages)
+	_ = json.Unmarshal([]byte(views), &j.Views)
+	if sheet != "" {
+		j.Sheet = &Sheet{}
+		_ = json.Unmarshal([]byte(sheet), j.Sheet)
+	}
 	return &j, nil
 }
 

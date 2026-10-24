@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from PIL import Image
 
 from forja_engine.adapters.builtin import BUILTINS
 from forja_engine.api.app import EngineConfig, create_app
@@ -131,3 +132,52 @@ def test_unknown_model_is_a_problem_document(client):
 def test_missing_artifact_is_refused(client):
     r = client.post("/v1/runs", json={"stages": [{**PIPELINE[0], "inputs": ["blake3:" + "a" * 64]}]})
     assert r.status_code == 409
+
+
+def upload_image(client, img: Image.Image, path: Path) -> str:
+    img.save(path)
+    ref = hash_file(path)
+    assert client.put(f"/v1/artifacts/{ref}", content=path.read_bytes()).status_code == 201
+    return ref
+
+
+def finished(client, body) -> dict:
+    run = client.post("/v1/runs", json=body).json()
+    evs = events(client, run["id"])
+    assert evs[-1][1]["status"] == "succeeded", evs[-1]
+    return client.get(f"/v1/runs/{run['id']}").json()
+
+
+def test_side_views_reach_the_stage_that_reads_them(client, tmp_path):
+    front = upload(client)
+    side = Image.new("RGBA", (200, 400), (0, 0, 0, 0))
+    side.paste((200, 50, 50, 255), (60, 20, 140, 380))
+    left = upload_image(client, side, tmp_path / "left.png")
+
+    def prep(suffix, ref):
+        return [
+            {"id": f"bg{suffix}", "use": "background-removal", "model": "stub-background", "inputs": [ref]},
+            {"id": f"frame{suffix}", "use": "framing", "inputs": [f"stage:bg{suffix}"]},
+        ]
+
+    shape = {"id": "shape", "use": "shape", "model": "stub-shape", "inputs": ["stage:frame"]}
+    alone = finished(client, {"stages": [*prep("", front), shape]})
+    with_side = {**shape, "inputs": ["stage:frame", "stage:frame-left"], "views": ["front", "left"]}
+    both = finished(client, {"stages": [*prep("", front), *prep("-left", left), with_side]})
+    hashes = [r["stages"]["shape"]["outputs"][0]["hash"] for r in (alone, both)]
+    assert hashes[0] != hashes[1]
+    bad = {**with_side, "views": ["front"]}
+    r = client.post("/v1/runs", json={"stages": [*prep("", front), *prep("-left", left), bad]})
+    assert r.status_code == 422
+
+
+def test_sheet_detection_runs_as_a_builtin_stage(client):
+    image = upload(client)
+    stages = [
+        {**PIPELINE[0], "inputs": [image]},
+        {"id": "sheet", "use": "views.detect", "inputs": ["stage:bg"]},
+    ]
+    out = finished(client, {"stages": stages})["stages"]["sheet"]["outputs"][0]
+    assert out["kind"] == "application/json"
+    found = json.loads(client.get(f"/v1/artifacts/{out['hash']}").content)
+    assert found["sheet"] is False and len(found["parts"]) >= 1

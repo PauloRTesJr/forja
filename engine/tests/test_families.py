@@ -25,7 +25,10 @@ FIXTURE = Path(__file__).parent / "fixtures" / "chest.png"
 
 
 def ctx(tmp_path, task, inputs, **params):
-    return StageContext("s", task, [StageInput(Path(p), k, "") for p, k in inputs], params, 7, tmp_path)
+    """inputs are (path, kind) or (path, kind, view)."""
+    return StageContext(
+        "s", task, [StageInput(Path(i[0]), i[1], "", *i[2:]) for i in inputs], params, 7, tmp_path
+    )
 
 
 def rgba_subject(tmp_path) -> Path:
@@ -198,7 +201,8 @@ def hunyuan(monkeypatch, fake_torch):
             log["offload"] += 1
 
         def __call__(self, mesh, image):
-            assert image.mode == "RGBA"
+            assert all(i.mode == "RGBA" for i in image)
+            log["images"] = len(image)
             vmap, faces, uvs = xatlas.parametrize(mesh.vertices, mesh.faces)
             mesh.vertices, mesh.faces = mesh.vertices[vmap], faces
             tex = Image.new("RGB", (self.config.texture_size,) * 2, (10, 200, 30))
@@ -247,6 +251,15 @@ def test_hunyuan_paint_writes_pbr_glb(tmp_path, hunyuan):
     assert log["renders"] == [(2048, 1024)]
 
 
+def test_hunyuan_paint_reads_every_view(tmp_path, hunyuan):
+    adapter, log = hunyuan
+    adapter.run(ctx(tmp_path, StageType.TEXTURE, paint_inputs(tmp_path)))
+    assert log["images"] == 1
+    side = (rgba_subject(tmp_path), ArtifactKind.IMAGE_PNG, "left")
+    adapter.run(ctx(tmp_path, StageType.TEXTURE, [*paint_inputs(tmp_path), side]))
+    assert log["images"] == 2
+
+
 def test_hunyuan_offloads_once_and_yaw_round_trips(tmp_path, hunyuan):
     adapter, log = hunyuan
     for _ in range(2):
@@ -271,6 +284,73 @@ def test_hunyuan_offload_at_load_builds_in_ram(tmp_path, hunyuan):
     assert {n.device for n in a.pipe.models.values()} == {"cuda"}
     a.run(ctx(tmp_path, StageType.TEXTURE, paint_inputs(tmp_path), offload=True))
     assert log["offload"] == 1  # not enabled a second time at run
+
+
+# --- Hunyuan3D-2mv -------------------------------------------------------------------------
+
+
+@pytest.fixture
+def hunyuan_mv(monkeypatch, fake_torch):
+    seen = {}
+
+    class Pipeline:
+        device = "cuda"
+
+        @classmethod
+        def from_single_file(cls, ckpt, config, device, dtype, use_safetensors):
+            seen.update(ckpt=ckpt, config=config, device=device, dtype=dtype, safetensors=use_safetensors)
+            return cls()
+
+        def __call__(self, image, num_inference_steps, generator, callback, callback_steps, **kw):
+            seen.update(views=list(image), modes={i.mode for i in image.values()}, seed=generator.seed, kw=kw)
+            for i in range(num_inference_steps):
+                callback(i, None, None)
+            return [trimesh.creation.box((1.0, 2.0, 0.5))]
+
+    install_module(monkeypatch, "hy3dgen.shapegen.pipelines", Hunyuan3DDiTFlowMatchingPipeline=Pipeline)
+    from forja_hunyuan3d2 import Hunyuan3D2MV
+
+    a = Hunyuan3D2MV()
+    a.weights_dir = Path("/w")
+    a.load(Device.CUDA)
+    return a, seen
+
+
+def test_hunyuan_mv_loads_the_pinned_files_and_reads_views_in_order(tmp_path, hunyuan_mv):
+    adapter, seen = hunyuan_mv
+    folder = Path("/w/hunyuan3d-dit-v2-mv-turbo")
+    assert seen["ckpt"] == str(folder / "model.fp16.safetensors") and seen["config"] == str(
+        folder / "config.yaml"
+    )
+    assert seen["safetensors"] and seen["dtype"] == "fp16"
+    img = rgba_subject(tmp_path)
+    steps = []
+    c = ctx(
+        tmp_path,
+        StageType.SHAPE,
+        [
+            (img, ArtifactKind.IMAGE_PNG, "back"),
+            (img, ArtifactKind.IMAGE_PNG),
+            (img, ArtifactKind.IMAGE_PNG, "left"),
+        ],
+        steps=3,
+    )
+    c.progress = lambda i, n: steps.append((i, n))
+    out = adapter.run(c)
+    assert seen["views"] == ["front", "left", "back"] and seen["modes"] == {"RGBA"} and seen["seed"] == 7
+    assert steps == [(1, 3), (2, 3), (3, 3)]
+    assert out[0].preview and mesh_ops.load(out[0].path).extents[1] == pytest.approx(2.0)
+
+
+def test_hunyuan_mv_needs_a_front_and_stops_when_cancelled(tmp_path, hunyuan_mv):
+    adapter, _ = hunyuan_mv
+    img = rgba_subject(tmp_path)
+    with pytest.raises(ValueError, match="front"):
+        adapter.run(ctx(tmp_path, StageType.SHAPE, [(img, ArtifactKind.IMAGE_PNG, "left")]))
+    c = ctx(tmp_path, StageType.SHAPE, [(img, ArtifactKind.IMAGE_PNG)], steps=2)
+    c.cancelled = lambda: True
+    with pytest.raises(Cancelled):
+        adapter.run(c)
 
 
 def test_every_manifest_mirrors_its_adapter_version():

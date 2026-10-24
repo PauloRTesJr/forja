@@ -21,7 +21,7 @@ from pydantic import BaseModel, Field, model_validator
 
 from forja_engine.registry import Registry
 from forja_engine.scheduler import BATCH, INTERACTIVE, Scheduler
-from forja_engine.sdk import ArtifactKind, StageContext, StageInput, StageType
+from forja_engine.sdk import VIEWS, ArtifactKind, StageContext, StageInput, StageType
 from forja_engine.store import PREFIX, ArtifactStore
 from forja_engine.workers import StageFailed
 
@@ -36,6 +36,19 @@ class StageSpec(BaseModel):
     params: dict[str, Any] = Field(default_factory=dict)
     # Each input is "stage:<id>" (that stage's primary output) or "blake3:<hex>".
     inputs: list[str] = Field(default_factory=list)
+    # The view each input shows ("" for none), when the stage reads several views (API 1.6).
+    views: list[str] | None = None
+
+    @model_validator(mode="after")
+    def _check_views(self) -> StageSpec:
+        if self.views is None:
+            return self
+        if len(self.views) != len(self.inputs):
+            raise ValueError(f"stage {self.id}: views must label each input")
+        for v in self.views:
+            if v and v not in VIEWS:
+                raise ValueError(f"stage {self.id}: unknown view {v!r}")
+        return self
 
 
 class RunRequest(BaseModel):
@@ -208,10 +221,14 @@ class RunManager:
         manifest = self.registry.resolve(spec.use, spec.model)
         params = {**_defaults(manifest.params if manifest else {}), **spec.params}
         out_dir = self.store.scratch_dir()
+        views = spec.views or [""] * len(refs)
         ctx = StageContext(
             stage_id=spec.id,
             task=spec.use,
-            inputs=[StageInput(self.store.path(r), _kind_of(self.store.path(r)), r) for r in refs],
+            inputs=[
+                StageInput(self.store.path(r), _kind_of(self.store.path(r)), r, v or None)
+                for r, v in zip(refs, views, strict=True)
+            ],
             params=params,
             seed=int(params.get("seed", run.req.seed)),
             out_dir=out_dir,

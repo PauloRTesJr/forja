@@ -380,7 +380,16 @@ func (e *entry) model() engineapi.Model {
 		Status: "ready", Device: &hosted, RunsOn: &hosted, Fit: "hosted", Rank: rank, Recommended: recommended,
 		Price: e.Price, Thumbnail: e.Thumbnail, AdapterVersion: "1",
 		// The endpoint id names the model version, so it keys cached results like a weight revision.
-		Weights: engineapi.Weights{Repo: "fal.ai", Revision: e.Endpoint},
+		Weights:       engineapi.Weights{Repo: "fal.ai", Revision: e.Endpoint},
+		ViewsRequired: e.ViewsRequired,
+	}
+	if e.ImageList || len(e.Views) > 0 {
+		m.Views = []string{"front"}
+		for _, v := range engineapi.Views[1:] {
+			if e.ImageList || e.Views[v] != "" {
+				m.Views = append(m.Views, v)
+			}
+		}
 	}
 	if e.Problem != "" {
 		m.Status, m.Device, m.Tasks = "unsupported", nil, []string{}
@@ -538,7 +547,8 @@ func (p *Provider) runStage(ctx context.Context, runID string, seed int, s engin
 	if e.Seed != "" {
 		body[e.Seed] = seed
 	}
-	for _, in := range s.Inputs {
+	var list []string // the front first, then the other views, for an endpoint taking a list
+	for i, in := range s.Inputs {
 		if id, ok := strings.CutPrefix(in, "stage:"); ok {
 			in = produced[id]
 		}
@@ -546,17 +556,33 @@ func (p *Provider) runStage(ctx context.Context, runID string, seed int, s engin
 		if err != nil {
 			return "", err
 		}
+		view := "front"
+		if i < len(s.Views) && s.Views[i] != "" {
+			view = s.Views[i]
+		}
 		switch {
+		case kind == "image" && e.ImageList && view == "front":
+			list = append([]string{uri}, list...)
 		case kind == "image" && e.ImageList:
-			body[e.Image] = []string{uri}
-		case kind == "image":
+			list = append(list, uri)
+		case kind == "image" && view == "front":
 			body[e.Image] = uri
+		case kind == "image" && e.Views[view] != "":
+			body[e.Views[view]] = uri
 		case kind == "mesh" && e.Mesh != "":
 			body[e.Mesh] = uri
 		}
 	}
+	if e.ImageList && len(list) > 0 {
+		body[e.Image] = list
+	}
 	if body[e.Image] == nil {
 		return "", fmt.Errorf("stage %s has no image for %s", s.ID, e.Name)
+	}
+	for _, v := range e.ViewsRequired {
+		if body[e.Views[v]] == nil {
+			return "", fmt.Errorf("%s needs the %s view; add it to the job", e.Name, v)
+		}
 	}
 	if e.Mesh != "" && body[e.Mesh] == nil {
 		return "", fmt.Errorf("stage %s has no mesh for %s", s.ID, e.Name)
