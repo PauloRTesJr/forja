@@ -50,10 +50,6 @@ function createWindow(): BrowserWindow {
   return w
 }
 
-ipcMain.handle('dialog:pickFolder', async () => {
-  const res = await dialog.showOpenDialog(win!, { properties: ['openDirectory', 'createDirectory'] })
-  return res.canceled ? null : res.filePaths[0]
-})
 ipcMain.handle('dialog:pickImages', async () => {
   const res = await dialog.showOpenDialog(win!, {
     properties: ['openFile', 'multiSelections'],

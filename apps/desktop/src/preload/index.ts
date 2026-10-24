@@ -16,7 +16,6 @@ const bridge = {
     return () => ipcRenderer.off('core:status', handler)
   },
   pathForFile: (file: File): string => webUtils.getPathForFile(file),
-  pickFolder: (): Promise<string | null> => ipcRenderer.invoke('dialog:pickFolder'),
   pickImages: (): Promise<string[]> => ipcRenderer.invoke('dialog:pickImages'),
   showItem: (path: string): Promise<void> => ipcRenderer.invoke('shell:showItem', path),
   openConfig: (): Promise<void> => ipcRenderer.invoke('settings:openConfig'),

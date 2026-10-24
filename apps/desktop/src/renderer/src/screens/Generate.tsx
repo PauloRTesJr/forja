@@ -1,9 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useEffectEvent, useRef, useState, type DragEvent } from 'react'
 import { Composer } from '../components/Composer'
-import { Corners, DropSigil, Folder } from '../components/icons'
+import { Corners, DropSigil } from '../components/icons'
 import { Confirm, isPreparing, Preparing } from '../components/Prepare'
-import { ScreenHead, SectionHead } from '../components/ScreenHead'
+import { ScreenHead } from '../components/ScreenHead'
 import { Setup } from '../components/Setup'
 import { IMAGE, ViewsCard, type Draft } from '../components/ViewsCard'
 import { api, fetchPresets, importImage, submitJobs, uploadImage, type Job, type SubmitBody } from '../lib/api'
@@ -13,7 +13,6 @@ import { transition, useNavigate } from '../lib/nav'
 import { useToast } from '../lib/toast'
 import { SIDE_VIEWS, viewReader } from '../lib/views'
 
-const PROJECT_KEY = 'forja.project'
 const OPTIONS_KEY = 'forja.options'
 // A batch shows this many images being prepared, then a count of the rest.
 const SHOWN_PREPARING = 3
@@ -29,10 +28,9 @@ function read(key: string): string | null {
   }
 }
 
-function write(key: string, value: string | null): void {
+function write(key: string, value: string): void {
   try {
-    if (value === null) localStorage.removeItem(key)
-    else localStorage.setItem(key, value)
+    localStorage.setItem(key, value)
   } catch {
     /* ignore */
   }
@@ -58,7 +56,6 @@ export function Generate() {
   // then hands them to the queue.
   const [submitted, setSubmitted] = useState<string[]>([])
   const [preset, setPreset] = useState('mobile-prop')
-  const [project, setProject] = useState(() => read(PROJECT_KEY) ?? '')
   // Switch states for optional stages, by "<preset>.<stage>".
   const [options, setOptions] = useState(storedOptions)
   const presets = useQuery({ queryKey: keys.presets, queryFn: () => fetchPresets() })
@@ -81,7 +78,6 @@ export function Generate() {
       submitJobs({
         ...body,
         preset,
-        project: project || undefined,
         priority: (body.paths?.length ?? 1) === 1 ? 'interactive' : 'batch',
         overrides: Object.fromEntries(optional.map((s) => [`${s.id}.enabled`, isOn(s.id, s.optional!.default)])),
         // An image that turns out to hold several views waits for the user, on this screen.
@@ -131,6 +127,7 @@ export function Generate() {
   }
 
   const onDrop = (e: DragEvent): void => {
+    if (draft) return
     e.preventDefault()
     setOver(false)
     if (blocked) return
@@ -171,13 +168,6 @@ export function Generate() {
     submit.mutate({ input: d.front.ref, name: d.front.path, views })
   }
 
-  const pickProject = async (): Promise<void> => {
-    const dir = await window.forja.pickFolder()
-    if (!dir) return
-    setProject(dir)
-    write(PROJECT_KEY, dir)
-  }
-
   const toggle = (stage: string, on: boolean): void => {
     const next = { ...options, [`${preset}.${stage}`]: on }
     setOptions(next)
@@ -212,87 +202,73 @@ export function Generate() {
         </div>
       )}
 
-      {draft ? (
-        <ViewsCard
-          draft={draft}
-          reader={reader}
-          busy={submit.isPending}
-          onAdd={async (view, path) => {
-            try {
-              const ref = await importImage(path)
-              setDraft((d) => d && { ...d, views: { ...d.views, [view]: { path, ref } } })
-            } catch (e) {
-              toast((e as Error).message, true)
-            }
-          }}
-          onRemove={(view) => setDraft((d) => d && { ...d, views: { ...d.views, [view]: undefined } })}
-          onGenerate={() => generate(draft)}
-          onCancel={() => transition(() => setDraft(null))}
-        />
-      ) : (
-        <div
-          className={`drop enter ${over && !blocked ? 'over' : ''} ${submit.isPending ? 'busy' : ''} ${blocked ? 'blocked' : ''}`}
-          role="button"
-          tabIndex={0}
-          aria-disabled={blocked}
-          onClick={async () => queue(blocked ? [] : await window.forja.pickImages())}
-          onKeyDown={async (e) => {
-            if (e.key !== 'Enter' && e.key !== ' ') return
-            queue(blocked ? [] : await window.forja.pickImages())
-          }}
-          onDragOver={(e) => {
-            e.preventDefault()
-            setOver(true)
-          }}
-          onDragLeave={() => setOver(false)}
-          onDrop={onDrop}
-        >
-          <span className="frame" aria-hidden />
-          <Corners />
-          <div className="drop-inner">
-            <DropSigil />
-            <strong className="drop-title">
-              {blocked ? 'Set up models to start' : submit.isPending ? 'Queuing…' : over ? 'Release to queue them' : 'Drop or paste images, or a folder of images'}
-            </strong>
-            <span className="drop-hint">
-              or click to browse · {PASTE_KEY} to paste · PNG, JPEG, WebP
-              {reader && !blocked && ' · one image lets you add its other views'}
-            </span>
-          </div>
-        </div>
-      )}
-
-      <div className="section">
-        <SectionHead>How to make it</SectionHead>
-        {presets.isPending && <div className="skeleton" style={{ height: 220 }} />}
-        {presets.error && <div className="error">{(presets.error as Error).message}</div>}
-        {presets.data && (
-          <Composer presets={presets.data} preset={preset} onPreset={setPreset} isOn={isOn} onToggle={toggle} />
-        )}
-      </div>
-
-      <div className="section">
-        <SectionHead>Export to</SectionHead>
-        <div className="row">
-          <button className="btn" onClick={pickProject}>
-            <Folder />
-            {project ? 'Change project…' : 'Choose a Unity project…'}
-          </button>
-          {project ? (
-            <>
-              <span className="mono muted">{project}</span>
-              <button
-                className="btn ghost"
-                onClick={() => {
-                  setProject('')
-                  write(PROJECT_KEY, null)
-                }}
-              >
-                Clear
-              </button>
-            </>
+      {/* One card for the whole flow: what goes in on one side, and the recipe it goes through
+          on the other. The recipe lights up while an image is on its way in, so the settings
+          read as the ones it will get. The whole card takes a drop, not only the well. */}
+      <div
+        className={`forge enter ${(over && !blocked) || submit.isPending || draft ? 'lit' : ''}`}
+        onDragOver={(e) => {
+          if (draft) return
+          e.preventDefault()
+          setOver(true)
+        }}
+        onDragLeave={(e) => {
+          if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setOver(false)
+        }}
+        onDrop={onDrop}
+      >
+        <div className="forge-input">
+          {draft ? (
+            <ViewsCard
+              draft={draft}
+              reader={reader}
+              busy={submit.isPending}
+              onAdd={async (view, path) => {
+                try {
+                  const ref = await importImage(path)
+                  setDraft((d) => d && { ...d, views: { ...d.views, [view]: { path, ref } } })
+                } catch (e) {
+                  toast((e as Error).message, true)
+                }
+              }}
+              onRemove={(view) => setDraft((d) => d && { ...d, views: { ...d.views, [view]: undefined } })}
+              onGenerate={() => generate(draft)}
+              onCancel={() => transition(() => setDraft(null))}
+            />
           ) : (
-            <span className="muted">Assets stay in the library until you pick a project.</span>
+            <div
+              className={`drop enter ${over && !blocked ? 'over' : ''} ${submit.isPending ? 'busy' : ''} ${blocked ? 'blocked' : ''}`}
+              role="button"
+              tabIndex={0}
+              aria-disabled={blocked}
+              onClick={async () => queue(blocked ? [] : await window.forja.pickImages())}
+              onKeyDown={async (e) => {
+                if (e.key !== 'Enter' && e.key !== ' ') return
+                queue(blocked ? [] : await window.forja.pickImages())
+              }}
+            >
+              <span className="frame" aria-hidden />
+              <Corners />
+              <div className="drop-inner">
+                <DropSigil />
+                <strong className="drop-title">
+                  {blocked ? 'Set up models to start' : submit.isPending ? 'Queuing…' : over ? 'Release to queue them' : 'Drop or paste images, or a folder of images'}
+                </strong>
+                <span className="drop-hint">
+                  or click to browse · {PASTE_KEY} to paste · PNG, JPEG, WebP
+                  {reader && !blocked && ' · one image lets you add its other views'}
+                </span>
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div className="forge-recipe">
+          <span className="forge-link" aria-hidden />
+          {presets.isPending && <div className="skeleton" style={{ height: 320 }} />}
+          {presets.error && <div className="error">{(presets.error as Error).message}</div>}
+          {presets.data && (
+            <Composer presets={presets.data} preset={preset} onPreset={setPreset} isOn={isOn} onToggle={toggle} />
           )}
         </div>
       </div>

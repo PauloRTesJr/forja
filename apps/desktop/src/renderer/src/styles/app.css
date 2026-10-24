@@ -648,12 +648,6 @@ h1 {
 }
 
 /* Switches for optional stages and boolean settings. */
-.options {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px 28px;
-  margin-top: 16px;
-}
 .switch {
   display: inline-flex;
   align-items: center;
@@ -2136,32 +2130,189 @@ select.input {
   width: 100%;
 }
 
-/* Composer: quality and the model of each step, below the drop zone. */
+/* Generate's one card: the image well on one side and the recipe it goes through on the other,
+   joined by a link into the recipe's rail. */
+.forge {
+  display: grid;
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1fr);
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 22px;
+  background: var(--surface);
+}
+.forge-input {
+  display: flex;
+  flex-direction: column;
+  container-type: inline-size;
+}
+.forge-input > * {
+  flex: 1;
+}
+.forge .drop {
+  min-height: 300px;
+  background: var(--bg-deep);
+}
+.forge .views-card {
+  background: var(--bg-deep);
+}
+.forge .views-actions {
+  margin-top: auto;
+}
+@container (max-width: 720px) {
+  .forge .views-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .forge .view-slot {
+    aspect-ratio: 4 / 3;
+  }
+}
+.forge-recipe {
+  position: relative;
+  min-width: 0;
+  container-type: inline-size;
+  padding: 22px 26px 20px 36px;
+}
+/* From the well's edge to the first node. */
+.forge-link,
+.forge-link::after {
+  position: absolute;
+  top: 31px;
+  left: 0;
+  width: 41px;
+  height: 1px;
+  background: var(--border);
+}
+.forge-link::after {
+  content: '';
+  top: 0;
+  background: var(--accent);
+  opacity: 0;
+  transition: opacity var(--dur-3) var(--ease-out);
+}
+.forge.lit .forge-link::after,
+.forge:has(.drop:not(.blocked):is(:hover, :focus-visible)) .forge-link::after {
+  opacity: 0.8;
+}
+
+/* The recipe: a node per step on one rail, top to bottom in the order an image goes through. */
+@property --step {
+  syntax: '<integer>';
+  inherits: true;
+  initial-value: 0;
+}
 .composer {
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  padding: 18px 20px;
-  border: 1px solid var(--border);
-  border-radius: var(--r-3);
+}
+.step {
+  --step: sibling-index();
+  --node-y: 9px;
+  position: relative;
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr);
+  align-items: start;
+  gap: 8px 14px;
+  padding-bottom: 18px;
+}
+.step.bare {
+  --node-y: 11px;
+  margin-top: -8px;
+}
+.step:last-child {
+  padding-bottom: 0;
+}
+/* Each step draws its stretch of the rail, from the first node to the last. The lit copy fades
+   in step by step, top to bottom: the image's way through the recipe. */
+.step::before,
+.step::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 9.5px;
+  width: 1px;
+  background: var(--border);
+}
+.step::after {
+  background: var(--accent);
+  opacity: 0;
+  transition: opacity var(--dur-3) var(--ease-out);
+  transition-delay: calc(var(--step) * 45ms);
+}
+.step:first-child::before,
+.step:first-child::after {
+  top: var(--node-y);
+}
+.step:last-child::before,
+.step:last-child::after {
+  bottom: auto;
+  height: var(--node-y);
+}
+.forge.lit .step::after,
+.forge:has(.drop:not(.blocked):is(:hover, :focus-visible)) .step::after {
+  opacity: 0.8;
+}
+.step-node {
+  position: absolute;
+  top: calc(var(--node-y) - 5px);
+  left: 5px;
+  z-index: 1;
+  width: 10px;
+  height: 10px;
+  border: 1px solid var(--gold-dim);
+  border-radius: 50%;
   background: var(--surface);
 }
-.composer-row {
-  display: grid;
-  grid-template-columns: 170px 1fr;
-  align-items: center;
-  gap: 16px;
+.step-node::before,
+.step-node::after {
+  content: '';
+  position: absolute;
+  inset: 2px;
+  border-radius: inherit;
+  background: var(--gold-dim);
 }
-.composer-label {
+.step-node::after {
+  inset: 1px;
+  background: var(--accent-hi);
+  box-shadow: 0 0 10px 2px rgb(230 197 143 / 0.5);
+  opacity: 0;
+  transform: scale(0.4);
+  transition:
+    opacity var(--dur-3) var(--ease-out),
+    transform var(--dur-3) var(--ease-spring);
+  transition-delay: calc(var(--step) * 45ms);
+}
+.forge.lit .step[data-node='on'] .step-node::after,
+.forge:has(.drop:not(.blocked):is(:hover, :focus-visible)) .step[data-node='on'] .step-node::after {
+  opacity: 1;
+  transform: none;
+}
+/* An optional step that will not run: an empty node. */
+.step[data-node='off'] .step-node {
+  border-color: var(--border);
+}
+.step[data-node='off'] .step-node::before {
+  opacity: 0;
+}
+.step-label {
+  grid-column: 2;
   font-family: var(--display);
   font-size: 11.5px;
   font-weight: 600;
+  line-height: 18px;
   letter-spacing: 0.16em;
   text-transform: uppercase;
   color: var(--text-3);
 }
+.step-body {
+  grid-column: 2;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
 .composer-note {
-  margin: -4px 0 4px 186px;
+  margin: 0;
   color: var(--text-2);
   font-size: 15px;
 }
@@ -2174,25 +2325,27 @@ select.input {
   font-size: 15px;
   font-style: italic;
 }
-.composer .options {
-  margin: 4px 0 0 186px;
-}
 .composer-cost {
-  margin: 4px 0 0 186px;
+  margin: 18px 0 0 34px;
   color: var(--warn);
   font-size: 14.5px;
 }
 .quality {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
 }
+@container (min-width: 860px) {
+  .quality {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
 .quality-option {
-  display: inline-flex;
+  display: flex;
   align-items: center;
   gap: 8px;
-  height: 42px;
-  padding: 0 14px 0 8px;
+  min-height: 42px;
+  padding: 4px 12px 4px 8px;
   border: 1px solid var(--border);
   border-radius: var(--r-2);
   background: var(--bg-deep);
@@ -2200,7 +2353,9 @@ select.input {
   font-family: var(--display);
   font-size: 12.5px;
   font-weight: 600;
+  line-height: 1.25;
   letter-spacing: 0.08em;
+  text-align: left;
   text-transform: uppercase;
   cursor: pointer;
   transition: transform var(--dur-1) var(--ease-out);
@@ -2218,6 +2373,7 @@ select.input {
 }
 .quality-emblem {
   display: grid;
+  flex: none;
   place-items: center;
   width: 28px;
   height: 28px;
@@ -2230,15 +2386,28 @@ select.input {
 .quality-option[aria-checked='true'] .quality-emblem {
   color: var(--accent-hi);
 }
-@media (max-width: 900px) {
-  .composer-row {
-    grid-template-columns: 1fr;
-    gap: 6px;
+@media (prefers-reduced-motion: reduce) {
+  .step::after,
+  .step-node::after {
+    transition-delay: 0s;
   }
-  .composer-note,
-  .composer .options,
-  .composer-cost {
-    margin-left: 0;
+}
+/* Narrow windows stack the well over the recipe, and the link becomes the top of the rail. */
+@media (max-width: 1280px) {
+  .forge {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .forge-recipe {
+    padding: 30px 22px 18px;
+  }
+  .forge-link,
+  .forge-link::after {
+    left: 31.5px;
+    width: 1px;
+    height: 34px;
+  }
+  .forge-link {
+    top: 0;
   }
 }
 
