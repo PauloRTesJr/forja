@@ -1,6 +1,7 @@
 .DEFAULT_GOAL := help
 SHELL := /bin/bash
-VERSION ?= 0.1.0-dev
+# One version for the app, the core and the engine; `make version V=X.Y.Z` changes it.
+VERSION ?= $(shell cat VERSION)
 EXE := $(if $(filter Windows_NT,$(OS)),.exe)
 
 help: ## List targets
@@ -36,4 +37,8 @@ check: ## Lint, type-check and test everything (what CI runs)
 	cd core && gofmt -l . | (! grep .) && go vet ./... && go test $$([ "$$(go env CGO_ENABLED)" = 1 ] && echo -race) ./...
 	cd apps/desktop && pnpm lint && pnpm typecheck && pnpm test
 
+version: ## Print the version; `make version V=X.Y.Z` writes it into the app, the core and the engine
+	@if [ -z "$(V)" ]; then cat VERSION; else uv run --no-project python scripts/version.py "$(V)" && cd engine && uv lock --quiet; fi
+
+.PHONY: version
 .PHONY: help setup core core-all engine desktop test check

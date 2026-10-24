@@ -7,7 +7,7 @@ import (
 	"forja/internal/cli"
 )
 
-// version is set at build time: -ldflags "-X main.version=1.2.3".
-var version = "0.1.0-dev"
+// version is set at build time from the repository's VERSION file (`make core`).
+var version = "dev"
 
 func main() { os.Exit(cli.Execute(version)) }
