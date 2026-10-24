@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from forja_sdk import artifacts, conformance
-from forja_sdk.types import VIEWS, StageInput
+from forja_sdk.types import VIEWS, Device, StageInput, StageType
 
 
 def _value(raw: str) -> Any:
@@ -28,7 +28,10 @@ def _inputs(specs: list[str]) -> list[StageInput]:
         p = Path(path)
         if not p.is_file():
             raise SystemExit(f"--input {spec}: no such file")
-        out.append(StageInput(p, artifacts.kind_for(p), "", view or None))
+        try:
+            out.append(StageInput(p, artifacts.kind_for(p), "", view or None))
+        except ValueError as e:
+            raise SystemExit(f"--input {e}") from e
     return out
 
 
@@ -37,8 +40,16 @@ def main(argv: list[str] | None = None) -> None:
     sub = parser.add_subparsers(dest="cmd", required=True)
     test = sub.add_parser("test", help="run the conformance suite on an adapter")
     test.add_argument("target", help="module:Class, or a model manifest (.yaml) that names its adapter")
-    test.add_argument("--task", help="the stage type to test (default: every one the adapter serves)")
-    test.add_argument("--device", help="cpu, cuda, mps or rocm (default: cpu when the adapter runs there)")
+    test.add_argument(
+        "--task",
+        choices=[str(t) for t in StageType],
+        help="the stage type to test (default: every one the adapter serves)",
+    )
+    test.add_argument(
+        "--device",
+        choices=[str(d) for d in Device],
+        help="where to run it (default: cpu when the adapter runs there, else its first device)",
+    )
     test.add_argument("--dtype", default="fp16")
     test.add_argument(
         "--input", action="append", default=[], metavar="PATH[=VIEW]", help="an input file instead of samples"
