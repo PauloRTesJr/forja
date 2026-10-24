@@ -13,7 +13,9 @@ license: { spdx: MIT, commercial: true, url: "https://github.com/ZhengPeng7/BiRe
 vram_gb: 8
 requirements:
   cuda: { status: supported }
-  mps: { status: supported }
+  # ONNX Runtime has no Metal provider, and its CoreML provider hung compiling this graph
+  # (ORT 1.31, macOS 26); a Mac runs it on the CPU, about 6 s for a 1024x1024 pass.
+  mps: { status: unsupported }
   cpu: { status: supported }
 weights:
   hub: huggingface

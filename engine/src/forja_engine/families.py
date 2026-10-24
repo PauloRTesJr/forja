@@ -51,17 +51,36 @@ class Family:
     upstream: Upstream | None = None
     # Installed with --no-build-isolation after the requirements, in order, because they
     # compile against the torch already in the environment. "{upstream}" expands to the
-    # extracted source folder.
-    build: tuple[str, ...] = ()
+    # extracted source folder. Per lane: a lane may install only the models that need no
+    # compiled extension (Hunyuan3D-2's shape model on an Apple GPU, without the rasterizer).
+    build_by_lane: dict[str, tuple[str, ...]] = field(default_factory=dict)
     env: dict[str, str] = field(default_factory=dict)
     # uv --torch-backend per lane (e.g. cuda: cu124), so torch comes from PyTorch's index
     # on every OS while everything else resolves from PyPI.
     torch_backend: dict[str, str] = field(default_factory=dict)
-    # Imports that prove the upstream code and its compiled extensions load.
-    smoke: str = ""
+    # Per lane: imports that prove the upstream code and its compiled extensions load.
+    smoke_by_lane: dict[str, str] = field(default_factory=dict)
 
     def requirements(self, lane: str) -> Path:
         return self.root / "requirements" / f"{lane}.txt"
+
+    def builds(self, lane: str) -> tuple[str, ...]:
+        return self.build_by_lane.get(lane, ())
+
+    def smoke(self, lane: str) -> str:
+        return self.smoke_by_lane.get(lane, "")
+
+
+def _per_lane(raw: Any, lanes: tuple[str, ...], source: Path, key: str) -> dict[str, Any]:
+    """A family.yaml value that is either the same on every lane or a mapping of lane to value."""
+    if not isinstance(raw, dict):
+        return dict.fromkeys(lanes, raw)
+    unknown = set(raw) - set(lanes)
+    if unknown:
+        raise ValueError(
+            f"{source}: {key} names lanes the family does not have: {', '.join(sorted(unknown))}"
+        )
+    return dict(raw)
 
 
 def load(name: str) -> Family:
@@ -83,10 +102,16 @@ def load(name: str) -> Family:
         upstream=Upstream(up["url"], up["sha256"], up["license"], tuple(up.get("pythonpath", ["."])))
         if up
         else None,
-        build=tuple(doc.get("build", [])),
+        build_by_lane={
+            lane: tuple(v or ())
+            for lane, v in _per_lane(doc.get("build", []), lanes, spec_path, "build").items()
+        },
         env={k: str(v) for k, v in (doc.get("env") or {}).items()},
         torch_backend={k: str(v) for k, v in (doc.get("torch_backend") or {}).items()},
-        smoke=str(doc.get("smoke", "")),
+        smoke_by_lane={
+            lane: str(v or "")
+            for lane, v in _per_lane(doc.get("smoke", ""), lanes, spec_path, "smoke").items()
+        },
     )
 
 

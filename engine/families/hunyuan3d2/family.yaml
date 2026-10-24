@@ -3,7 +3,9 @@
 # committed here.
 name: hunyuan3d2
 python: "3.11"
-lanes: [cuda]
+# mps installs the 2mv shape model only: its pipeline is plain torch (scaled dot-product
+# attention, scikit-image marching cubes), while Paint needs the CUDA rasterizer below.
+lanes: [cuda, mps]
 torch_backend: { cuda: cu124 }
 upstream:
   url: https://codeload.github.com/Tencent-Hunyuan/Hunyuan3D-2/tar.gz/f8db63096c8282cb27354314d896feba5ba6ff8a
@@ -13,6 +15,8 @@ upstream:
 # The rasterizer is a CUDA extension: needs nvcc (CUDA toolkit 12.x) and a C++ compiler.
 # The mesh inpainting helper has a pure-Python fallback, so its C++ build is skipped.
 build:
-  - "{upstream}/hy3dgen/texgen/custom_rasterizer"
+  cuda: ["{upstream}/hy3dgen/texgen/custom_rasterizer"]
 # torch first: on Windows the compiled rasterizer finds torch's DLLs only once torch is loaded.
-smoke: "import torch, custom_rasterizer, hy3dgen.texgen, hy3dgen.shapegen"
+smoke:
+  cuda: "import torch, custom_rasterizer, hy3dgen.texgen, hy3dgen.shapegen"
+  mps: "import torch, hy3dgen.shapegen"

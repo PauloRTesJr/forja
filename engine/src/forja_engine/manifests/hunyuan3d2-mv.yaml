@@ -18,7 +18,9 @@ license:
 vram_gb: 6
 requirements:
   cuda: { status: supported, min_vram_gb: 6 }
-  mps: { status: unsupported }
+  # Upstream supports macOS and its shape pipeline is plain torch; experimental until the
+  # Apple Silicon workflow has run it on a Mac. fp16: bf16 needs macOS 14 on MPS.
+  mps: { status: experimental, min_vram_gb: 6, dtypes: [fp16] }
   cpu: { status: unsupported }
 weights:
   hub: huggingface

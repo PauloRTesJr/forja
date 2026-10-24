@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import ctypes
 import importlib.util
 import platform
 import shutil
 import subprocess
 import sys
 from dataclasses import asdict, dataclass, field
+from functools import cache
 from pathlib import Path
 
 import psutil
@@ -44,16 +46,23 @@ def detect(store_root: Path) -> SystemReport:
     # so GPUs are found through vendor tools first and torch only as a fallback.
     devices = _nvidia_devices() or _apple_devices() or _torch_devices()
     mem = psutil.virtual_memory()
-    devices.append(DeviceInfo("cpu", Device.CPU, platform.processor() or platform.machine(), mem.total))
+    chip = _sysctl("machdep.cpu.brand_string") if sys.platform == "darwin" else None
+    devices.append(
+        DeviceInfo("cpu", Device.CPU, chip or platform.processor() or platform.machine(), mem.total)
+    )
     return SystemReport(
         os=platform.system().lower(),
         arch=platform.machine().lower(),
         devices=devices,
         ram_total_bytes=mem.total,
         ram_free_bytes=mem.available,
-        disk_free_bytes=shutil.disk_usage(store_root).free,
+        disk_free_bytes=_disk_free(store_root),
         onnx_providers=_onnx_providers(),
     )
+
+
+def _disk_free(root: Path) -> int:
+    return shutil.disk_usage(root).free
 
 
 _NVIDIA_QUERY = "index,name,memory.total,driver_version,compute_cap"
@@ -96,11 +105,67 @@ def _nvidia_devices() -> list[DeviceInfo]:
     return parse_nvidia_smi(out)
 
 
+def apple_gpu(chip: str | None, ram_total: int, working_set: int | None, macos: str | None) -> DeviceInfo:
+    """The Apple GPU of a Mac with `ram_total` bytes of unified memory.
+
+    The GPU has no memory of its own, so its budget is Metal's recommended working set: what
+    Metal lets the GPU keep resident while leaving the rest of RAM to macOS and applications.
+    Without Metal's answer, the budget is two thirds of RAM: what Metal recommends on Macs up
+    to 32 GB, and less than it recommends on larger ones.
+    """
+    budget = working_set if working_set and 0 < working_set <= ram_total else ram_total * 2 // 3
+    name = f"{chip} GPU" if chip else "Apple GPU"
+    # Metal ships with macOS, and MPS coverage (bf16 from macOS 14) follows its version.
+    return DeviceInfo("mps", Device.MPS, name, budget, driver=f"macOS {macos}" if macos else None)
+
+
+def translated() -> bool:
+    """True when this process is an Intel build running under Rosetta on Apple Silicon."""
+    return sys.platform == "darwin" and _sysctl("sysctl.proc_translated") == "1"
+
+
+@cache
+def _sysctl(name: str) -> str | None:
+    try:
+        out = subprocess.run(["sysctl", "-n", name], capture_output=True, text=True, timeout=5, check=True)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return out.stdout.strip() or None
+
+
+@cache
+def _metal_working_set() -> int | None:
+    """MTLDevice.recommendedMaxWorkingSetSize, read through the Objective-C runtime (no extra
+    dependency); None where Metal cannot answer."""
+    try:
+        # A process gets a default Metal device only once Core Graphics is loaded.
+        ctypes.CDLL("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics")
+        metal = ctypes.CDLL("/System/Library/Frameworks/Metal.framework/Metal")
+        objc = ctypes.CDLL("/usr/lib/libobjc.A.dylib")
+        metal.MTLCreateSystemDefaultDevice.restype = ctypes.c_void_p
+        objc.sel_registerName.restype = ctypes.c_void_p
+        objc.sel_registerName.argtypes = [ctypes.c_char_p]
+        device = metal.MTLCreateSystemDefaultDevice()
+        if not device:
+            return None
+        # objc_msgSend must be called through a prototype of the method's exact signature.
+        send = ctypes.CFUNCTYPE(ctypes.c_uint64, ctypes.c_void_p, ctypes.c_void_p)(("objc_msgSend", objc))
+        return int(send(device, objc.sel_registerName(b"recommendedMaxWorkingSetSize"))) or None
+    except (OSError, AttributeError, ValueError):
+        return None
+
+
 def _apple_devices() -> list[DeviceInfo]:
     if sys.platform != "darwin" or platform.machine() != "arm64":
         return []
-    # Unified memory: report the recommended working set (about two thirds of RAM) as the budget.
-    return [DeviceInfo("mps", Device.MPS, "Apple GPU", psutil.virtual_memory().total * 2 // 3)]
+    return [
+        apple_gpu(
+            _sysctl("machdep.cpu.brand_string"),
+            psutil.virtual_memory().total,
+            _metal_working_set(),
+            platform.mac_ver()[0] or None,
+        )
+    ]
 
 
 def _torch_devices() -> list[DeviceInfo]:
@@ -125,8 +190,15 @@ def _torch_devices() -> list[DeviceInfo]:
                 )
             )
     elif getattr(torch.backends, "mps", None) and torch.backends.mps.is_available():
-        # Apple Silicon shares memory; report the recommended working set as the budget.
-        found.append(DeviceInfo("mps", Device.MPS, "Apple GPU", psutil.virtual_memory().total * 2 // 3))
+        recommended = getattr(getattr(torch, "mps", None), "recommended_max_memory", None)
+        found.append(
+            apple_gpu(
+                _sysctl("machdep.cpu.brand_string"),
+                psutil.virtual_memory().total,
+                int(recommended()) if recommended else None,
+                platform.mac_ver()[0] or None,
+            )
+        )
     return found
 
 

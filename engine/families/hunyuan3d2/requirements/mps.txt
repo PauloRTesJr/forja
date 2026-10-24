@@ -1,0 +1,12 @@
+# The 2mv shape model on an Apple GPU: PyPI's macOS arm64 torch wheels carry MPS, so no
+# --torch-backend. Paint's packages and build tools are left out: it needs CUDA.
+torch==2.5.1
+torchvision==0.20.1
+diffusers==0.32.2
+transformers==4.48.3
+einops
+opencv-python-headless
+# Marching cubes, and the mesh helpers hy3dgen.shapegen imports with the package.
+scikit-image
+pymeshlab
+tqdm

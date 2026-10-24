@@ -1,1 +1,3 @@
+# PyPI's macOS arm64 wheels carry the CoreML and CPU providers; a Mac runs BiRefNet on the CPU
+# (the manifests say why).
 onnxruntime>=1.21

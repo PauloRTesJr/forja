@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from forja_engine import families, toolchain
+from forja_engine import devices, families, toolchain
 from forja_engine.registry import Manifest
 
 GB = 1 << 30
@@ -112,14 +112,33 @@ def driver_version() -> str | None:
 
 
 def check_runs_here(m: Manifest, fam: families.Family | None, lane: str) -> Check | None:
-    if fam is None or lane in fam.lanes:
+    if fam is None or (lane in fam.lanes and m.runs_on_lane(lane)):
         return None
+    lanes = [x for x in fam.lanes if m.runs_on_lane(x)] or list(fam.lanes)
+    if devices.translated() and "mps" in lanes:
+        # An Intel build under Rosetta sees no Apple GPU, though the Mac has one.
+        return Check(
+            id=f"runs-here:{m.id}",
+            label=f"{m.name} on this computer",
+            ok=False,
+            found="an Intel build of the engine, running under Rosetta",
+            need="the Apple Silicon build",
+            why=f"{m.name} runs on the Apple GPU, which only an Apple Silicon build can use.",
+            fix=Fix(
+                label="Install the Apple Silicon build",
+                steps=(
+                    "Install Forja for Apple Silicon (the arm64 DMG) in place of this copy.",
+                    "If uv came from an Intel Homebrew (in /usr/local), install uv for Apple Silicon too.",
+                ),
+            ),
+            models=(m.id,),
+        )
     return Check(
         id=f"runs-here:{m.id}",
         label=f"{m.name} on this computer",
         ok=False,
         found=lane_label(lane),
-        need=" or ".join(lane_label(x) for x in fam.lanes),
+        need=" or ".join(lane_label(x) for x in lanes),
         why=f"{m.name} has no build for this computer's hardware.",
         fix=Fix(
             label="Run it on another computer",
@@ -341,7 +360,7 @@ def for_models(manifests: list[Manifest], models_dir: Path, lane: str | None = N
     if lane == "cuda":
         on_cuda = [m for m in here if m.id in cuda] or here
         out.append(check_driver(on_cuda, cuda or {"": "cu124"}))
-    builders = [m for m in here if m.id in cuda and fams[m.family].build]
+    builders = [m for m in here if m.id in cuda and fams[m.family].builds(lane)]
     if builders:
         want = max(toolchain.torch_cuda(cuda[m.id]) for m in builders)
         out.append(check_cuda(builders, want))

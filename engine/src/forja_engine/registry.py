@@ -81,6 +81,17 @@ class Manifest:
     def vram_bytes(self) -> int:
         return int(self.vram_gb * (1 << 30))
 
+    def supports(self, backend: str) -> bool:
+        """Whether the model runs on a device of this backend ("cuda", "mps", "rocm", "cpu")."""
+        spec = self.requirements.get(backend) or {}
+        status = spec.get("status", "supported" if backend in self.requirements else None)
+        return status in ("supported", "experimental")
+
+    def runs_on_lane(self, lane: str) -> bool:
+        """Whether a machine of this torch lane can run the model: on its GPU, or on its CPU,
+        which every machine has."""
+        return self.supports(lane) or self.supports("cpu")
+
     def to_json(self) -> dict[str, Any]:
         return {
             "id": self.id,
