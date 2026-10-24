@@ -3,6 +3,7 @@ SHELL := /bin/bash
 # One version for the app, the core and the engine; `make version V=X.Y.Z` changes it.
 VERSION ?= $(shell cat VERSION)
 EXE := $(if $(filter Windows_NT,$(OS)),.exe)
+GIT_CLIFF := 2.14.2
 
 help: ## List targets
 	@grep -E '^[a-z-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-14s %s\n", $$1, $$2}'
@@ -51,8 +52,15 @@ licenses: ## Fail on strong copyleft in what ships: the core's Go modules, the e
 version: ## Print the version; `make version V=X.Y.Z` writes it into the app, the core and the engine
 	@if [ -z "$(V)" ]; then cat VERSION; else uv run --no-project python scripts/version.py "$(V)" && cd engine && uv lock --quiet; fi
 
+changelog: ## Regenerate CHANGELOG.md from the Conventional Commits (cliff.toml)
+	uv tool run --from git-cliff==$(GIT_CLIFF) git-cliff --output CHANGELOG.md
+
+notes: ## Print the newest tag's release notes; a stable release also lists its release candidates' changes
+	@uv tool run --from git-cliff==$(GIT_CLIFF) git-cliff --latest --strip all \
+		$(if $(findstring -,$(VERSION)),,--ignore-tags 'v.*-(alpha|beta|rc)\.')
+
 dist: core ## Build this OS's desktop installers into apps/desktop/release (unsigned without a certificate)
 	cd apps/desktop && pnpm build && pnpm exec electron-builder --publish never
 
-.PHONY: integration licenses version dist
+.PHONY: integration licenses version changelog notes dist
 .PHONY: help setup core core-all engine desktop test check
