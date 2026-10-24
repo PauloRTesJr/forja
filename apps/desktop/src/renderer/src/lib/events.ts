@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import type { QueryClient } from '@tanstack/react-query'
 import { taskDone, type Asset, type InstallTask, type Job } from './api'
 import { applyProgress, upsertJob } from './jobs'
+import { withoutAsset } from './selection'
 
 export const keys = {
   jobs: ['jobs'] as const,
@@ -22,6 +23,7 @@ export const keys = {
   share: ['share'] as const,
   spend: ['spend'] as const,
   catalog: (provider: string, q: string) => ['catalog', provider, q] as const,
+  exportFormats: ['exportFormats'] as const,
 }
 
 /** Keeps the newest state of each task, newest task first. */
@@ -60,6 +62,13 @@ export function useCoreEvents(qc: QueryClient): boolean {
           void qc.invalidateQueries({ queryKey: ['assets'] })
           break
         }
+        case 'asset.deleted': {
+          const d = ev.data as { id: string; job: string }
+          qc.setQueriesData<Asset[]>({ queryKey: ['assets'] }, (list) => withoutAsset(list, d.id))
+          qc.setQueryData<Job[]>(keys.jobs, (list) => list?.filter((j) => j.id !== d.job))
+          qc.removeQueries({ queryKey: keys.asset(d.id), exact: true })
+          break
+        }
         case 'models.changed':
           void qc.invalidateQueries({ queryKey: keys.models })
           void qc.invalidateQueries({ queryKey: keys.presets })
@@ -73,6 +82,7 @@ export function useCoreEvents(qc: QueryClient): boolean {
           void qc.invalidateQueries({ queryKey: keys.info })
           break
         case 'settings.changed':
+          void qc.invalidateQueries({ queryKey: keys.exportFormats })
           void qc.invalidateQueries({ queryKey: keys.settings })
           void qc.invalidateQueries({ queryKey: keys.config })
           void qc.invalidateQueries({ queryKey: keys.presets })

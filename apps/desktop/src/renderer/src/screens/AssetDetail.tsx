@@ -1,11 +1,15 @@
-import { useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
-import { ArrowLeft, Folder } from '../components/icons'
+import { ConfirmDelete } from '../components/ConfirmDelete'
+import { Empty } from '../components/Empty'
+import { ExportMenu } from '../components/ExportMenu'
+import { ArrowLeft, Cube, Folder, Trash } from '../components/icons'
 import { SectionHead } from '../components/ScreenHead'
-import { api, artifactURL, type Asset, type Job } from '../lib/api'
+import { api, ApiError, artifactURL, deleteAsset, openInBlender, type Asset, type Job } from '../lib/api'
 import { keys } from '../lib/events'
 import { count, relative, seconds, stageLabel } from '../lib/format'
 import { transition, useNavigate } from '../lib/nav'
+import { useToast } from '../lib/toast'
 import type { MeshStats } from '../viewer/scene'
 import { ViewerView } from '../viewer/ViewerView'
 
@@ -18,25 +22,73 @@ export function AssetDetail({ id }: { id: string }) {
     enabled: !!asset.data,
   })
   const [stats, setStats] = useState<MeshStats | null>(null)
+  const [confirming, setConfirming] = useState(false)
+  const toast = useToast()
   const a = asset.data
+  const back = (): void => transition(() => navigate({ screen: 'library' }))
+  const blender = useMutation({
+    mutationFn: () => openInBlender(id),
+    onSuccess: (b) => toast(`Opening in Blender ${b.version}…`),
+    onError: (e: Error) => toast(e.message, true),
+  })
+  const remove = useMutation({
+    mutationFn: () => deleteAsset(id),
+    onSuccess: back,
+    onError: (e: Error) => toast(e.message, true),
+  })
+
+  // Deleted from elsewhere (the command line, another window): say so. Deleted from here, the
+  // screen is already on its way back to the library.
+  if (asset.error instanceof ApiError && asset.error.status === 404 && remove.isIdle) {
+    return (
+      <div className="screen">
+        <button className="back" onClick={back}>
+          <ArrowLeft />
+          Library
+        </button>
+        <Empty title="This asset was deleted">It left the library; anything exported from it stays where it was saved.</Empty>
+      </div>
+    )
+  }
 
   return (
     <div className="screen" style={{ display: 'flex', flexDirection: 'column' }}>
       <div className="screen-head">
         <div className="screen-title">
-          <button className="back" onClick={() => transition(() => navigate({ screen: 'library' }))}>
+          <button className="back" onClick={back}>
             <ArrowLeft />
             Library
           </button>
           <h1>{a?.name ?? ' '}</h1>
         </div>
-        {a?.export_path && (
-          <button className="btn" onClick={() => window.forja.showItem(a.export_path!)}>
-            <Folder />
-            Show in folder
+        <div className="row head-actions">
+          {a?.export_path && (
+            <button className="btn ghost" onClick={() => window.forja.showItem(a.export_path!)}>
+              <Folder />
+              Show in folder
+            </button>
+          )}
+          <button className="btn" onClick={() => blender.mutate()} disabled={!a || blender.isPending}>
+            <Cube />
+            Open in Blender
           </button>
-        )}
+          <ExportMenu assets={a ? [a] : []} />
+          <button className="btn danger" onClick={() => setConfirming(true)} disabled={!a || remove.isPending}>
+            <Trash />
+            Delete
+          </button>
+        </div>
       </div>
+      {confirming && a && (
+        <ConfirmDelete
+          names={[a.name]}
+          onConfirm={() => {
+            setConfirming(false)
+            remove.mutate()
+          }}
+          onClose={() => setConfirming(false)}
+        />
+      )}
       <div className="detail">
         <ViewerView url={a ? artifactURL(a.glb) : undefined} onStats={setStats} />
         <aside className="panel">

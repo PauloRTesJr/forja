@@ -27,6 +27,9 @@ func Defaults() map[string]any {
 		"models": map[string]any{
 			"stubs": false,
 		},
+		"blender": map[string]any{
+			"path": "",
+		},
 		"project": map[string]any{
 			"export_dir":     "Assets/Generated",
 			"default_preset": "mobile-prop",

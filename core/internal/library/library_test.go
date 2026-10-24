@@ -64,3 +64,48 @@ func TestOldLibrariesGainTheNewColumnsAndWaitingJobsSurviveRestarts(t *testing.T
 	}
 	again.Close()
 }
+
+func TestDeletingAnAssetRemovesTheJobThatMadeItAndNothingElse(t *testing.T) {
+	db, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ctx := context.Background()
+	for _, id := range []string{"j1", "j2"} {
+		if err := db.SaveJob(ctx, &Job{ID: id, Name: "chest", Preset: "draft", Input: "blake3:aa", Status: Succeeded,
+			CreatedAt: time.Now(), AssetID: "a" + id[1:]}); err != nil {
+			t.Fatal(err)
+		}
+		if err := db.SaveAsset(ctx, &Asset{ID: "a" + id[1:], JobID: id, Name: "chest", Preset: "draft", GLB: "blake3:bb",
+			CreatedAt: time.Now()}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := db.CachePut(ctx, "key", []Output{{Hash: "blake3:bb", Kind: "mesh/glb"}}, 1); err != nil {
+		t.Fatal(err)
+	}
+	gone, err := db.DeleteAsset(ctx, "a1")
+	if err != nil || gone.JobID != "j1" {
+		t.Fatalf("deleted %+v, %v", gone, err)
+	}
+	if _, err := db.Asset(ctx, "a1"); err != ErrNotFound {
+		t.Fatalf("the asset is still there: %v", err)
+	}
+	if _, err := db.Job(ctx, "j1"); err != ErrNotFound {
+		t.Fatalf("its job is still there: %v", err)
+	}
+	if _, err := db.Asset(ctx, "a2"); err != nil {
+		t.Fatalf("another asset went too: %v", err)
+	}
+	if _, err := db.Job(ctx, "j2"); err != nil {
+		t.Fatalf("another job went too: %v", err)
+	}
+	// The same GLB was cached; another job with the same inputs reuses it.
+	if outs, ok, err := db.CacheGet(ctx, "key"); err != nil || !ok || outs[0].Hash != "blake3:bb" {
+		t.Fatalf("the stage cache lost %v (%v, %v)", outs, ok, err)
+	}
+	if _, err := db.DeleteAsset(ctx, "a1"); err != ErrNotFound {
+		t.Fatalf("deleting it twice: %v", err)
+	}
+}

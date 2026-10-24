@@ -28,6 +28,7 @@ type Config struct {
 	Providers []Provider                `toml:"providers" json:"providers"`
 	Project   Project                   `toml:"project" json:"project"`
 	Models    Models                    `toml:"models" json:"models"`
+	Blender   Blender                   `toml:"blender" json:"blender"`
 	Presets   map[string]PresetOverride `toml:"presets" json:"presets"`
 }
 
@@ -97,6 +98,12 @@ type Models struct {
 	Stages map[string]string `toml:"stages" json:"stages"`
 	// Stubs lets the deterministic stub models be picked: tests, CI, UI work without a GPU.
 	Stubs bool `toml:"stubs" json:"stubs"`
+}
+
+// Blender converts exported assets to formats other than GLB, and opens them for editing.
+type Blender struct {
+	// Path is Blender's executable; empty means look for it where installers put it.
+	Path string `toml:"path" json:"path"`
 }
 
 // PresetOverride maps "stage.param" to a value, e.g. "lowpoly.target_tris" = 3000.

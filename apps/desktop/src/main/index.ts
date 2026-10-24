@@ -61,6 +61,15 @@ ipcMain.handle('dialog:pickImages', async () => {
   })
   return res.canceled ? [] : res.filePaths
 })
+ipcMain.handle('dialog:saveFile', async (_e, name: string, ext: string, label: string) => {
+  const extension = String(ext).replace(/^\./, '')
+  const res = await dialog.showSaveDialog(win!, {
+    defaultPath: `${String(name)}.${extension}`,
+    filters: [{ name: String(label), extensions: [extension] }],
+    properties: ['createDirectory', 'showOverwriteConfirmation'],
+  })
+  return res.canceled || !res.filePath ? null : res.filePath
+})
 ipcMain.handle('shell:showItem', (_e, path: string) => shell.showItemInFolder(path))
 
 // The renderer never names a path to open: these ask the core where its files are.

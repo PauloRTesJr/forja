@@ -345,3 +345,30 @@ export function TaskSigil({ task }: { task: string | undefined }) {
   if (task?.startsWith('texture')) return <Brush />
   return <Eye />
 }
+
+export const Check = (p: IconProps) => (
+  <Line size={14} width={2.2} {...p}>
+    <path d="M5 12.5l4.5 4.5L19 7.5" />
+  </Line>
+)
+
+export const Trash = (p: IconProps) => (
+  <Line size={17} width={1.5} {...p}>
+    <path d="M4 6.5h16M9.5 6.5V4.5h5v2M6.5 6.5l1 13h9l1-13M10.5 10.5v6M13.5 10.5v6" />
+  </Line>
+)
+
+/** An arrow leaving a tray: files written out of the library. */
+export const ExportArrow = (p: IconProps) => (
+  <Line size={17} width={1.5} {...p}>
+    <path d="M12 15V3.5M7.5 8L12 3.5 16.5 8M4.5 13.5v5a1.5 1.5 0 0 0 1.5 1.5h12a1.5 1.5 0 0 0 1.5-1.5v-5" />
+  </Line>
+)
+
+/** A cube on its corner: a 3D file opened in another program. */
+export const Cube = (p: IconProps) => (
+  <Line size={17} width={1.5} {...p}>
+    <path d="M12 3l8 4.5v9L12 21l-8-4.5v-9z" />
+    <path d="M4 7.5l8 4.5 8-4.5M12 12v9" />
+  </Line>
+)

@@ -1,7 +1,9 @@
-// Package export writes finished assets into a project folder (a Unity project's Assets/).
+// Package export writes finished assets into a project folder (a Unity project's Assets/),
+// and to files in other formats, which Blender converts.
 package export
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -64,6 +66,116 @@ func ToProject(root, exportDir, name, glbPath string, sidecar Sidecar) (string, 
 		return "", err
 	}
 	return dst, nil
+}
+
+// Item is one asset to export: its id, the name to give its files, and its GLB.
+type Item struct {
+	Asset string
+	Name  string
+	GLB   string
+}
+
+// Exported is what one asset became: the files written, or why it could not be exported.
+type Exported struct {
+	Asset string   `json:"asset"`
+	Files []string `json:"files,omitempty"`
+	Error string   `json:"error,omitempty"`
+}
+
+// ToFiles exports items in format f. dest is the file to write when there is one item and
+// it ends in the format's extension; otherwise it is the folder to write into, each asset
+// named after itself. Every format but GLB needs b. Blender writes into a hidden folder
+// beside the files first, so a failed export leaves no half-written file behind; existing
+// files of the same name are replaced.
+func ToFiles(ctx context.Context, b *Blender, f Format, items []Item, dest string) ([]Exported, error) {
+	if f.Blender && b == nil {
+		return nil, ErrNoBlender
+	}
+	dir, files := dest, uniqueStems(items)
+	for i := range files {
+		files[i] += f.Ext
+	}
+	if len(items) == 1 && strings.EqualFold(filepath.Ext(dest), f.Ext) {
+		dir, files[0] = filepath.Dir(dest), filepath.Base(dest)
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return nil, err
+	}
+	out := make([]Exported, len(items))
+	if !f.Blender {
+		for i, it := range items {
+			out[i].Asset = it.Asset
+			path := filepath.Join(dir, files[i])
+			if err := copyAtomic(it.GLB, path); err != nil {
+				out[i].Error = err.Error()
+			} else {
+				out[i].Files = []string{path}
+			}
+		}
+		return out, nil
+	}
+	staging, err := os.MkdirTemp(dir, ".forja-export-*")
+	if err != nil {
+		return nil, err
+	}
+	defer os.RemoveAll(staging)
+	jobs := make([]jobItem, len(items))
+	for i, it := range items {
+		jobs[i] = jobItem{GLB: it.GLB, Out: filepath.Join(staging, files[i])}
+	}
+	done, err := b.convert(ctx, f.ID, jobs, filepath.Join(staging, "job.json"))
+	if err != nil {
+		return nil, err
+	}
+	for i, c := range done {
+		out[i].Asset = items[i].Asset
+		if c.Error != "" {
+			out[i].Error = c.Error
+			continue
+		}
+		for _, written := range c.Files {
+			// Only names come from Blender; the folders are ours.
+			name := filepath.Base(filepath.FromSlash(written))
+			path := filepath.Join(dir, name)
+			if err := replace(filepath.Join(staging, name), path); err != nil {
+				out[i].Error = err.Error()
+				break
+			}
+			out[i].Files = append(out[i].Files, path)
+		}
+	}
+	return out, nil
+}
+
+// uniqueStems names each item's files after it, numbering names that repeat in one export.
+func uniqueStems(items []Item) []string {
+	// Case-insensitive, as Windows and macOS compare file names.
+	taken := map[string]bool{}
+	out := make([]string, len(items))
+	for i, it := range items {
+		base := fileName(it.Name)
+		stem := base
+		for n := 2; taken[strings.ToLower(stem)]; n++ {
+			stem = fmt.Sprintf("%s-%d", base, n)
+		}
+		taken[strings.ToLower(stem)] = true
+		out[i] = stem
+	}
+	return out
+}
+
+// fileName makes a name safe for a file on every OS.
+func fileName(name string) string {
+	name = strings.Map(func(r rune) rune {
+		if strings.ContainsRune(`<>:"/\|?*`, r) || r < 32 {
+			return '-'
+		}
+		return r
+	}, strings.TrimSpace(name))
+	if name = strings.Trim(name, ". "); name == "" {
+		return "asset"
+	}
+	return name
 }
 
 func copyAtomic(src, dst string) error {

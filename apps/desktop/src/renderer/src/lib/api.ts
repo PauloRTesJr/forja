@@ -83,6 +83,47 @@ export interface Asset {
   created_at: string
 }
 
+/** A format the library exports to, and whether this computer can write it now. */
+export interface ExportFormat {
+  id: string
+  name: string
+  /** The main file's extension; some formats write their textures beside it. */
+  ext: string
+  /** Who reads the format and what it keeps of the asset. */
+  for: string
+  /** Made by Blender from the asset's GLB. */
+  blender: boolean
+  available: boolean
+  problem?: string
+}
+
+export interface Blender {
+  path: string
+  version: string
+}
+
+export interface ExportFormats {
+  blender?: Blender
+  /** Why there is no Blender to use: not found, or too old. */
+  blender_problem?: string
+  formats: ExportFormat[]
+}
+
+/** What became of each asset of an export, in the order asked. */
+export interface ExportResult {
+  format: string
+  assets: { asset: string; files?: string[]; error?: string }[]
+}
+
+export const fetchExportFormats = (): Promise<ExportFormats> => api('GET', '/v1/export/formats')
+/** Writes assets in a format: to `path` when it names one file of that format, else into the folder `path`. */
+export const exportAssets = (ids: string[], format: string, path: string): Promise<ExportResult> =>
+  api('POST', '/v1/export', { ids, format, path })
+/** Starts Blender with the asset imported into a new, unsaved file. */
+export const openInBlender = (id: string): Promise<Blender> => api('POST', `/v1/assets/${id}/blender`)
+/** Removes an asset, and the job that made it, from the library; exported files stay. */
+export const deleteAsset = (id: string): Promise<void> => api('DELETE', `/v1/assets/${id}`)
+
 export interface PresetStage {
   id: string
   use: string

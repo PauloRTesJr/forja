@@ -3,7 +3,7 @@ import { Choices, NumberInput, Row, TextInput } from '../components/Controls'
 import { PauseMoon } from '../components/icons'
 import { ScreenHead, SectionHead } from '../components/ScreenHead'
 import { Providers } from '../components/Providers'
-import { api, saveSettings, type Preset, type Settings as SettingsView } from '../lib/api'
+import { api, fetchExportFormats, saveSettings, type Preset, type Settings as SettingsView } from '../lib/api'
 import { keys } from '../lib/events'
 import { bytes } from '../lib/format'
 import { useToast } from '../lib/toast'
@@ -26,6 +26,7 @@ export function Settings() {
   const info = useQuery({ queryKey: keys.info, queryFn: () => api<Info>('GET', '/v1/info') })
   const settings = useQuery({ queryKey: keys.settings, queryFn: () => api<SettingsView>('GET', '/v1/settings') })
   const presets = useQuery({ queryKey: keys.presets, queryFn: () => api<Preset[]>('GET', '/v1/presets') })
+  const exportFormats = useQuery({ queryKey: keys.exportFormats, queryFn: fetchExportFormats })
   const save = useMutation({
     mutationFn: saveSettings,
     onSuccess: (view) => {
@@ -53,6 +54,10 @@ export function Settings() {
   const by = new Map(settings.data?.settings.map((s) => [s.key, s]))
   const set = (key: string, value: unknown): void => save.mutate({ [key]: value })
   const gpu = info.data?.system?.devices?.find((d) => d.backend !== 'cpu')
+  const blender = exportFormats.data?.blender
+  const blenderHelp = blender
+    ? `Exports to formats other than GLB, and Open in Blender, use Blender ${blender.version}. Leave empty to find it by itself.`
+    : (exportFormats.data?.blender_problem ?? 'Exports to formats other than GLB, and Open in Blender, use it.')
 
   return (
     <div className="screen">
@@ -170,6 +175,17 @@ export function Settings() {
       </div>
 
       <div className="section">
+        <SectionHead>Blender</SectionHead>
+        <div className="settings">
+          <Row setting={by.get('blender.path')} label="Blender's program" help={blenderHelp} onReset={set}>
+            {(s, locked) => (
+              <TextInput value={String(s.value ?? '')} placeholder={blender?.path ?? 'Not found'} disabled={locked} onCommit={(v) => set(s.key, v)} />
+            )}
+          </Row>
+        </div>
+      </div>
+
+      <div className="section">
         <SectionHead>Developer</SectionHead>
         <div className="settings">
           <Row
@@ -209,4 +225,3 @@ export function Settings() {
     </div>
   )
 }
-

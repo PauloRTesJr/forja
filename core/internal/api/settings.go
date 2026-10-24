@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"forja/internal/config"
+	"forja/internal/export"
 	"forja/internal/jobs"
 )
 
@@ -39,6 +40,7 @@ var settingKinds = map[string]string{
 	"project.export_dir":           "string",
 	"project.default_preset":       "string",
 	"models.stubs":                 "bool",
+	"blender.path":                 "string",
 }
 
 type SettingView struct {
@@ -162,6 +164,16 @@ func (s *Server) settingsPatch(w http.ResponseWriter, r *http.Request) {
 	if dir, ok := changes["project.export_dir"].(string); ok {
 		if dir == "" || filepath.IsAbs(dir) || slices.Contains(strings.Split(filepath.ToSlash(dir), "/"), "..") {
 			problem(w, 422, "the export folder must be a folder inside the project, such as Assets/Generated")
+			return
+		}
+	}
+	if path, ok := changes["blender.path"].(string); ok && path != "" {
+		if !filepath.IsAbs(path) {
+			problem(w, 422, "Blender's path must be a full path to its program")
+			return
+		}
+		if _, err := export.FindBlender(path); err != nil {
+			problem(w, 422, err.Error())
 			return
 		}
 	}

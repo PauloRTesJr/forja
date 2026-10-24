@@ -1186,6 +1186,220 @@ h1 {
 .card-body .muted {
   font-size: 14px;
 }
+.card-main {
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: inherit;
+  cursor: pointer;
+}
+.card-main:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 4px;
+  border-radius: 9px;
+}
+/* The check shows on hover, and on every card once one is selected. */
+.card-check {
+  position: absolute;
+  top: 16px;
+  left: 16px;
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--gold-dim);
+  border-radius: 50%;
+  background: rgb(16 14 12 / 0.78);
+  color: var(--on-accent);
+  cursor: pointer;
+  opacity: 0;
+  transform: scale(0.8);
+  transition:
+    opacity var(--dur-2) var(--ease-out),
+    transform var(--dur-2) var(--ease-spring);
+}
+.card:hover .card-check,
+.card-check:focus-visible,
+.grid.selecting .card-check {
+  opacity: 1;
+  transform: none;
+}
+.card-check svg {
+  opacity: 0;
+  transform: scale(0.4);
+  transition:
+    opacity var(--dur-2) var(--ease-out),
+    transform var(--dur-2) var(--ease-spring);
+}
+.card.selected {
+  border-color: var(--accent);
+  background: var(--surface-2);
+}
+.card.selected::after {
+  opacity: 1;
+}
+.card.selected .card-check {
+  border-color: var(--accent);
+  background: var(--accent);
+  opacity: 1;
+  transform: none;
+}
+.card.selected .card-check svg {
+  opacity: 1;
+  transform: none;
+}
+.card.leaving {
+  pointer-events: none;
+  animation: card-leave var(--dur-2) var(--ease-in-out) both;
+}
+@keyframes card-leave {
+  to {
+    opacity: 0;
+    transform: scale(0.92);
+  }
+}
+.screen.library {
+  padding-bottom: 120px;
+}
+
+/* What can be done with the selected assets: rises from the bottom while any are selected. */
+.selection-bar {
+  position: absolute;
+  left: 50%;
+  bottom: 24px;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 10px 10px 20px;
+  border: 1px solid var(--frame);
+  border-radius: var(--r-3);
+  background: var(--bg);
+  box-shadow: var(--shadow);
+  opacity: 0;
+  transform: translate(-50%, 18px);
+  visibility: hidden;
+  transition:
+    opacity var(--dur-2) var(--ease-out),
+    transform var(--dur-3) var(--ease-out),
+    visibility 0s linear var(--dur-3);
+}
+.selection-bar[data-open='true'] {
+  opacity: 1;
+  transform: translate(-50%, 0);
+  visibility: visible;
+  transition-delay: 0s;
+}
+.selection-count {
+  margin-right: 6px;
+  color: var(--text);
+  font-size: 16px;
+  white-space: nowrap;
+}
+
+/* A menu under (or, with .up, over) its button; it fades and settles, on the compositor. */
+.menu-anchor {
+  position: relative;
+  display: inline-flex;
+}
+.menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  width: 360px;
+  max-height: min(520px, calc(100vh - 160px));
+  padding: 6px;
+  border: 1px solid var(--frame);
+  border-radius: var(--r-2);
+  background: var(--bg);
+  box-shadow: var(--shadow);
+  overflow-y: auto;
+  opacity: 0;
+  transform: translateY(-6px) scale(0.98);
+  transform-origin: top right;
+  visibility: hidden;
+  transition:
+    opacity var(--dur-2) var(--ease-out),
+    transform var(--dur-2) var(--ease-out),
+    visibility 0s linear var(--dur-2);
+}
+.menu.up {
+  top: auto;
+  bottom: calc(100% + 12px);
+  transform: translateY(6px) scale(0.98);
+  transform-origin: bottom right;
+}
+.menu[data-open='true'] {
+  opacity: 1;
+  transform: none;
+  visibility: visible;
+  transition-delay: 0s;
+}
+.menu-item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 9px 12px;
+  border: 0;
+  border-radius: var(--r-1);
+  background: none;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.menu-item:hover,
+.menu-item:focus-visible {
+  background: var(--surface-2);
+  outline: none;
+}
+.menu-item:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.menu-item:disabled:hover {
+  background: none;
+}
+.menu-item-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+.menu-item-head strong {
+  font-family: var(--display);
+  font-size: 12.5px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--accent-hi);
+}
+.menu-item-head .mono {
+  color: var(--text-3);
+}
+.menu-item-help {
+  color: var(--text-2);
+  font-size: 14.5px;
+  line-height: 1.3;
+}
+.menu-note {
+  margin: 6px 12px 8px;
+  color: var(--warn);
+  font-size: 14px;
+  line-height: 1.35;
+}
+.head-actions {
+  gap: 10px;
+}
 .search {
   position: relative;
   display: flex;
@@ -1513,6 +1727,23 @@ h1 {
 .toast.bad {
   border-color: #6b3a33;
   color: #f1b3a7;
+}
+.toast-action {
+  display: block;
+  margin-top: 8px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent-hi);
+  font-family: var(--display);
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+.toast-action:hover {
+  color: var(--text);
 }
 pre.code {
   margin: 0;
@@ -1932,6 +2163,9 @@ pre.code {
 }
 .dialog-actions {
   justify-content: flex-end;
+}
+.dialog.narrow {
+  width: min(460px, 100%);
 }
 
 @media (prefers-reduced-motion: reduce) {

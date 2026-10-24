@@ -18,6 +18,9 @@ const bridge = {
   pathForFile: (file: File): string => webUtils.getPathForFile(file),
   pickFolder: (): Promise<string | null> => ipcRenderer.invoke('dialog:pickFolder'),
   pickImages: (): Promise<string[]> => ipcRenderer.invoke('dialog:pickImages'),
+  /** Asks where to save one file of a format, suggesting `name` plus its extension. */
+  pickSavePath: (name: string, ext: string, label: string): Promise<string | null> =>
+    ipcRenderer.invoke('dialog:saveFile', name, ext, label),
   showItem: (path: string): Promise<void> => ipcRenderer.invoke('shell:showItem', path),
   openConfig: (): Promise<void> => ipcRenderer.invoke('settings:openConfig'),
   openDataFolder: (): Promise<void> => ipcRenderer.invoke('settings:openData'),

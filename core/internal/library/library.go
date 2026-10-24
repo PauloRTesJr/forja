@@ -464,6 +464,29 @@ func (d *DB) Assets(ctx context.Context, limit int, before time.Time, query stri
 	return out, rows.Err()
 }
 
+// DeleteAsset removes an asset and the job that made it from the library, and returns what
+// it removed. The store keeps their files, which the stage cache may still use; costs stay
+// in the spending totals, since they were paid.
+func (d *DB) DeleteAsset(ctx context.Context, id string) (*Asset, error) {
+	tx, err := d.sql.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	a, err := scanAsset(tx.QueryRowContext(ctx, `SELECT `+assetColumns+` FROM assets WHERE id = ?`, id))
+	if err != nil {
+		return nil, err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM assets WHERE id = ?`, id); err != nil {
+		return nil, err
+	}
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM jobs WHERE id = ? AND status IN ('succeeded', 'failed', 'cancelled')`, a.JobID); err != nil {
+		return nil, err
+	}
+	return a, tx.Commit()
+}
+
 // SaveCatalog remembers a provider's latest answer to "what do you run?".
 func (d *DB) SaveCatalog(ctx context.Context, provider string, entry []byte) error {
 	_, err := d.sql.ExecContext(ctx,
