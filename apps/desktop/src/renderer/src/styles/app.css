@@ -839,7 +839,10 @@ h1 {
 .phases {
   display: flex;
   gap: 14px;
-  overflow-x: auto;
+  /* overflow-x alone makes overflow-y auto too, and the pulsing star then toggles a scrollbar. */
+  overflow: auto hidden;
+  padding-block: 3px;
+  margin-block: -3px;
 }
 .phase {
   flex: var(--size, 1) 1 0;
