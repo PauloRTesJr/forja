@@ -10,9 +10,26 @@ extraResources:
     to: bin/
     filter: ['forja', 'forja.exe']
 mac:
-  target: dmg
+  # Build with `pnpm dist:mac` after `make core-all`: scripts/dist-mac.mjs picks the signing.
+  target:
+    - target: dmg
+      arch: [arm64, x64]
   category: public.app-category.graphics-design
   icon: build/icon.icns
+  artifactName: ${productName}-${version}-mac-${arch}.${ext}
+  minimumSystemVersion: "13.0"
+  # Notarization requires the hardened runtime. electron-builder signs with a Developer ID
+  # certificate (CSC_LINK, or CSC_NAME for one in the keychain) and then notarizes when
+  # APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD and APPLE_TEAM_ID are set.
+  hardenedRuntime: true
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+  extraResources:
+    # Both darwin binaries of make core-all: ${arch} says x64 where Go says amd64, so a filter
+    # cannot pick one. The app starts the one for its architecture (src/main/binary.ts).
+    - from: ../../core/bin/
+      to: bin/
+      filter: [forja-darwin-arm64, forja-darwin-amd64]
 win:
   target: [nsis, zip]
   icon: build/icon.ico

@@ -14,7 +14,8 @@
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "lint": "eslint .",
     "test": "vitest run",
-    "dist": "electron-vite build && electron-builder"
+    "dist": "electron-vite build && electron-builder",
+    "dist:mac": "electron-vite build && node scripts/dist-mac.mjs"
   },
   "dependencies": {
     "@fontsource-variable/cinzel": "^5.3.0",
