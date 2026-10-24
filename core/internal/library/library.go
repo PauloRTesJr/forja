@@ -51,6 +51,18 @@ type Stage struct {
 	Step     int      `json:"step"`
 	Total    int      `json:"total"`
 	Error    string   `json:"error,omitempty"`
+	// Note is what the provider last said about the running stage, such as its place in a
+	// hosted model's queue.
+	Note string `json:"note,omitempty"`
+	// Fallbacks are the providers the stage left after failing there, oldest first.
+	Fallbacks []Fallback `json:"fallbacks,omitempty"`
+}
+
+// Fallback is a stage moving to another provider after a failure there.
+type Fallback struct {
+	From   string `json:"from"`
+	To     string `json:"to"`
+	Reason string `json:"reason"`
 }
 
 type Job struct {
@@ -200,6 +212,7 @@ CREATE TABLE IF NOT EXISTS stage_costs (
 	at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS stage_costs_at ON stage_costs(at);
+CREATE INDEX IF NOT EXISTS stage_costs_job ON stage_costs(job);
 CREATE TABLE IF NOT EXISTS license_acceptances (
 	model TEXT NOT NULL,
 	license TEXT NOT NULL,
@@ -385,9 +398,19 @@ func (d *DB) RecordTiming(ctx context.Context, use, model, provider string, seco
 
 // EstimateSeconds is the median of the last 20 timings for a stage on a provider; 0 if unknown.
 func (d *DB) EstimateSeconds(ctx context.Context, use, model, provider string) float64 {
-	rows, err := d.sql.QueryContext(ctx,
+	return d.median(ctx,
 		`SELECT seconds FROM stage_timings WHERE use = ? AND model = ? AND provider = ? ORDER BY at DESC LIMIT 20`,
 		use, model, provider)
+}
+
+// EstimateSecondsAnywhere is the median of the last 20 timings for a stage on any provider; 0
+// if it never ran.
+func (d *DB) EstimateSecondsAnywhere(ctx context.Context, use, model string) float64 {
+	return d.median(ctx, `SELECT seconds FROM stage_timings WHERE use = ? AND model = ? ORDER BY at DESC LIMIT 20`, use, model)
+}
+
+func (d *DB) median(ctx context.Context, query string, args ...any) float64 {
+	rows, err := d.sql.QueryContext(ctx, query, args...)
 	if err != nil {
 		return 0
 	}
@@ -665,5 +688,12 @@ func (d *DB) RecordCost(ctx context.Context, c Cost) error {
 func (d *DB) Spent(ctx context.Context, since time.Time) (float64, error) {
 	var total sql.NullFloat64
 	err := d.sql.QueryRowContext(ctx, `SELECT SUM(amount) FROM stage_costs WHERE at >= ?`, since.UnixMilli()).Scan(&total)
+	return total.Float64, err
+}
+
+// SpentOn sums what one job's paid stages cost so far.
+func (d *DB) SpentOn(ctx context.Context, job string) (float64, error) {
+	var total sql.NullFloat64
+	err := d.sql.QueryRowContext(ctx, `SELECT SUM(amount) FROM stage_costs WHERE job = ?`, job).Scan(&total)
 	return total.Float64, err
 }

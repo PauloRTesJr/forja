@@ -43,6 +43,8 @@ type fakeProvider struct {
 	// hold, when set, keeps runs that build a shape going until it is closed; held counts them.
 	hold chan struct{}
 	held int
+	// pngs makes the images it prepares start like PNG files, for a hosted model that checks.
+	pngs bool
 }
 
 var cpu = "cpu"
@@ -136,6 +138,9 @@ func (f *fakeProvider) Run(_ context.Context, req engineapi.RunRequest, evs chan
 			inputs = append(inputs, in)
 		}
 		blob := s.ID + s.Model + strings.Join(inputs, ",") + strings.Join(s.Views, ",") + fmtParams(s.Params)
+		if f.pngs && (s.Use == "background-removal" || s.Use == "framing") {
+			blob = "\x89PNG" + blob
+		}
 		outs := []engineapi.Output{{Kind: "mesh/glb"}}
 		switch s.Use {
 		case "views.detect":

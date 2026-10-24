@@ -1,8 +1,10 @@
 package jobs
 
 import (
+	"cmp"
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 
 	"forja/internal/catalog"
@@ -18,6 +20,8 @@ type Pick struct {
 	Model     string `json:"model,omitempty"`
 	ModelName string `json:"model_name,omitempty"`
 	Provider  string `json:"provider,omitempty"`
+	// ProviderLabel names the provider for people: "This computer", "Studio PC", "fal.ai".
+	ProviderLabel string `json:"provider_label,omitempty"`
 	// Missing is set when the stage needs a model and no provider has one ready.
 	Missing bool `json:"missing,omitempty"`
 	// Skipped stages are done by the model of an earlier stage, named by By: a hosted model
@@ -68,7 +72,7 @@ func (r *Runner) Resolve(ctx context.Context, project string, p *presets.Preset,
 			return nil, err
 		}
 	}
-	picks, _, err := r.resolve(ctx, cfg, p.Active(), ordered(views))
+	picks, _, err := r.resolve(ctx, cfg, p.Active(), ordered(views), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -95,11 +99,12 @@ func (r *Runner) Resolve(ctx context.Context, project string, p *presets.Preset,
 // resolve picks a provider and a model for every stage (docs/decisions.md, decisions 12 and
 // 17), then skips the stages a picked model already does. It returns the picks for every stage
 // and the preset that runs: skipped stages left out, and whatever read them reading their input.
-func (r *Runner) resolve(ctx context.Context, cfg *config.Loaded, preset *presets.Preset, views []string,
+// avoid holds the providers stages of this job failed on, which they no longer go to.
+func (r *Runner) resolve(ctx context.Context, cfg *config.Loaded, preset *presets.Preset, views []string, avoid failed,
 ) ([]Pick, *presets.Preset, error) {
 	picks := make([]Pick, 0, len(preset.Stages))
 	for _, s := range preset.Stages {
-		pick, err := r.pick(ctx, cfg, s, views)
+		pick, _, err := r.pick(ctx, cfg, s, views, avoid)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -141,63 +146,137 @@ func (r *Runner) resolve(ctx context.Context, cfg *config.Loaded, preset *preset
 	return picks, cp.Active(), nil
 }
 
-// pick chooses the provider and model of one stage: a model named by the preset or the job,
-// then `[models.stages]`, then the best model ready on the first provider in routing order
-// that has one. Paid providers are in routing order only when allowed. views are the job's
-// views besides the front; see best.
-func (r *Runner) pick(ctx context.Context, cfg *config.Loaded, s presets.Stage, views []string) (Pick, error) {
-	pick := Pick{Stage: s.ID, Use: s.Use, Model: s.Model}
-	if pick.Model == "" {
-		pick.Model = cfg.Models.Stages[s.Use]
+// pick chooses the provider and model of one stage (docs/decisions.md, decision 12), and lists
+// the other places it could run, in the order a failure falls back to them.
+//
+// A provider the stage, the job or `[routing.stages]` names is the only one. Otherwise the
+// stage goes to the first provider in routing order that can run it, with the order sorted by
+// the routing policy: a model named by the preset, the job or `[models.stages]` where it is
+// ready (capability routing), an open stage with the best model ready there. Paid providers
+// take part only when routing.allow_paid_fallback is on, or for a pinned model that no free
+// provider has (a hosted model, decision 16). views are the job's views besides the front.
+func (r *Runner) pick(ctx context.Context, cfg *config.Loaded, s presets.Stage, views []string, avoid failed) (Pick, []Pick, error) {
+	base := Pick{Stage: s.ID, Use: s.Use, Model: s.Model}
+	if base.Model == "" {
+		base.Model = cfg.Models.Stages[s.Use]
 	}
-	cands, err := r.candidates(cfg, s)
-	if err != nil {
-		return pick, err
+	want := s.Provider
+	if want == "auto" {
+		want = ""
 	}
-	if pick.Model != "" {
-		pick.Provider = cands[0]
-		// A provider that cannot answer is given the benefit of the doubt; one that can and
-		// lacks the model would only fail the job later.
-		if e, err := r.catalog.Get(ctx, pick.Provider); err == nil {
-			m, ok := e.Model(pick.Model)
-			pick.Missing = !ok || !m.Ready()
-			if ok {
-				r.describe(&pick, &m)
-				pick.NeedsViews = m.Lacks(views)
-			}
+	if want == "" {
+		want = cfg.Routing.Stages[s.Use]
+	}
+	if want != "" {
+		p, ok := r.providers.Get(want)
+		if !ok {
+			return base, nil, fmt.Errorf("stage %s routes to provider %q, which is not configured", s.ID, want)
 		}
-		return pick, nil
+		if !offline(cfg, p) {
+			return base, nil, fmt.Errorf("stage %s: policy offline-only forbids provider %q", s.ID, want)
+		}
+		if avoid.has(s.ID, want) {
+			return base, nil, fmt.Errorf("stage %s runs only on %s, which failed", s.ID, r.label(cfg, want))
+		}
+		pick, ok, _, err := r.on(ctx, cfg, base, want, views)
+		switch {
+		case err != nil && base.Model == "":
+			return base, nil, err
+		case err != nil:
+			// A provider that cannot answer is given the benefit of the doubt; one that can and
+			// lacks the model would only fail the job later.
+			pick = base
+			pick.Provider, pick.ProviderLabel = want, r.label(cfg, want)
+		case !ok:
+			pick.Missing = true
+		}
+		return pick, nil, nil
 	}
+
+	ids := r.routing(cfg, s.ID, avoid)
+	var opts []Pick
 	var firstErr error
-	reached := false
-	for _, id := range cands {
-		e, err := r.catalog.Get(ctx, id)
+	var silent []string // providers that could not say what they run
+	listed := false     // a free provider lists the pinned model, ready or not
+	for _, id := range ids {
+		p, _ := r.providers.Get(id)
+		pick, ok, has, err := r.on(ctx, cfg, base, id, views)
 		if err != nil {
-			if firstErr == nil {
-				firstErr = err
-			}
+			firstErr = cmp.Or(firstErr, err)
+			silent = append(silent, id)
 			continue
 		}
-		reached = true
-		if builtin(e, s.Use) {
-			pick.Provider = cands[0]
-			break
+		if !p.Paid() {
+			listed = listed || has
 		}
-		if m := best(e.Models, s.Use, cfg.Models.Stubs, views); m != nil {
-			pick.Model, pick.Provider = m.ID, id
-			r.describe(&pick, m)
-			break
+		if ok {
+			opts = append(opts, pick)
 		}
 	}
-	if !reached {
-		return pick, firstErr
+	paidOK := cfg.Routing.AllowPaidFallback || (base.Model != "" && !listed)
+	if !paidOK {
+		opts = slices.DeleteFunc(opts, func(p Pick) bool { return p.Paid })
 	}
-	pick.Missing = pick.Provider == ""
-	return pick, nil
+	if slices.ContainsFunc(opts, func(p Pick) bool { return p.Model != "" }) {
+		opts = r.byPolicy(ctx, cfg, opts)
+	}
+	switch {
+	case len(opts) > 0:
+		return opts[0], opts[1:], nil
+	case len(silent) > 0 && len(silent) == len(ids):
+		return base, nil, firstErr
+	}
+	// A pinned model is given the benefit of the doubt on a provider that cannot say what it
+	// runs now: one that can and lacks it would only fail the job later.
+	for _, id := range silent {
+		if p, _ := r.providers.Get(id); base.Model != "" && (paidOK || !p.Paid()) {
+			base.Provider, base.ProviderLabel = id, r.label(cfg, id)
+			return base, nil, nil
+		}
+	}
+	base.Missing = true
+	return base, nil, nil
 }
 
-func (r *Runner) describe(pick *Pick, m *engineapi.Model) {
+// on is what a stage gets on one provider: ok when it can run there, has when the provider
+// lists the stage's pinned model at all, err when the provider could not say what it runs.
+func (r *Runner) on(ctx context.Context, cfg *config.Loaded, base Pick, id string, views []string) (pick Pick, ok, has bool, err error) {
+	pick = base
+	pick.Provider, pick.ProviderLabel = id, r.label(cfg, id)
+	e, err := r.catalog.Get(ctx, id)
+	if err != nil {
+		return base, false, false, err
+	}
+	if p, found := r.providers.Get(id); found {
+		pick.Paid = p.Paid()
+	}
+	if base.Model != "" {
+		m, has := e.Model(base.Model)
+		if !has {
+			return pick, false, false, nil
+		}
+		r.describe(cfg, &pick, &m)
+		pick.NeedsViews = m.Lacks(views)
+		return pick, m.Ready(), true, nil
+	}
+	if builtin(e, base.Use) {
+		return pick, true, false, nil
+	}
+	if m := best(e.Models, base.Use, cfg.Models.Stubs, views); m != nil {
+		pick.Model = m.ID
+		r.describe(cfg, &pick, m)
+		return pick, true, false, nil
+	}
+	return pick, false, false, nil
+}
+
+// describe copies what the job needs to know of the model into its pick. A price table entry
+// named after the model replaces the price its provider reports.
+func (r *Runner) describe(cfg *config.Loaded, pick *Pick, m *engineapi.Model) {
 	pick.ModelName, pick.Tasks, pick.Price, pick.Views = m.Name, m.Tasks, m.Price, m.Views
+	if entry, ok := cfg.Prices[m.ID]; ok {
+		pick.Price = &engineapi.Price{Amount: entry.USD, Unit: entry.Per, Currency: "USD"}
+	}
 	if p, ok := r.providers.Get(pick.Provider); ok {
 		pick.Paid = p.Paid()
 	}
@@ -240,5 +319,6 @@ func (r *Runner) Pick(ctx context.Context, project, use string) (Pick, error) {
 	if err != nil {
 		return Pick{}, err
 	}
-	return r.pick(ctx, cfg, presets.Stage{ID: use, Use: use}, nil)
+	pick, _, err := r.pick(ctx, cfg, presets.Stage{ID: use, Use: use}, nil, nil)
+	return pick, err
 }
