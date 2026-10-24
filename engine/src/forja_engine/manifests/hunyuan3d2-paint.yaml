@@ -4,6 +4,8 @@ family: hunyuan3d2
 adapter: forja_hunyuan3d2:Hunyuan3D2Paint
 tasks: [texture]
 rank: 10
+# Upstream's paint pipeline takes a list of reference images, as in its multi-view example.
+views: [front, left, back, right]
 description: Paints the low-poly mesh in the colors of the reference; it unwraps UVs itself.
 # Measured on the reference Windows PC: environment 5.1 GB, weights 18 GB.
 disk_gb: 23.1
