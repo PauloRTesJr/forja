@@ -62,5 +62,8 @@ notes: ## Print the newest tag's release notes; a stable release also lists its 
 dist: core ## Build this OS's desktop installers into apps/desktop/release (unsigned without a certificate)
 	cd apps/desktop && pnpm build && pnpm exec electron-builder --publish never
 
-.PHONY: integration licenses version changelog notes dist
+hooks: ## Optional: run the fast checks before each commit (.pre-commit-config.yaml)
+	uv tool run pre-commit install
+
+.PHONY: integration licenses version changelog notes dist hooks
 .PHONY: help setup core core-all engine desktop test check
