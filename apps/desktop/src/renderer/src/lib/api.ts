@@ -141,6 +141,168 @@ export const fetchCache = (): Promise<CacheUsage> => api('GET', '/v1/cache')
 export const clearCache = (): Promise<{ freed: { objects: number; bytes: number; entries: number }; usage: CacheUsage }> =>
   api('DELETE', '/v1/cache')
 
+/** Median, 90th percentile and maximum of `n` values. */
+export interface Spread {
+  n: number
+  median: number
+  p90: number
+  max: number
+}
+
+export interface BenchPreset {
+  preset: string
+  images: number
+  failed: number
+  /** Image to GLB, succeeded samples only. */
+  seconds: Spread
+  budget_seconds?: number
+  over_budget: number
+}
+
+export interface BenchStage {
+  preset: string
+  stage: string
+  use: string
+  model?: string
+  seconds: Spread
+  load_seconds: Spread
+  peak_vram_bytes: number | null
+  peak_ram_bytes: number | null
+  /** Mean percent of time the GPU ran kernels. */
+  gpu_util: number | null
+  triangles: number | null
+  /** Share (0..1) of samples whose mesh was watertight. */
+  watertight: number | null
+  uv_coverage: number | null
+}
+
+/** One reference image through one preset, measured. */
+export interface BenchSample {
+  image: string
+  category?: string
+  preset: string
+  repeat: number
+  job?: string
+  input?: string
+  status: Status
+  error?: string
+  wall_seconds: number
+  stage_seconds: number
+  load_seconds: number
+  core_overhead_seconds: number
+}
+
+export interface BenchDevice {
+  id: string
+  provider: string
+  gpu?: string
+  cpu?: string
+  vram_bytes?: number
+}
+
+export interface BenchBuild {
+  version: string
+  commit?: string
+  modified?: boolean
+  engine?: string
+}
+
+export interface BenchSuite {
+  name: string
+  version: number
+  path: string
+}
+
+export interface BenchOptions {
+  presets: string[]
+  cold: boolean
+  batch: boolean
+  repeat: number
+}
+
+export type BenchStatus = 'running' | 'succeeded' | 'failed' | 'cancelled'
+
+/** A run of a benchmark suite: kept by the core, pushed while it runs. */
+export interface BenchResult {
+  id: string
+  label?: string
+  status: BenchStatus
+  error?: string
+  /** While running: loading the models with an unmeasured image, or measuring. */
+  phase?: 'warm-up' | 'measuring'
+  /** The job loading the models during the warm-up. */
+  warm_up?: string
+  suite: BenchSuite
+  options: BenchOptions
+  forja: BenchBuild
+  device: BenchDevice
+  started_at: string
+  finished_at?: string
+  total: number
+  skipped: { path: string; reason: string }[]
+  jobs: BenchSample[]
+  summary?: {
+    presets: BenchPreset[]
+    stages: BenchStage[]
+    core_overhead: Spread
+    core_overhead_budget_ms?: number
+    devices: { device: string; busy_seconds: number; busy: number; gpu_util: number | null }[]
+    wall_seconds: number
+  }
+  report?: string
+}
+
+/** A kept result as the list shows it. */
+export interface BenchEntry {
+  id: string
+  label?: string
+  status: BenchStatus
+  suite: BenchSuite
+  options: BenchOptions
+  forja: BenchBuild
+  device: BenchDevice
+  started_at: string
+  samples: number
+  failed: number
+  presets: BenchPreset[]
+  core_overhead: Spread
+}
+
+export interface BenchList {
+  running: BenchResult | null
+  results: BenchEntry[]
+}
+
+export interface BenchDelta {
+  preset?: string
+  stage?: string
+  metric: 'seconds' | 'peak_vram_bytes' | 'core_overhead' | 'failed'
+  baseline: number
+  current: number
+  /** Change in percent of the baseline; null when the baseline is zero. */
+  pct: number | null
+  regression: boolean
+}
+
+export interface BenchComparison {
+  baseline: { id: string; forja: BenchBuild; started_at: string }
+  current: { id: string; forja: BenchBuild; started_at: string }
+  thresholds: { pct: number; min_seconds: number; min_vram_mb: number }
+  deltas: BenchDelta[]
+  regressions: number
+  warnings: string[]
+}
+
+export const fetchBenchList = (): Promise<BenchList> => api('GET', '/v1/bench')
+export const fetchBench = (id: string): Promise<BenchResult> => api('GET', `/v1/bench/${id}`)
+/** Runs a suite file in the background; bench.updated events follow it. */
+export const startBench = (body: { suite: string; cold?: boolean; batch?: boolean }): Promise<BenchResult> =>
+  api('POST', '/v1/bench', body)
+export const cancelBench = (id: string): Promise<void> => api('DELETE', `/v1/bench/${id}`)
+/** Compares two kept results with the thresholds in the config. */
+export const compareBench = (baseline: string, current: string): Promise<BenchComparison> =>
+  api('POST', '/v1/bench/compare', { baseline, current })
+
 export interface PresetStage {
   id: string
   use: string

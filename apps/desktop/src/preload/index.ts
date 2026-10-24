@@ -23,6 +23,10 @@ const bridge = {
   pickSavePath: (name: string, ext: string, label: string): Promise<string | null> =>
     ipcRenderer.invoke('dialog:saveFile', name, ext, label),
   showItem: (path: string): Promise<void> => ipcRenderer.invoke('shell:showItem', path),
+  /** Asks for one file of a kind, such as a benchmark suite. */
+  pickFile: (label: string, extensions: string[]): Promise<string | null> => ipcRenderer.invoke('dialog:pickFile', label, extensions),
+  /** Opens a benchmark's HTML report in the default browser. */
+  openBenchReport: (id: string): Promise<void> => ipcRenderer.invoke('bench:openReport', id),
   openConfig: (): Promise<void> => ipcRenderer.invoke('settings:openConfig'),
   openDataFolder: (): Promise<void> => ipcRenderer.invoke('settings:openData'),
   copyText: (text: string): Promise<void> => ipcRenderer.invoke('clipboard:write', text),
