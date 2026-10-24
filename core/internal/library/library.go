@@ -487,6 +487,104 @@ func (d *DB) DeleteAsset(ctx context.Context, id string) (*Asset, error) {
 	return a, tx.Commit()
 }
 
+// Kept lists the objects the library still shows or needs: every asset's GLB, thumbnail and
+// input, every job's images, and all that an unfinished job references. Stage outputs of
+// finished jobs are not among them: they are the stage cache, which eviction may trim.
+func (d *DB) Kept(ctx context.Context) (map[string]bool, error) {
+	kept := map[string]bool{}
+	keep := func(refs ...string) {
+		for _, r := range refs {
+			if r != "" {
+				kept[r] = true
+			}
+		}
+	}
+	rows, err := d.sql.QueryContext(ctx, `SELECT glb, thumbnail, input FROM assets`)
+	if err != nil {
+		return nil, err
+	}
+	for rows.Next() {
+		var glb, thumb, input string
+		if err := rows.Scan(&glb, &thumb, &input); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		keep(glb, thumb, input)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	rows, err = d.sql.QueryContext(ctx, `SELECT `+jobColumns+` FROM jobs`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		j, err := scanJob(rows)
+		if err != nil {
+			return nil, err
+		}
+		keep(j.Input)
+		for _, v := range j.Views {
+			keep(v)
+		}
+		if j.Status.Done() {
+			continue
+		}
+		for _, s := range j.Stages {
+			for _, o := range s.Outputs {
+				keep(o.Hash)
+			}
+		}
+		if j.Sheet != nil {
+			keep(j.Sheet.Cutout)
+		}
+	}
+	return kept, rows.Err()
+}
+
+// ForgetOutputs drops every stage cache entry with an output among gone, the objects
+// eviction is about to remove, and returns how many it dropped. A hit on such an entry
+// would hand a job outputs that no longer exist.
+func (d *DB) ForgetOutputs(ctx context.Context, gone map[string]bool) (int, error) {
+	tx, err := d.sql.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+	rows, err := tx.QueryContext(ctx, `SELECT key, outputs FROM stage_cache`)
+	if err != nil {
+		return 0, err
+	}
+	var stale []string
+	for rows.Next() {
+		var key, raw string
+		if err := rows.Scan(&key, &raw); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		var outs []Output
+		_ = json.Unmarshal([]byte(raw), &outs)
+		for _, o := range outs {
+			if gone[o.Hash] {
+				stale = append(stale, key)
+				break
+			}
+		}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+	for _, key := range stale {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM stage_cache WHERE key = ?`, key); err != nil {
+			return 0, err
+		}
+	}
+	return len(stale), tx.Commit()
+}
+
 // SaveCatalog remembers a provider's latest answer to "what do you run?".
 func (d *DB) SaveCatalog(ctx context.Context, provider string, entry []byte) error {
 	_, err := d.sql.ExecContext(ctx,

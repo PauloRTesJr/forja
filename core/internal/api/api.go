@@ -18,6 +18,7 @@ import (
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
 
+	"forja/internal/cache"
 	"forja/internal/catalog"
 	"forja/internal/config"
 	"forja/internal/events"
@@ -41,6 +42,7 @@ type Server struct {
 	Store     *store.Store
 	Hub       *events.Hub
 	Runner    *jobs.Runner
+	Cache     *cache.Keeper
 	Providers *provider.Registry
 	Catalog   *catalog.Catalog
 	Installs  *installs.Tracker
@@ -102,6 +104,8 @@ func (s *Server) routes() []route {
 		{"POST /v1/assets/{id}/blender", s.assetBlender},
 		{"GET /v1/export/formats", s.exportFormats},
 		{"POST /v1/export", s.exportAssets},
+		{"GET /v1/cache", s.cacheGet},
+		{"DELETE /v1/cache", s.cacheClear},
 		{"GET /v1/artifacts/{ref}", s.artifactGet},
 		{"PUT /v1/artifacts", s.artifactPut},
 		{"POST /v1/artifacts/import", s.artifactImport},

@@ -1,5 +1,7 @@
 import json
+import os
 import struct
+import time
 from pathlib import Path
 
 import pytest
@@ -181,3 +183,13 @@ def test_sheet_detection_runs_as_a_builtin_stage(client):
     assert out["kind"] == "application/json"
     found = json.loads(client.get(f"/v1/artifacts/{out['hash']}").content)
     assert found["sheet"] is False and len(found["parts"]) >= 1
+
+
+def test_asking_for_an_artifact_marks_it_used(client, tmp_path):
+    ref = upload(client)
+    path = tmp_path / "objects" / ref[7:9] / ref[9:]
+    old = time.time() - 48 * 3600
+    for ask in (client.head, client.get, lambda url: client.put(url, content=FIXTURE.read_bytes())):
+        os.utime(path, (old, old))
+        assert ask(f"/v1/artifacts/{ref}").status_code in (200, 201)
+        assert time.time() - path.stat().st_mtime < 60

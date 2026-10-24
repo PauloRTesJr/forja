@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"forja/internal/cache"
 	"forja/internal/catalog"
 	"forja/internal/config"
 	"forja/internal/engineapi"
@@ -116,9 +117,10 @@ func newServer(t *testing.T) (*httptest.Server, *Server, *fakeEngine) {
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	cat := catalog.New(reg, db, nil, func(id string) { hub.Publish(EvModelsChanged, id) })
 	cfg := func(project string) (*config.Loaded, error) { return config.Load(project, nil) }
+	runner := jobs.NewRunner(db, st, hub, reg, cat, cfg, log, "test", 2)
 	s := &Server{
-		DB: db, Store: st, Hub: hub, Providers: reg, Catalog: cat, Log: log, Config: cfg,
-		Runner:   jobs.NewRunner(db, st, hub, reg, cat, cfg, log, "test", 2),
+		DB: db, Store: st, Hub: hub, Providers: reg, Catalog: cat, Log: log, Config: cfg, Runner: runner,
+		Cache:    cache.New(db, st, runner, func() int64 { return 0 }, hub, log),
 		Installs: installs.New(reg, cat, hub, log),
 		Engine:   localengine.New(func() (*config.Loaded, error) { return config.Load("", nil) }, st.Root, dir, log),
 	}

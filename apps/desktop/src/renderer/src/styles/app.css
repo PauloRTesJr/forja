@@ -2295,6 +2295,20 @@ select.input {
 .hardware {
   grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
 }
+.cache-meter {
+  margin-bottom: 12px;
+}
+.cache-meter b small {
+  color: var(--text-3);
+  font-size: 14px;
+  font-weight: 500;
+}
+.cache-meter .bar {
+  margin-top: 10px;
+}
+.cache-meter .bar > i {
+  background: var(--accent);
+}
 .provider-list {
   display: flex;
   flex-direction: column;

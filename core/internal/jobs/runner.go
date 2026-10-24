@@ -93,6 +93,12 @@ type Runner struct {
 	active map[string]*active
 	// claimed are waiting jobs being answered or cancelled, so only one of those happens.
 	claimed map[string]bool
+
+	// gate keeps eviction away from running jobs: each run holds it shared, and WhenIdle
+	// takes it only when no run does.
+	gate sync.RWMutex
+	// OnIdle, when set, is called after the last running job ends.
+	OnIdle func()
 }
 
 type active struct {
@@ -113,6 +119,17 @@ func NewRunner(db *library.DB, st *store.Store, hub *events.Hub, providers *prov
 
 // Config loads the configuration a job in project would see.
 func (r *Runner) Config(project string) (*config.Loaded, error) { return r.config(project) }
+
+// WhenIdle runs fn only while no job runs, holding off jobs that start meanwhile, and says
+// whether it ran. Eviction uses it so it never removes what a running job reads.
+func (r *Runner) WhenIdle(fn func()) bool {
+	if !r.gate.TryLock() {
+		return false
+	}
+	defer r.gate.Unlock()
+	fn()
+	return true
+}
 
 // Busy reports whether any job is queued or running.
 func (r *Runner) Busy() bool {
@@ -564,6 +581,8 @@ func (r *Runner) update(a *active, fn func(j *library.Job)) {
 }
 
 func (r *Runner) run(ctx context.Context, a *active, prep *prepared, cfg *config.Loaded) {
+	r.gate.RLock()
+	defer r.ended()
 	defer r.leave(a)
 	plan, err := r.runJob(ctx, a, prep, cfg)
 	switch {
@@ -788,6 +807,14 @@ func (r *Runner) split(ctx context.Context, a *active, prep *prepared) error {
 	return nil
 }
 
+// ended lets eviction in once the last running job is gone.
+func (r *Runner) ended() {
+	r.gate.RUnlock()
+	if r.OnIdle != nil && !r.Busy() {
+		r.OnIdle()
+	}
+}
+
 // leave drops a run from the active jobs, unless an answer already started the job again.
 func (r *Runner) leave(a *active) {
 	r.mu.Lock()
@@ -853,6 +880,9 @@ func (r *Runner) execute(ctx context.Context, a *active, plan *planner.Plan) (ma
 			return nil, err
 		}
 		if hit && len(outs) > 0 && r.store.Has(outs[0].Hash) {
+			for _, o := range outs {
+				r.store.Touch(o.Hash) // used now: eviction removes the least recently used
+			}
 			outputs[s.ID], all[s.ID] = outs[0].Hash, outs
 			r.update(a, func(j *library.Job) {
 				st := stage(j, s.ID)

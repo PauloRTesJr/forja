@@ -162,7 +162,8 @@ func (s *Server) assetBlender(w http.ResponseWriter, r *http.Request) {
 }
 
 // assetDelete removes an asset and the job that made it from the library. Files exported
-// into projects stay where they are.
+// into projects stay where they are; its bytes in the store become cache, which the keeper
+// trims to its limit.
 func (s *Server) assetDelete(w http.ResponseWriter, r *http.Request) {
 	a, err := s.DB.DeleteAsset(r.Context(), r.PathValue("id"))
 	if errors.Is(err, library.ErrNotFound) {
@@ -174,5 +175,6 @@ func (s *Server) assetDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.Hub.Publish(EvAssetDeleted, AssetDeleted{ID: a.ID, Job: a.JobID})
+	s.Cache.Nudge() // its bytes now count against the cache's limit
 	w.WriteHeader(204)
 }

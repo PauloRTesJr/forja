@@ -41,6 +41,7 @@ var settingKinds = map[string]string{
 	"project.default_preset":       "string",
 	"models.stubs":                 "bool",
 	"blender.path":                 "string",
+	"general.cache_max_gb":         "int",
 }
 
 type SettingView struct {
@@ -207,6 +208,9 @@ func (s *Server) settingsPatch(w http.ResponseWriter, r *http.Request) {
 	}
 	if engine && s.Engine != nil {
 		view.Engine = s.applyEngineSettings()
+	}
+	if _, ok := changes["general.cache_max_gb"]; ok {
+		s.Cache.Nudge() // a lower limit trims now
 	}
 	s.Hub.Publish(EvSettingsChanged, map[string]string{"project": body.Project})
 	writeJSON(w, 200, view)

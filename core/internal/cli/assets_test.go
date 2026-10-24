@@ -9,8 +9,10 @@ import (
 	"time"
 
 	"forja/internal/api"
+	"forja/internal/cache"
 	"forja/internal/export/fakeblender"
 	"forja/internal/library"
+	"forja/internal/store"
 )
 
 func TestMain(m *testing.M) {
@@ -96,5 +98,45 @@ func TestAssetsAreExportedOpenedInBlenderAndDeleted(t *testing.T) {
 	// What was exported stays.
 	if _, err := os.Stat(filepath.Join(dest, "chest.obj")); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestTheCacheIsShownLimitedAndCleared(t *testing.T) {
+	h := newHarness(t)
+	img := h.image("chest.png")
+	h.ok("generate", img, "--preset", "draft")
+	// Everything was used just now; age it past the hour clearing leaves alone.
+	old := time.Now().Add(-48 * time.Hour)
+	_ = h.store.Walk(func(o store.Object) error {
+		p, _ := h.store.Path(o.Ref)
+		return os.Chtimes(p, old, old)
+	})
+
+	if out := h.ok("cache"); !strings.Contains(out, "of 50.0 GB: stage outputs") || !strings.Contains(out, "library  ") {
+		t.Fatalf("cache printed:\n%s", out)
+	}
+	h.ok("config", "set", "general.cache_max_gb=10")
+	var u cache.Usage
+	h.okJSON(&u, "cache")
+	if u.LimitBytes != 10<<30 || u.CacheBytes == 0 || u.LibraryBytes == 0 {
+		t.Fatalf("usage %+v", u)
+	}
+	var res api.CacheCleared
+	h.okJSON(&res, "cache", "clear")
+	if res.Freed.Objects == 0 || res.Freed.Bytes != u.CacheBytes || res.Usage.CacheBytes != 0 ||
+		res.Usage.LibraryBytes != u.LibraryBytes || res.Freed.Entries == 0 {
+		t.Fatalf("cleared %+v of %+v", res, u)
+	}
+	// The same job again computes its stages anew, except the export: its output is the
+	// asset's GLB, which the library kept, so its entry stayed.
+	var again []*library.Job
+	h.okJSON(&again, "generate", img, "--preset", "draft")
+	if len(again) != 1 || again[0].Status != library.Succeeded {
+		t.Fatalf("after clearing, %+v", again)
+	}
+	for _, s := range again[0].Stages {
+		if s.Cached != (s.Use == "export") {
+			t.Fatalf("stage %s cached: %v", s.ID, s.Cached)
+		}
 	}
 }

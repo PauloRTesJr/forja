@@ -2,6 +2,9 @@
 //
 // Layout: <root>/objects/<2 hex>/<62 hex>, identical to engine/src/forja_engine/store.py,
 // so a co-located engine reads and writes the same files with zero copies.
+//
+// A file's modification time is when it was last stored or used: storing bytes it already
+// holds, and reusing a cached output, touch it. Eviction removes the least recently used.
 package store
 
 import (
@@ -10,9 +13,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/zeebo/blake3"
 )
@@ -80,6 +85,7 @@ func (s *Store) Put(r io.Reader) (string, error) {
 	ref := Prefix + hex.EncodeToString(h.Sum(nil))
 	dst, _ := s.Path(ref)
 	if s.Has(ref) {
+		s.Touch(ref)
 		return ref, nil
 	}
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
@@ -107,6 +113,60 @@ func (s *Store) Open(ref string) (*os.File, error) {
 		return nil, err
 	}
 	return os.Open(p)
+}
+
+// Touch marks an object as used now.
+func (s *Store) Touch(ref string) {
+	if p, err := s.Path(ref); err == nil {
+		now := time.Now()
+		_ = os.Chtimes(p, now, now)
+	}
+}
+
+// Remove deletes an object; one already gone is not an error.
+func (s *Store) Remove(ref string) error {
+	p, err := s.Path(ref)
+	if err != nil {
+		return err
+	}
+	if err := os.Remove(p); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	return nil
+}
+
+// Object is one file in the store.
+type Object struct {
+	Ref  string
+	Size int64
+	Used time.Time
+}
+
+// Walk calls fn for every object in the store, in no particular order. Files that are not
+// objects (a partial write, something put there by hand) are skipped.
+func (s *Store) Walk(fn func(Object) error) error {
+	objects := filepath.Join(s.Root, "objects")
+	return filepath.WalkDir(objects, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			if errors.Is(err, fs.ErrNotExist) {
+				return nil // removed while walking
+			}
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		rel, _ := filepath.Rel(objects, path)
+		ref := Prefix + strings.ReplaceAll(filepath.ToSlash(rel), "/", "")
+		if _, err := digest(ref); err != nil {
+			return nil
+		}
+		info, err := d.Info()
+		if err != nil {
+			return nil
+		}
+		return fn(Object{Ref: ref, Size: info.Size(), Used: info.ModTime()})
+	})
 }
 
 // HashFile returns the ref of a file without storing it.

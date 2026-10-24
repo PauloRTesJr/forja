@@ -1,9 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Choices, NumberInput, Row, TextInput } from '../components/Controls'
-import { PauseMoon } from '../components/icons'
+import { PauseMoon, Trash } from '../components/icons'
 import { ScreenHead, SectionHead } from '../components/ScreenHead'
 import { Providers } from '../components/Providers'
-import { api, fetchExportFormats, saveSettings, type Preset, type Settings as SettingsView } from '../lib/api'
+import { api, clearCache, fetchCache, fetchExportFormats, saveSettings, type CacheUsage, type Preset, type Settings as SettingsView } from '../lib/api'
 import { keys } from '../lib/events'
 import { bytes } from '../lib/format'
 import { useToast } from '../lib/toast'
@@ -27,6 +27,15 @@ export function Settings() {
   const settings = useQuery({ queryKey: keys.settings, queryFn: () => api<SettingsView>('GET', '/v1/settings') })
   const presets = useQuery({ queryKey: keys.presets, queryFn: () => api<Preset[]>('GET', '/v1/presets') })
   const exportFormats = useQuery({ queryKey: keys.exportFormats, queryFn: fetchExportFormats })
+  const cache = useQuery({ queryKey: keys.cache, queryFn: fetchCache })
+  const clear = useMutation({
+    mutationFn: clearCache,
+    onSuccess: (res) => {
+      qc.setQueryData(keys.cache, res.usage)
+      toast(res.freed.objects > 0 ? `Freed ${bytes(res.freed.bytes)}` : 'Nothing to free: the cache holds only what was used in the last hour')
+    },
+    onError: (e: Error) => toast(e.message, true),
+  })
   const save = useMutation({
     mutationFn: saveSettings,
     onSuccess: (view) => {
@@ -186,6 +195,31 @@ export function Settings() {
       </div>
 
       <div className="section">
+        <SectionHead>Cache</SectionHead>
+        {cache.isPending && <div className="skeleton" style={{ height: 76, marginBottom: 12 }} />}
+        {cache.data && <CacheMeter usage={cache.data} />}
+        <div className="settings">
+          <Row
+            setting={by.get('general.cache_max_gb')}
+            label="Cache size limit"
+            help="Stage outputs a new job can reuse. The least recently used go first to stay under this; 0 means no limit. The library's own files never count and are never removed."
+            onReset={set}
+          >
+            {(s, locked) => (
+              <NumberInput value={Number(s.value)} unit="GB" min={0} step={5} disabled={locked} onCommit={(v) => set(s.key, v)} />
+            )}
+          </Row>
+          <div className="row">
+            <button className="btn" onClick={() => clear.mutate()} disabled={clear.isPending || cache.data?.cache_bytes === 0}>
+              <Trash />
+              Clear the cache
+            </button>
+            <span className="muted small">Jobs run later compute their stages again.</span>
+          </div>
+        </div>
+      </div>
+
+      <div className="section">
         <SectionHead>Developer</SectionHead>
         <div className="settings">
           <Row
@@ -221,6 +255,31 @@ export function Settings() {
           Everything else lives in config.toml, which you can edit by hand: the app keeps your comments. Keys stay in the
           system keychain, never in files.
         </p>
+      </div>
+    </div>
+  )
+}
+
+/** The cache against its limit, and the library beside it. */
+function CacheMeter({ usage: u }: { usage: CacheUsage }) {
+  const full = u.limit_bytes > 0 ? Math.min(1, u.cache_bytes / u.limit_bytes) : 0
+  return (
+    <div className="stats hardware cache-meter">
+      <div className="stat wide">
+        <b>
+          {bytes(u.cache_bytes)}
+          {u.limit_bytes > 0 && <small> of {bytes(u.limit_bytes)}</small>}
+        </b>
+        <span>cache</span>
+        {u.limit_bytes > 0 && (
+          <div className="bar" aria-hidden>
+            <i style={{ '--p': full } as React.CSSProperties} />
+          </div>
+        )}
+      </div>
+      <div className="stat">
+        <b>{bytes(u.library_bytes)}</b>
+        <span>library</span>
       </div>
     </div>
   )

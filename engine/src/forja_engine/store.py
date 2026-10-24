@@ -2,11 +2,13 @@
 
 Layout is shared with the Go core (`core/internal/store`): `<root>/objects/<2 hex>/<62 hex>`.
 When the core and the engine run on one machine they point at the same root, so artifacts
-move between them by path, with zero copies.
+move between them by path, with zero copies. A file's modification time is when it was last
+stored or asked for: the core evicts the least recently used (core/internal/cache).
 """
 
 from __future__ import annotations
 
+import contextlib
 import os
 import shutil
 import tempfile
@@ -50,6 +52,11 @@ class ArtifactStore:
         except ValueError:
             return False
 
+    def touch(self, ref: str) -> None:
+        """Marks an artifact as used now; one that is gone stays gone."""
+        with contextlib.suppress(OSError, ValueError):
+            os.utime(self.path(ref))
+
     def scratch_dir(self) -> Path:
         # Scratch lives under the store root so `put_file` is a same-volume rename.
         return Path(tempfile.mkdtemp(dir=self.tmp))
@@ -60,6 +67,7 @@ class ArtifactStore:
         dst = self.path(ref)
         if dst.exists():
             src.unlink(missing_ok=True)
+            self.touch(ref)
             return ref
         dst.parent.mkdir(parents=True, exist_ok=True)
         os.replace(src, dst)

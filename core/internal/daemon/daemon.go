@@ -15,6 +15,7 @@ import (
 	"github.com/gofrs/flock"
 
 	"forja/internal/api"
+	"forja/internal/cache"
 	"forja/internal/catalog"
 	"forja/internal/config"
 	"forja/internal/events"
@@ -40,6 +41,7 @@ type Core struct {
 	Address string
 	server  *http.Server
 	engine  *localengine.Manager
+	cache   *cache.Keeper
 	db      *library.DB
 	lock    *flock.Flock
 	done    chan struct{}
@@ -119,13 +121,17 @@ func start(opts Options, base *config.Loaded, dataDir string) (*Core, error) {
 		}()
 	}
 	runner := jobs.NewRunner(db, st, hub, providers, cat, cfgFn, log, opts.Version, 8)
+	keeper := cache.New(db, st, runner, cache.Limit(cfgFn), hub, log)
+	runner.OnIdle = keeper.Nudge
+	keeper.Start()
+	keeper.Nudge() // what grew past the limit before this start
 	addr := opts.Address
 	if addr == "" {
 		addr = ipc.DefaultAddress(dataDir)
 	}
-	c := &Core{Address: addr, engine: eng, db: db, done: make(chan struct{})}
+	c := &Core{Address: addr, engine: eng, cache: keeper, db: db, done: make(chan struct{})}
 	srv := &api.Server{
-		Version: opts.Version, DataDir: dataDir, DB: db, Store: st, Hub: hub, Runner: runner,
+		Version: opts.Version, DataDir: dataDir, DB: db, Store: st, Hub: hub, Runner: runner, Cache: keeper,
 		Providers: providers, Catalog: cat, Installs: installs.New(providers, cat, hub, log), Engine: eng, Config: cfgFn, Log: log, Shutdown: c.Stop,
 	}
 	c.server = &http.Server{Handler: srv.Handler(), ReadHeaderTimeout: 10 * time.Second}
@@ -161,6 +167,7 @@ func (c *Core) Stop() {
 		defer cancel()
 		_ = c.server.Shutdown(ctx)
 		c.engine.Stop()
+		c.cache.Close()
 		_ = c.db.Close()
 		if c.lock != nil {
 			_ = c.lock.Unlock()

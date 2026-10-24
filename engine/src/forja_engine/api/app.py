@@ -370,19 +370,26 @@ def create_app(cfg: EngineConfig) -> FastAPI:
     async def unload_all() -> None:
         await scheduler.unload_all()
 
+    # A core that finds an artifact here skips uploading it and soon runs on it: the asking
+    # marks it used, so eviction on this machine leaves it alone meanwhile.
     @app.head("/v1/artifacts/{ref}", dependencies=guarded)
     async def artifact_exists(ref: str) -> Response:
-        return Response(status_code=200 if store.has(ref) else 404)
+        if not store.has(ref):
+            return Response(status_code=404)
+        store.touch(ref)
+        return Response(status_code=200)
 
     @app.get("/v1/artifacts/{ref}", dependencies=guarded)
     async def artifact_get(ref: str) -> FileResponse:
         if not store.has(ref):
             raise HTTPException(404, f"no artifact {ref}")
+        store.touch(ref)
         return FileResponse(store.path(ref), media_type="application/octet-stream")
 
     @app.put("/v1/artifacts/{ref}", dependencies=guarded, status_code=201)
     async def artifact_put(ref: str, request: Request) -> dict[str, str]:
         if store.has(ref):
+            store.touch(ref)
             return {"hash": ref}
         tmp = store.new_upload()
         size = 0

@@ -569,3 +569,61 @@ func TestSpendingLimitsRefuseJobsThatWouldPassThem(t *testing.T) {
 		t.Fatalf("daily: %v", err)
 	}
 }
+
+func TestEvictionWaitsForRunningJobsAndHearsWhenTheLastEnds(t *testing.T) {
+	r, fp, _, st, img := setup(t)
+	idle := make(chan struct{}, 4)
+	r.OnIdle = func() { idle <- struct{}{} }
+	hold := make(chan struct{})
+	fp.set(func(f *fakeProvider) { f.hold = hold })
+	ctx := context.Background()
+	j1, err := r.Submit(ctx, SubmitRequest{Input: img, Preset: "mobile-prop"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(5 * time.Millisecond) {
+		fp.mu.Lock()
+		held := fp.held
+		fp.mu.Unlock()
+		if held == 1 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the job never reached its shape")
+		}
+	}
+	if r.WhenIdle(func() { t.Error("eviction ran while a job built its shape") }) {
+		t.Fatal("WhenIdle ran during a job")
+	}
+	close(hold)
+	if got := wait(t, r, j1.ID); got.Status != library.Succeeded {
+		t.Fatalf("job: %s %s", got.Status, got.Error)
+	}
+	select {
+	case <-idle:
+	case <-time.After(5 * time.Second):
+		t.Fatal("no word that the runner went idle")
+	}
+	ran := false
+	if !r.WhenIdle(func() { ran = true }) || !ran {
+		t.Fatal("WhenIdle did not run once the job ended")
+	}
+
+	// A cache hit marks what it reuses as just used, so eviction keeps it longest.
+	var shape string
+	for _, s := range wait(t, r, j1.ID).Stages {
+		if s.Use == "shape" {
+			shape = s.Outputs[0].Hash
+		}
+	}
+	p, _ := st.Path(shape)
+	old := time.Now().Add(-48 * time.Hour)
+	if err := os.Chtimes(p, old, old); err != nil {
+		t.Fatal(err)
+	}
+	j2, _ := r.Submit(ctx, SubmitRequest{Input: img, Preset: "mobile-prop", Overrides: map[string]any{"paint.resolution": 2048}})
+	wait(t, r, j2.ID)
+	if info, _ := os.Stat(p); time.Since(info.ModTime()) > time.Minute {
+		t.Fatalf("the reused shape still looks used at %s", info.ModTime())
+	}
+}

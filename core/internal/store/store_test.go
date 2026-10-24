@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestPutIsContentAddressedAndIdempotent(t *testing.T) {
@@ -45,5 +46,36 @@ func TestRejectsBadRefs(t *testing.T) {
 		if _, err := s.Path(ref); err == nil {
 			t.Errorf("accepted %q", ref)
 		}
+	}
+}
+
+func TestStoringAgainMarksAnObjectUsedAndWalkListsObjectsOnly(t *testing.T) {
+	s, _ := Open(t.TempDir())
+	ref, _ := s.Put(strings.NewReader("hello"))
+	p, _ := s.Path(ref)
+	old := time.Now().Add(-48 * time.Hour)
+	if err := os.Chtimes(p, old, old); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Put(strings.NewReader("hello")); err != nil {
+		t.Fatal(err)
+	}
+	if st, _ := os.Stat(p); time.Since(st.ModTime()) > time.Minute {
+		t.Fatalf("storing it again left it used at %s", st.ModTime())
+	}
+	other, _ := s.PutBytes([]byte("world"))
+	_ = os.WriteFile(filepath.Join(s.Root, "objects", "zz-not-an-object"), []byte("x"), 0o644)
+	var seen []Object
+	if err := s.Walk(func(o Object) error { seen = append(seen, o); return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if len(seen) != 2 || seen[0].Size != 5 || (seen[0].Ref != ref && seen[0].Ref != other) {
+		t.Fatalf("walked %+v", seen)
+	}
+	if err := s.Remove(ref); err != nil || s.Has(ref) {
+		t.Fatalf("remove: %v", err)
+	}
+	if err := s.Remove(ref); err != nil {
+		t.Fatalf("removing it twice: %v", err)
 	}
 }
