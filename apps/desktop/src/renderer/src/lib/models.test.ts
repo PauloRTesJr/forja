@@ -37,6 +37,18 @@ describe('runsOn', () => {
     expect(runsOn(model({ fit: 'too-big' }))).toEqual({ value: 'Another computer', detail: 'Needs more VRAM', tone: 'dim' })
   })
 
+  it('says Apple GPU and CPU for a Mac’s devices', () => {
+    expect(runsOn(model({ status: 'ready', device: 'mps', runs_on: 'mps', fit: 'fits' })).detail).toBe('Apple GPU')
+    expect(runsOn(model({ status: 'ready', device: 'cpu', runs_on: 'cpu', fit: 'fits' })).detail).toBe('CPU')
+    // BiRefNet on a Mac lands on the CPU, which is no GPU to fit.
+    expect(runsOn(model({ runs_on: 'cpu', fit: 'fits' }))).toEqual({ value: 'This computer', detail: 'Runs on the CPU', tone: 'ok' })
+    expect(runsOn(model({ runs_on: 'mps', fit: 'fits' })).detail).toBe('Fits your GPU')
+  })
+
+  it('sends a model no device here can run to another computer', () => {
+    expect(runsOn(model({ fit: 'unsupported', runs_on: null }))).toEqual({ value: 'Another computer', detail: 'Cannot run here', tone: 'dim' })
+  })
+
   it('names a computer on the network by its label', () => {
     expect(runsOn(model({ provider: 'lan-1', provider_label: 'Desktop', status: 'ready', device: 'cuda:0' })).value).toBe('Desktop')
   })
