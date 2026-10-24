@@ -235,3 +235,36 @@ func TestAModelThatNeedsViewsRunsOnlyWithThem(t *testing.T) {
 		}
 	}
 }
+
+func TestASheetIsFoundWhileEveryJobSlotIsBusy(t *testing.T) {
+	r, fp, _, _, img := setup(t)
+	hold := make(chan struct{})
+	fp.set(func(f *fakeProvider) { f.sheet, f.hold = sheetFound, hold })
+	defer close(hold)
+	ctx := context.Background()
+	// Kept whole, so they go on to build shapes and hold every slot (the test runner has 4).
+	for seed := 1; seed <= 4; seed++ {
+		if _, err := r.Submit(ctx, SubmitRequest{Input: img, Preset: "draft", Seed: &seed}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(5 * time.Millisecond) {
+		fp.mu.Lock()
+		held := fp.held
+		fp.mu.Unlock()
+		if held == 4 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("%d jobs hold a slot", held)
+		}
+	}
+	seed := 5
+	j, err := r.Submit(ctx, SubmitRequest{Input: img, Preset: "draft", Seed: &seed, Sheet: library.SheetAsk})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := waiting(t, r, j.ID); !got.Sheet.Found {
+		t.Fatalf("sheet %+v", got.Sheet)
+	}
+}

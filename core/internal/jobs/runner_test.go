@@ -40,6 +40,9 @@ type fakeProvider struct {
 	sheet     string
 	specs     map[string]engineapi.StageSpec
 	clientIDs map[string]bool
+	// hold, when set, keeps runs that build a shape going until it is closed; held counts them.
+	hold chan struct{}
+	held int
 }
 
 var cpu = "cpu"
@@ -107,6 +110,18 @@ func (f *fakeProvider) Run(_ context.Context, req engineapi.RunRequest, evs chan
 	f.mu.Unlock()
 	if reused {
 		return nil, fmt.Errorf("client run id %s was sent twice; the engine would replay the first run", req.ClientRunID)
+	}
+	f.mu.Lock()
+	hold := f.hold
+	f.mu.Unlock()
+	for _, s := range req.Stages {
+		if s.Use == "shape" && hold != nil {
+			f.mu.Lock()
+			f.held++
+			f.mu.Unlock()
+			<-hold
+			break
+		}
 	}
 	ids := []string{}
 	run := &engineapi.Run{ID: "r", Status: "succeeded", Stages: map[string]engineapi.StageState{}}

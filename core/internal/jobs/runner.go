@@ -83,6 +83,8 @@ type Runner struct {
 	// Bounds jobs in flight so the engine has work to batch by model without the core
 	// holding hundreds of open event streams.
 	slots chan struct{}
+	// Bounds the jobs looking for a sheet of views, which runs before a job takes a slot.
+	looking chan struct{}
 
 	// catalog is what each provider runs: it keys stages and picks models.
 	catalog *catalog.Catalog
@@ -104,7 +106,8 @@ func NewRunner(db *library.DB, st *store.Store, hub *events.Hub, providers *prov
 ) *Runner {
 	return &Runner{
 		db: db, store: st, hub: hub, providers: providers, catalog: cat, config: cfg, log: log, version: version,
-		slots: make(chan struct{}, maxInFlight), active: map[string]*active{}, claimed: map[string]bool{},
+		slots: make(chan struct{}, maxInFlight), looking: make(chan struct{}, max(1, maxInFlight/4)),
+		active: map[string]*active{}, claimed: map[string]bool{},
 	}
 }
 
@@ -562,16 +565,6 @@ func (r *Runner) update(a *active, fn func(j *library.Job)) {
 
 func (r *Runner) run(ctx context.Context, a *active, prep *prepared, cfg *config.Loaded) {
 	defer r.leave(a)
-	select {
-	case r.slots <- struct{}{}:
-		defer func() { <-r.slots }()
-	case <-ctx.Done():
-		r.finish(a, library.Cancelled, "cancelled before it started")
-		return
-	}
-	r.update(a, func(j *library.Job) { j.Status = library.Running })
-	r.hub.Publish(EvJobUpdated, snapshot(a))
-
 	plan, err := r.runJob(ctx, a, prep, cfg)
 	switch {
 	case errors.Is(err, errWaiting):
@@ -589,11 +582,11 @@ func (r *Runner) run(ctx context.Context, a *active, prep *prepared, cfg *config
 	}
 }
 
-// runJob looks for a sheet of views first when the job asks for that, cuts the views out
-// once they are chosen, then runs the plan.
+// runJob looks for a sheet of views first when the job asks for that, then takes a job slot,
+// cuts the views out once they are chosen, and runs the plan.
 func (r *Runner) runJob(ctx context.Context, a *active, prep *prepared, cfg *config.Loaded) (*planner.Plan, error) {
 	if sh := snapshot(a).Sheet; sh != nil && !sh.Checked {
-		if err := r.inspect(ctx, a, prep); err != nil {
+		if err := r.look(ctx, a, prep); err != nil {
 			return nil, err
 		}
 		sh := snapshot(a).Sheet
@@ -601,6 +594,11 @@ func (r *Runner) runJob(ctx context.Context, a *active, prep *prepared, cfg *con
 			return nil, errWaiting
 		}
 	}
+	release, err := r.slot(ctx, a)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	if job := snapshot(a); job.Sheet != nil && job.Sheet.Answer == library.SheetSplit && job.Views["front"] == "" {
 		if err := r.split(ctx, a, prep); err != nil {
 			return nil, err
@@ -620,6 +618,47 @@ func (r *Runner) runJob(ctx context.Context, a *active, prep *prepared, cfg *con
 	}
 	_, err = r.execute(ctx, a, plan)
 	return plan, err
+}
+
+// look looks for a sheet of views under its own limit, not a job slot: the app asks about a
+// sheet while the user is still on the screen they dropped it on, so finding one must not wait
+// for other jobs to finish whole runs.
+func (r *Runner) look(ctx context.Context, a *active, prep *prepared) error {
+	select {
+	case r.looking <- struct{}{}:
+		defer func() { <-r.looking }()
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	r.setStatus(a, library.Running)
+	err := r.inspect(ctx, a, prep)
+	r.hub.Publish(EvJobUpdated, snapshot(a))
+	return err
+}
+
+// slot waits for one of the job slots, which bound the jobs in flight; a job shows as queued
+// only while it waits for one.
+func (r *Runner) slot(ctx context.Context, a *active) (func(), error) {
+	select {
+	case r.slots <- struct{}{}:
+	default:
+		r.setStatus(a, library.Queued)
+		select {
+		case r.slots <- struct{}{}:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	r.setStatus(a, library.Running)
+	return func() { <-r.slots }, nil
+}
+
+func (r *Runner) setStatus(a *active, s library.Status) {
+	if snapshot(a).Status == s {
+		return
+	}
+	r.update(a, func(j *library.Job) { j.Status = s })
+	r.hub.Publish(EvJobUpdated, snapshot(a))
 }
 
 func (r *Runner) plan(ctx context.Context, preset *presets.Preset, routes map[string]string, job *library.Job) (*planner.Plan, error) {
