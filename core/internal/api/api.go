@@ -21,6 +21,7 @@ import (
 	"forja/internal/catalog"
 	"forja/internal/config"
 	"forja/internal/events"
+	"forja/internal/glb"
 	"forja/internal/installs"
 	"forja/internal/jobs"
 	"forja/internal/library"
@@ -97,7 +98,6 @@ func (s *Server) routes() []route {
 		{"GET /v1/assets", s.assetList},
 		{"GET /v1/assets/{id}", s.assetGet},
 		{"PUT /v1/assets/{id}/thumbnail", s.assetThumbnail},
-		{"PATCH /v1/assets/{id}", s.assetPatch},
 		{"GET /v1/artifacts/{ref}", s.artifactGet},
 		{"PUT /v1/artifacts", s.artifactPut},
 		{"POST /v1/artifacts/import", s.artifactImport},
@@ -407,6 +407,9 @@ func (s *Server) assetList(w http.ResponseWriter, r *http.Request) {
 	if list == nil {
 		list = []*library.Asset{}
 	}
+	for _, a := range list {
+		s.withStats(r.Context(), a)
+	}
 	writeJSON(w, 200, list)
 }
 
@@ -420,6 +423,7 @@ func (s *Server) assetGet(w http.ResponseWriter, r *http.Request) {
 		problem(w, 500, err.Error())
 		return
 	}
+	s.withStats(r.Context(), a)
 	writeJSON(w, 200, a)
 }
 
@@ -444,28 +448,21 @@ func (s *Server) assetThumbnail(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, a)
 }
 
-// assetPatch accepts viewer-computed stats (triangles, materials, texture sizes).
-func (s *Server) assetPatch(w http.ResponseWriter, r *http.Request) {
-	a, err := s.DB.Asset(r.Context(), r.PathValue("id"))
-	if err != nil {
-		problem(w, 404, "no asset "+r.PathValue("id"))
+// withStats reads the stats of an asset made before the core read them from its GLB. One
+// it cannot read gets empty stats, so it is tried once.
+func (s *Server) withStats(ctx context.Context, a *library.Asset) {
+	if a.Stats != nil {
 		return
 	}
-	var patch struct {
-		Stats map[string]any `json:"stats"`
+	a.Stats = map[string]any{}
+	if path, err := s.Store.Path(a.GLB); err == nil {
+		if st, err := glb.ReadFile(path); err == nil {
+			a.Stats = st.Map()
+		}
 	}
-	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&patch); err != nil {
-		problem(w, 400, err.Error())
-		return
+	if err := s.DB.SaveAsset(ctx, a); err != nil {
+		s.Log.Warn("saving asset stats", "asset", a.ID, "err", err)
 	}
-	if patch.Stats != nil {
-		a.Stats = patch.Stats
-	}
-	if err := s.DB.SaveAsset(r.Context(), a); err != nil {
-		problem(w, 500, err.Error())
-		return
-	}
-	writeJSON(w, 200, a)
 }
 
 func (s *Server) artifactGet(w http.ResponseWriter, r *http.Request) {
