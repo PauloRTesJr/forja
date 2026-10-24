@@ -167,6 +167,9 @@ func (a *app) showJob(j *library.Job) {
 		}
 	})
 	for _, s := range j.Stages {
+		for _, f := range s.Fallbacks {
+			a.printf("%s moved from %s to %s: it %s\n", s.ID, f.From, f.To, f.Reason)
+		}
 		if s.Error != "" {
 			a.printf("%s failed: %s\n", s.ID, s.Error)
 		}

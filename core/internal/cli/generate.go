@@ -25,12 +25,13 @@ func (a *app) generateCmd() *cobra.Command {
 	var preset, project, priority, sheet string
 	var sets, views, skip, with []string
 	var seed int
-	var noWait, dryRun bool
+	var noWait, dryRun, estimate bool
 	cmd := &cobra.Command{
 		Use:   "generate <image>...",
 		Short: "Turn reference images into game-ready assets",
 		Long: "Queues one job per image and follows them until they end. --dry-run shows the plan instead:\n" +
-			"the model and provider each stage would use, and what a hosted model would charge.",
+			"the model and provider each stage would use, and what a hosted model would charge. --estimate\n" +
+			"adds how long each stage took before and what it costs, against the spending limits.",
 		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			overrides := map[string]any{}
@@ -78,6 +79,10 @@ func (a *app) generateCmd() *cobra.Command {
 				if wd, err := os.Getwd(); err == nil {
 					project = config.FindProject(wd)
 				}
+			}
+			if estimate {
+				return a.estimate(jobs.EstimateRequest{Preset: preset, Project: project, Overrides: overrides,
+					Views: slices.Sorted(maps.Keys(viewPaths)), Images: len(paths)})
 			}
 			if dryRun {
 				return a.dryRun(preset, project, slices.Sorted(maps.Keys(viewPaths)))
@@ -132,11 +137,91 @@ func (a *app) generateCmd() *cobra.Command {
 	cmd.Flags().IntVar(&seed, "seed", 0, "seed for the models (default: the preset's)")
 	cmd.Flags().BoolVar(&noWait, "no-wait", false, "submit and print job ids without waiting (needs a running core)")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "show the plan and its price without queueing anything")
+	cmd.Flags().BoolVar(&estimate, "estimate", false, "show the expected time and cost of each stage without queueing anything")
 	cmd.Flags().StringArrayVar(&views, "view", nil, "another view of the same subject, e.g. --view back=back.png (left, back, right)")
 	cmd.Flags().StringVar(&sheet, "sheet", library.SheetKeep,
 		"when an image shows several views of its subject side by side: keep it whole, split it into those views,\n"+
 			"or ask (at a terminal you answer here; otherwise the job waits for `forja jobs sheet`)")
-	return calls(cmd, append([]string{"POST /v1/jobs", "GET /v1/presets", "GET /v1/config/effective"}, watchRoutes...)...)
+	return calls(cmd, append([]string{"POST /v1/jobs", "GET /v1/presets", "GET /v1/config/effective", "POST /v1/estimate"},
+		watchRoutes...)...)
+}
+
+// estimate prints how long images would take and what they would cost, queueing nothing.
+func (a *app) estimate(req jobs.EstimateRequest) error {
+	c, err := a.client()
+	if err != nil {
+		return err
+	}
+	var est jobs.Estimate
+	if err := c.Do(context.Background(), "POST", "/v1/estimate", req, &est); err != nil {
+		return err
+	}
+	a.print(est, func() { a.showEstimate(&est) })
+	if est.Problem != "" {
+		return &exitError{1, est.Problem}
+	}
+	return nil
+}
+
+func (a *app) showEstimate(est *jobs.Estimate) {
+	a.table("STAGE\tMODEL\tRUNS ON\tTIME\tCOST", func(row func(...any)) {
+		for _, s := range est.Stages {
+			model, where, took, cost := orDash(s.ModelName, s.Model), orDash(s.ProviderLabel, s.Provider), duration(s.Seconds), "free"
+			switch {
+			case s.Missing:
+				model, cost = "none ready", "-"
+			case s.Skipped:
+				model, where, took, cost = "-", "done by "+s.By, "", ""
+			case s.Paid && !s.Priced:
+				cost = "price unknown"
+			case s.Paid:
+				cost = money(s.CostUSD, "USD")
+			}
+			if s.Measured == "elsewhere" {
+				took += " (measured elsewhere)"
+			}
+			row(s.Stage, model, where, took, cost)
+		}
+	})
+	per := "about " + duration(est.Seconds)
+	if len(est.Unmeasured) > 0 {
+		per += fmt.Sprintf(", not counting %s, which never ran yet", strings.Join(est.Unmeasured, ", "))
+	}
+	a.printf("\nEach image: %s", per)
+	if est.Paid {
+		a.printf("; %s", money(est.CostUSD, "USD"))
+	}
+	a.printf(".\n")
+	if est.Images > 1 {
+		a.printf("%d images: about %s", est.Images, duration(est.Seconds*float64(est.Images)))
+		if est.Paid {
+			a.printf("; %s", money(est.CostUSD*float64(est.Images), "USD"))
+		}
+		a.printf(".\n")
+	}
+	if len(est.Unpriced) > 0 {
+		a.printf("%s has no known price: forja prices set <model> <usd>\n", strings.Join(est.Unpriced, ", "))
+	}
+	if l := est.Spend.Limits; est.Paid && (l.PerJob > 0 || l.PerDay > 0 || l.PerMonth > 0) {
+		a.printf("Spent today %s, this month %s, queued jobs %s.\n", money(est.Spend.Today, "USD"),
+			money(est.Spend.Month, "USD"), money(est.Spend.Queued, "USD"))
+	}
+	if est.Problem != "" {
+		a.printf("Would be refused: %s\n", est.Problem)
+	}
+}
+
+// duration reads seconds as a person would say them; "-" when unknown.
+func duration(s float64) string {
+	switch {
+	case s <= 0:
+		return "-"
+	case s < 1:
+		return fmt.Sprintf("%.0f ms", s*1000)
+	case s < 60:
+		return fmt.Sprintf("%.0f s", s)
+	}
+	return fmt.Sprintf("%d min %02d s", int(s)/60, int(s)%60)
 }
 
 // parseValue reads a command-line value as JSON (numbers, true, false, null, lists), else
@@ -319,7 +404,7 @@ func (a *app) watch(ctx context.Context, c *Client, evs <-chan Event, list []*li
 			}
 		}
 	}
-	seen := map[string]library.Status{}
+	seen := map[string]string{}
 	for len(waiting) > 0 {
 		select {
 		case <-ctx.Done():
@@ -330,6 +415,19 @@ func (a *app) watch(ctx context.Context, c *Client, evs <-chan Event, list []*li
 		case ev, ok := <-evs:
 			if !ok {
 				return errors.New("lost the connection to the core")
+			}
+			if ev.Type == jobs.EvJobFallback && !a.json {
+				var fb struct {
+					Job       string `json:"job"`
+					Stage     string `json:"stage"`
+					FromLabel string `json:"from_label"`
+					ToLabel   string `json:"to_label"`
+					Reason    string `json:"reason"`
+				}
+				if json.Unmarshal(ev.Data, &fb) == nil && waiting[fb.Job] != nil {
+					a.printf("  %-10s %-20s moves to %s: %s %s\n", waiting[fb.Job].Name, fb.Stage, fb.ToLabel, fb.FromLabel, fb.Reason)
+				}
+				continue
 			}
 			if ev.Type != jobs.EvJobUpdated && ev.Type != jobs.EvJobFinished {
 				continue
@@ -360,14 +458,19 @@ func (a *app) watch(ctx context.Context, c *Client, evs <-chan Event, list []*li
 	return nil
 }
 
-// stageLines prints each stage of j whose status changed since the last call.
-func (a *app) stageLines(j *library.Job, seen map[string]library.Status) {
+// stageLines prints each stage of j whose status changed since the last call, and what its
+// provider says while it runs, such as its place in a hosted model's queue.
+func (a *app) stageLines(j *library.Job, seen map[string]string) {
 	for _, s := range j.Stages {
 		key := j.ID + "/" + s.ID
-		if seen[key] == s.Status {
+		if s.Note != "" && seen[key+"#note"] != s.Note {
+			seen[key+"#note"] = s.Note
+			a.printf("  %-10s %-20s %s\n", j.Name, s.ID, s.Note)
+		}
+		if seen[key] == string(s.Status) {
 			continue
 		}
-		seen[key] = s.Status
+		seen[key] = string(s.Status)
 		switch {
 		case s.Status == library.Running:
 			a.printf("  %-10s %-20s running\n", j.Name, s.ID)

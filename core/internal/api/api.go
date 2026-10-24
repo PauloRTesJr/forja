@@ -113,6 +113,10 @@ func (s *Server) routes() []route {
 		{"GET /v1/events", s.eventsWS},
 		{"GET /v1/events/stream", s.eventsSSE},
 		{"POST /v1/shutdown", s.shutdown},
+		{"POST /v1/estimate", s.estimate},
+		{"GET /v1/prices", s.prices},
+		{"PUT /v1/prices/{id...}", s.priceSet},
+		{"DELETE /v1/prices/{id...}", s.priceRemove},
 	}
 }
 

@@ -219,6 +219,7 @@ type harness struct {
 	dir      string
 	store    *store.Store
 	eng      *fakeEngine
+	reg      *provider.Registry
 	stopped  chan struct{}
 	stopOnce sync.Once
 }
@@ -259,7 +260,7 @@ func newHarness(t *testing.T) *harness {
 	keeper := cache.New(db, st, runner, cache.Limit(cfg), hub, log)
 	runner.OnIdle = keeper.Nudge
 	keeper.Start()
-	h := &harness{t: t, dir: dir, store: st, eng: eng, stopped: make(chan struct{})}
+	h := &harness{t: t, dir: dir, store: st, eng: eng, reg: reg, stopped: make(chan struct{})}
 	s := &api.Server{
 		Version: "test", DataDir: filepath.Join(dir, "data"), DB: db, Store: st, Hub: hub, Providers: reg, Catalog: cat,
 		Log: log, Config: cfg, Runner: runner, Cache: keeper, Installs: installs.New(reg, cat, hub, log),
