@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import gc
 import math
+import os
 from typing import Any
 
 import trimesh
@@ -148,23 +149,31 @@ class Hunyuan3D2MV(Adapter):
     def __init__(self) -> None:
         self.pipe: Any = None
         self.torch: Any = None
+        self.device = Device.CUDA
 
     def capabilities(self) -> Capabilities:
-        return Capabilities(tasks=(StageType.SHAPE,), devices=(Device.CUDA,), vram_bytes=6 * GB)
+        return Capabilities(tasks=(StageType.SHAPE,), devices=(Device.CUDA, Device.MPS), vram_bytes=6 * GB)
 
     def load(self, device: Device, dtype: str = "fp16") -> None:
+        if device is Device.MPS:
+            # Upstream's image encoder resizes on the device with antialias=True, and torch 2.5.1
+            # has no MPS kernel for aten::_upsample_bilinear2d_aa: that op (and any other without
+            # one) runs on the CPU instead of failing the stage. torch reads this when it loads.
+            os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
         import torch
         from hy3dgen.shapegen.pipelines import Hunyuan3DDiTFlowMatchingPipeline
 
         if self.weights_dir is None:
             raise RuntimeError("hunyuan3d2-mv: no weights folder; run forja models install")
         self.torch = torch
+        self.device = device
         folder = self.weights_dir / MV_TURBO
-        # From the pinned files: from_pretrained resolves the model through the Hub.
+        # From the pinned files: from_pretrained resolves the model through the Hub. fp16 on
+        # every device: the weights are fp16, and bf16 needs macOS 14 on MPS.
         self.pipe = Hunyuan3DDiTFlowMatchingPipeline.from_single_file(
             str(folder / "model.fp16.safetensors"),
             str(folder / "config.yaml"),
-            device="cuda",
+            device="mps" if device is Device.MPS else "cuda",
             dtype=torch.float16,
             use_safetensors=True,
         )
@@ -173,7 +182,7 @@ class Hunyuan3D2MV(Adapter):
         self.pipe = None
         gc.collect()
         if self.torch is not None:
-            self.torch.cuda.empty_cache()
+            (self.torch.mps if self.device is Device.MPS else self.torch.cuda).empty_cache()
 
     def run(self, ctx: StageContext) -> list[StageOutput]:
         torch = self.torch
@@ -188,13 +197,16 @@ class Hunyuan3D2MV(Adapter):
             if ctx.cancelled():
                 raise Cancelled(ctx.stage_id)
 
+        # Diffusers draws an MPS pipeline's noise on the CPU when the generator is there, which
+        # gives a seed the same noise on every Mac.
+        noise_on = "cpu" if self.device is Device.MPS else self.pipe.device
         meshes = self.pipe(
             image=images,
             num_inference_steps=steps,
             guidance_scale=float(ctx.params.get("guidance_scale", 5.0)),
             octree_resolution=int(ctx.params.get("octree_resolution", 380)),
             num_chunks=20000,
-            generator=torch.Generator(device=self.pipe.device).manual_seed(ctx.seed),
+            generator=torch.Generator(device=noise_on).manual_seed(ctx.seed),
             output_type="trimesh",
             callback=on_step,
             callback_steps=1,

@@ -307,7 +307,7 @@ function InstallDialog({ model: m, onClose }: { model: Model; onClose: () => voi
       <div className="dialog" role="dialog" aria-modal aria-label={`Install ${m.name}`} tabIndex={-1} ref={ref} onClick={(e) => e.stopPropagation()}>
         <h2>Install {m.name}</h2>
         <p className="muted">
-          {m.description} About {m.disk_gb?.toFixed(1) ?? '?'} GB on disk. <FitBadge fit={m.fit} />
+          {m.description} About {m.disk_gb?.toFixed(1) ?? '?'} GB on disk. <FitBadge fit={m.fit} on={m.runs_on} />
         </p>
         {!started && (
           <>

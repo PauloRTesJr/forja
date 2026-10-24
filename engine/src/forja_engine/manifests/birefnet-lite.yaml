@@ -11,7 +11,8 @@ license: { spdx: MIT, commercial: true, url: "https://github.com/ZhengPeng7/BiRe
 vram_gb: 0.8
 requirements:
   cuda: { status: supported }
-  mps: { status: supported }
+  # A Mac runs it on the CPU, as BiRefNet general.
+  mps: { status: unsupported }
   cpu: { status: supported }
 weights:
   hub: huggingface

@@ -45,6 +45,13 @@ if importlib.util.find_spec("torch"):
     assert torch.cuda.is_available(), "torch cannot see the GPU: check the NVIDIA driver"
     torch.ones(1, device="cuda")
 """
+_MPS_PROBE = """
+import importlib.util
+if importlib.util.find_spec("torch"):
+    import torch
+    assert torch.backends.mps.is_available(), "torch cannot see the Apple GPU: MPS needs macOS 12.3 or newer"
+    torch.ones(1, device="mps")
+"""
 
 # Shown in this order; each install reports every step as running, done, skipped or failed.
 STEPS = (
@@ -277,19 +284,21 @@ class Installer:
             return Path()
         fam = families.load(manifest.family)
         lane = lane or families.detect_lane()
-        if lane not in fam.lanes:
+        if lane not in fam.lanes or not manifest.runs_on_lane(lane):
             self.report.step("checks", "failed")
+            here = [x for x in fam.lanes if manifest.runs_on_lane(x)]
             raise InstallError(
-                f"{model_id} ({fam.name}) supports lanes {', '.join(fam.lanes)}; this machine is {lane}. "
+                f"{model_id} ({fam.name}) runs on lanes {', '.join(here) or 'none'}; this machine is {lane}. "
                 "Route this model to a remote provider instead."
             )
         started = time.monotonic()
         build_env = dict(fam.env)
         env_dir = self.envs_dir / fam.name
         python = families.interpreter(env_dir)
+        builds = fam.builds(lane)
 
         def checks() -> None:
-            if fam.build and (backend := fam.torch_backend.get(lane, "")).startswith("cu"):
+            if builds and (backend := fam.torch_backend.get(lane, "")).startswith("cu"):
                 try:
                     build_env.update(toolchain.build_env(backend, self.log))
                 except toolchain.ToolchainError as e:
@@ -302,7 +311,7 @@ class Installer:
             self.upstream(fam, env_dir, python)
 
         def build() -> None:
-            for spec in fam.build:
+            for spec in builds:
                 target = spec.replace("{upstream}", str(env_dir / "upstream"))
                 _run(
                     [uv_binary(), "pip", "install", "--python", python, "--no-build-isolation", target],
@@ -320,7 +329,7 @@ class Installer:
         self._step("checks", checks)
         self._step("environment", environment)
         self._step("upstream", upstream if fam.upstream else None)
-        self._step("build", build if fam.build else None)
+        self._step("build", build if builds else None)
         self._step("weights", fetch if weights and manifest.weights else None)
         self._step("smoke", smoke)
         self._record(env_dir, manifest, lane)
@@ -403,10 +412,12 @@ class Installer:
     def smoke(self, manifest: Manifest, fam: families.Family, python: Path, lane: str) -> None:
         module = manifest.adapter.partition(":")[0]
         _run([python, "-c", f"import {module}"], self.log, cancel=self.report.cancel)
-        if fam.smoke:
-            _run([python, "-c", fam.smoke], self.log, cancel=self.report.cancel)
+        if smoke := fam.smoke(lane):
+            _run([python, "-c", smoke], self.log, cancel=self.report.cancel)
         if lane in ("cuda", "rocm"):
             _run([python, "-c", _GPU_PROBE], self.log, cancel=self.report.cancel)
+        elif lane == "mps" and manifest.supports("mps"):
+            _run([python, "-c", _MPS_PROBE], self.log, cancel=self.report.cancel)
 
     def remove(self, model_id: str) -> None:
         """Delete a model's weights, and its family environment when nothing else uses it."""

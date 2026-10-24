@@ -7,6 +7,7 @@ owns around them: preprocessing, progress, cancellation, orientation, materials,
 import contextlib
 import importlib
 import math
+import os
 import sys
 import types
 from pathlib import Path
@@ -302,7 +303,8 @@ def hunyuan_mv(monkeypatch, fake_torch):
             return cls()
 
         def __call__(self, image, num_inference_steps, generator, callback, callback_steps, **kw):
-            seen.update(views=list(image), modes={i.mode for i in image.values()}, seed=generator.seed, kw=kw)
+            seen.update(views=list(image), modes={i.mode for i in image.values()}, kw=kw)
+            seen.update(seed=generator.seed, noise_on=generator.device)
             for i in range(num_inference_steps):
                 callback(i, None, None)
             return [trimesh.creation.box((1.0, 2.0, 0.5))]
@@ -338,8 +340,28 @@ def test_hunyuan_mv_loads_the_pinned_files_and_reads_views_in_order(tmp_path, hu
     c.progress = lambda i, n: steps.append((i, n))
     out = adapter.run(c)
     assert seen["views"] == ["front", "left", "back"] and seen["modes"] == {"RGBA"} and seen["seed"] == 7
+    assert seen["device"] == "cuda" and seen["noise_on"] == "cuda"
     assert steps == [(1, 3), (2, 3), (3, 3)]
     assert out[0].preview and mesh_ops.load(out[0].path).extents[1] == pytest.approx(2.0)
+
+
+def test_hunyuan_mv_on_an_apple_gpu(tmp_path, hunyuan_mv, monkeypatch):
+    from forja_hunyuan3d2 import Hunyuan3D2MV
+
+    _, seen = hunyuan_mv
+    monkeypatch.delenv("PYTORCH_ENABLE_MPS_FALLBACK", raising=False)
+    cleared = []
+    sys.modules["torch"].mps = types.SimpleNamespace(empty_cache=lambda: cleared.append("mps"))
+    a = Hunyuan3D2MV()
+    a.weights_dir = Path("/w")
+    a.load(Device.MPS)
+    assert seen["device"] == "mps" and seen["dtype"] == "fp16"
+    # Set before torch loads, so ops without an MPS kernel run on the CPU instead of failing.
+    assert os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] == "1"
+    a.run(ctx(tmp_path, StageType.SHAPE, [(rgba_subject(tmp_path), ArtifactKind.IMAGE_PNG)], steps=1))
+    assert seen["noise_on"] == "cpu" and seen["seed"] == 7  # the same noise on every Mac
+    a.unload()
+    assert cleared == ["mps"]
 
 
 def test_hunyuan_mv_needs_a_front_and_stops_when_cancelled(tmp_path, hunyuan_mv):

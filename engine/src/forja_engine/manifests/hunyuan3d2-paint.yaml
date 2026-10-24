@@ -18,6 +18,8 @@ license:
 vram_gb: 12.5
 requirements:
   cuda: { status: supported, min_vram_gb: 10 }
+  # Upstream renders through custom_rasterizer, a CUDAExtension with a .cu kernel, and builds
+  # its pipelines on "cuda".
   mps: { status: unsupported }
   cpu: { status: unsupported }
 weights:

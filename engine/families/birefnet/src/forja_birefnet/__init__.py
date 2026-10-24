@@ -1,6 +1,6 @@
 """BiRefNet background removal (MIT) through ONNX Runtime.
 
-One model file runs on CUDA, CoreML or CPU. The ONNX export expects a 1024x1024 RGB tensor
+One model file runs on CUDA or CPU. The ONNX export expects a 1024x1024 RGB tensor
 with ImageNet normalization and returns logits; the last output is the finest prediction.
 """
 
@@ -29,9 +29,9 @@ GB = 1 << 30
 
 _PROVIDERS = {
     Device.CUDA: ["CUDAExecutionProvider", "CPUExecutionProvider"],
-    # Not CoreML: loading this graph hung in the Neural Engine compiler (ORT 1.31, macOS 26),
-    # while the CPU provider runs a 1024x1024 pass in about 6 s on Apple Silicon.
-    Device.MPS: ["CPUExecutionProvider"],
+    # Also on a Mac, not CoreML: loading this graph hung in the Neural Engine compiler
+    # (ORT 1.31, macOS 26), while the CPU provider runs a 1024x1024 pass in about 6 s on Apple
+    # Silicon. The manifests place it on the CPU there.
     Device.CPU: ["CPUExecutionProvider"],
 }
 
@@ -59,7 +59,7 @@ class BiRefNet(Adapter):
     def capabilities(self) -> Capabilities:
         return Capabilities(
             tasks=(StageType.BACKGROUND_REMOVAL,),
-            devices=(Device.CUDA, Device.MPS, Device.CPU),
+            devices=(Device.CUDA, Device.CPU),
             vram_bytes=8 * GB,
         )
 

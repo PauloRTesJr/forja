@@ -7,6 +7,7 @@ import net from 'node:net'
 import { join, resolve } from 'node:path'
 import { promisify } from 'node:util'
 import { app } from 'electron'
+import { coreFileNames } from './binary'
 
 const run = promisify(execFile)
 
@@ -15,7 +16,11 @@ export type CoreEvent = { seq: number; type: string; data: unknown }
 export function coreBinary(): string {
   const exe = process.platform === 'win32' ? 'forja.exe' : 'forja'
   if (process.env.FORJA_CORE_BIN) return process.env.FORJA_CORE_BIN
-  if (app.isPackaged) return join(process.resourcesPath, 'bin', exe)
+  if (app.isPackaged) {
+    const names = coreFileNames(process.platform, process.arch)
+    const found = names.map((n) => join(process.resourcesPath, 'bin', n)).find((p) => existsSync(p))
+    return found ?? join(process.resourcesPath, 'bin', exe)
+  }
   return resolve(app.getAppPath(), '..', '..', 'core', 'bin', exe)
 }
 

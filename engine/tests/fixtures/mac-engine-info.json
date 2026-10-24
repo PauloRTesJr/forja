@@ -1,0 +1,69 @@
+{
+  "version": "0.1.0",
+  "api_version": "1.6.0",
+  "system": {
+    "os": "darwin",
+    "arch": "arm64",
+    "devices": [
+      {
+        "id": "mps",
+        "backend": "mps",
+        "name": "Apple M2 Pro GPU",
+        "vram_bytes": 22906503168,
+        "compute_capability": null,
+        "driver": "macOS 15.1"
+      },
+      {
+        "id": "cpu",
+        "backend": "cpu",
+        "name": "Apple M2 Pro",
+        "vram_bytes": 34359738368,
+        "compute_capability": null,
+        "driver": null
+      }
+    ],
+    "ram_total_bytes": 34359738368,
+    "ram_free_bytes": 21474836480,
+    "disk_free_bytes": 536870912000,
+    "onnx_providers": [
+      "CoreMLExecutionProvider",
+      "AzureExecutionProvider",
+      "CPUExecutionProvider"
+    ]
+  },
+  "fit_mode": "fit-first",
+  "stages": {
+    "framing": "1",
+    "mesh.cleanup": "2",
+    "mesh.decimate": "2",
+    "mesh.uv": "1",
+    "texture.match": "1",
+    "bake": "2",
+    "mesh.lods": "2",
+    "export": "1",
+    "views.detect": "1",
+    "views.split": "1"
+  },
+  "lanes": {
+    "mps": {
+      "budget_bytes": 21832761344,
+      "loaded": [],
+      "queued": 0,
+      "stats": {
+        "busy_seconds": 0.0,
+        "stages": 0,
+        "swaps": 0
+      }
+    },
+    "cpu": {
+      "budget_bytes": 33285996544,
+      "loaded": [],
+      "queued": 0,
+      "stats": {
+        "busy_seconds": 0.0,
+        "stages": 0,
+        "swaps": 0
+      }
+    }
+  }
+}

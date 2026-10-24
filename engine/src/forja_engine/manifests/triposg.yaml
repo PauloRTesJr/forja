@@ -11,6 +11,7 @@ license: { spdx: MIT, commercial: true, url: "https://github.com/VAST-AI-Researc
 vram_gb: 8
 requirements:
   cuda: { status: supported, min_vram_gb: 8, dtypes: [fp16, bf16] }
+  # Its mesh extraction needs diso's CUDA kernel (families/triposg/family.yaml).
   mps: { status: unsupported }
   cpu: { status: unsupported }
 weights:

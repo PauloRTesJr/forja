@@ -45,6 +45,7 @@ packages = ["src/forja_engine"]
 testpaths = ["tests"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
+markers = ["mps: needs an Apple Silicon Mac; skipped elsewhere, selected by the Apple Silicon workflow"]
 
 [tool.ruff]
 line-length = 110

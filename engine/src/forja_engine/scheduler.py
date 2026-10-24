@@ -323,13 +323,11 @@ class Scheduler:
         "fits" in the device's budget, "offload" runs with part of it in RAM (slower), "too-big"
         is below the model's minimum, "unsupported" has no device the model can use.
         """
-        req = manifest.requirements
         for dev, lane in self.lanes.items():
             backend = dev.split(":")[0]
-            spec = req.get(backend) or {}
-            status = spec.get("status", "supported" if backend in req else None)
-            if status not in ("supported", "experimental"):
+            if not manifest.supports(backend):
                 continue
+            spec = manifest.requirements.get(backend) or {}
             if lane.vram.budget < float(spec.get("min_vram_gb", 0)) * GB:
                 return dev, "too-big"
             if manifest.vram_bytes > lane.vram.budget:
@@ -343,11 +341,8 @@ class Scheduler:
             raise StageFailed(
                 f"model {manifest.id} is not installed here; run: forja models install {manifest.id}", False
             )
-        req = manifest.requirements
         for dev in self.lanes:
-            backend = dev.split(":")[0]
-            status = (req.get(backend) or {}).get("status", "supported" if backend in req else None)
-            if status in ("supported", "experimental"):
+            if manifest.supports(dev.split(":")[0]):
                 return dev
         raise StageFailed(f"{manifest.id} cannot run on this machine's devices: {list(self.lanes)}", False)
 

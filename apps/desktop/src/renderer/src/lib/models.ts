@@ -19,6 +19,12 @@ export const fitText: Record<Fit, string> = {
   hosted: 'Hosted',
 }
 
+/** How a model fits, said for the device it lands on: a model a Mac runs on its CPU fits no GPU. */
+export const fitLabel = (fit: Fit, device?: string | null): string => (fit === 'fits' && device === 'cpu' ? 'Runs on the CPU' : fitText[fit])
+
+/** A device id as people say it; NVIDIA devices keep their index (cuda:0). */
+export const deviceName = (device: string): string => ({ mps: 'Apple GPU', cpu: 'CPU' })[device] ?? device
+
 export const isInstalled = (m: Model): boolean => m.status === 'ready' || m.status === 'loaded'
 
 export const isHosted = (m: Model): boolean => m.fit === 'hosted'
@@ -28,12 +34,12 @@ export function runsOn(m: Model): Fact {
   if (isHosted(m)) return { value: m.provider_label, detail: 'In the cloud' }
   const where = m.provider === 'local' ? 'This computer' : m.provider_label
   if (isInstalled(m)) {
-    const notes = [m.device, m.status === 'loaded' && 'in VRAM', m.fit === 'offload' && 'with offload, slower']
+    const notes = [m.device && deviceName(m.device), m.status === 'loaded' && 'in VRAM', m.fit === 'offload' && 'with offload, slower']
     return { value: where, detail: notes.filter(Boolean).join(' · ') || undefined, tone: m.fit === 'offload' ? 'warn' : undefined }
   }
   switch (m.fit) {
     case 'fits':
-      return { value: where, detail: fitText.fits, tone: 'ok' }
+      return { value: where, detail: fitLabel('fits', m.runs_on), tone: 'ok' }
     case 'offload':
       return { value: where, detail: fitText.offload, tone: 'warn' }
     case 'too-big':
