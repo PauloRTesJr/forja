@@ -21,6 +21,7 @@ import (
 	"forja/internal/catalog"
 	"forja/internal/config"
 	"forja/internal/events"
+	"forja/internal/glb"
 	"forja/internal/installs"
 	"forja/internal/jobs"
 	"forja/internal/library"
@@ -49,62 +50,89 @@ type Server struct {
 	Log       *slog.Logger
 }
 
+type route struct {
+	pattern string
+	handler http.HandlerFunc
+}
+
+func (s *Server) routes() []route {
+	return []route{
+		{"GET /v1/health", s.health},
+		{"GET /v1/info", s.info},
+		{"GET /v1/config/effective", s.configEffective},
+		{"GET /v1/settings", s.settingsGet},
+		{"PATCH /v1/settings", s.settingsPatch},
+		{"POST /v1/settings/file", s.settingsFile},
+		{"GET /v1/diagnostics", s.diagnostics},
+		{"GET /v1/presets", s.presets},
+		{"GET /v1/providers", s.providers},
+		{"GET /v1/provider-kinds", s.providerKinds},
+		{"POST /v1/providers/test", s.providerTest},
+		{"POST /v1/providers", s.providerAdd},
+		{"DELETE /v1/providers/{id}", s.providerRemove},
+		{"PUT /v1/providers/{id}/token", s.providerToken},
+		{"GET /v1/providers/{id}/catalog", s.hubCatalog},
+		{"GET /v1/providers/{id}/thumbnail", s.hubThumbnail},
+		{"POST /v1/providers/{id}/models", s.hubModels},
+		{"DELETE /v1/providers/{id}/models", s.hubModels},
+		{"GET /v1/spend", s.spend},
+		{"GET /v1/share", s.shareGet},
+		{"PUT /v1/share", s.sharePut},
+		{"POST /v1/share/code", s.shareCode},
+		{"GET /v1/models", s.models},
+		{"POST /v1/models/{id}/install", s.modelInstall},
+		{"DELETE /v1/models/{id}", s.modelRemove},
+		{"PUT /v1/models/stages/{use}", s.modelStage},
+		{"GET /v1/checks", s.checks},
+		{"POST /v1/checks/{id}/fix", s.checkFix},
+		{"GET /v1/installs", s.installList},
+		{"DELETE /v1/installs/{provider}/{id}", s.installCancel},
+		{"GET /v1/setup", s.setup},
+		{"POST /v1/setup/test", s.setupTest},
+		{"POST /v1/engine/unload", s.engineUnload},
+		{"POST /v1/jobs", s.jobCreate},
+		{"GET /v1/jobs", s.jobList},
+		{"GET /v1/jobs/{id}", s.jobGet},
+		{"DELETE /v1/jobs/{id}", s.jobCancel},
+		{"POST /v1/jobs/{id}/sheet", s.jobSheet},
+		{"GET /v1/assets", s.assetList},
+		{"GET /v1/assets/{id}", s.assetGet},
+		{"PUT /v1/assets/{id}/thumbnail", s.assetThumbnail},
+		{"GET /v1/artifacts/{ref}", s.artifactGet},
+		{"PUT /v1/artifacts", s.artifactPut},
+		{"POST /v1/artifacts/import", s.artifactImport},
+		{"GET /v1/events", s.eventsWS},
+		{"GET /v1/events/stream", s.eventsSSE},
+		{"POST /v1/shutdown", s.shutdown},
+	}
+}
+
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /v1/health", func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(w, 200, map[string]string{"status": "ok"})
-	})
-	mux.HandleFunc("GET /v1/info", s.info)
-	mux.HandleFunc("GET /v1/config/effective", s.configEffective)
-	mux.HandleFunc("GET /v1/settings", s.settingsGet)
-	mux.HandleFunc("PATCH /v1/settings", s.settingsPatch)
-	mux.HandleFunc("POST /v1/settings/file", s.settingsFile)
-	mux.HandleFunc("GET /v1/diagnostics", s.diagnostics)
-	mux.HandleFunc("GET /v1/presets", s.presets)
-	mux.HandleFunc("GET /v1/providers", s.providers)
-	mux.HandleFunc("GET /v1/provider-kinds", s.providerKinds)
-	mux.HandleFunc("POST /v1/providers/test", s.providerTest)
-	mux.HandleFunc("POST /v1/providers", s.providerAdd)
-	mux.HandleFunc("DELETE /v1/providers/{id}", s.providerRemove)
-	mux.HandleFunc("PUT /v1/providers/{id}/token", s.providerToken)
-	mux.HandleFunc("GET /v1/providers/{id}/catalog", s.hubCatalog)
-	mux.HandleFunc("GET /v1/providers/{id}/thumbnail", s.hubThumbnail)
-	mux.HandleFunc("POST /v1/providers/{id}/models", s.hubModels)
-	mux.HandleFunc("DELETE /v1/providers/{id}/models", s.hubModels)
-	mux.HandleFunc("GET /v1/spend", s.spend)
-	mux.HandleFunc("GET /v1/share", s.shareGet)
-	mux.HandleFunc("PUT /v1/share", s.sharePut)
-	mux.HandleFunc("POST /v1/share/code", s.shareCode)
-	mux.HandleFunc("GET /v1/models", s.models)
-	mux.HandleFunc("POST /v1/models/{id}/install", s.modelInstall)
-	mux.HandleFunc("DELETE /v1/models/{id}", s.modelRemove)
-	mux.HandleFunc("PUT /v1/models/stages/{use}", s.modelStage)
-	mux.HandleFunc("GET /v1/checks", s.checks)
-	mux.HandleFunc("POST /v1/checks/{id}/fix", s.checkFix)
-	mux.HandleFunc("GET /v1/installs", s.installList)
-	mux.HandleFunc("DELETE /v1/installs/{provider}/{id}", s.installCancel)
-	mux.HandleFunc("GET /v1/setup", s.setup)
-	mux.HandleFunc("POST /v1/setup/test", s.setupTest)
-	mux.HandleFunc("POST /v1/engine/unload", s.engineUnload)
-	mux.HandleFunc("POST /v1/jobs", s.jobCreate)
-	mux.HandleFunc("GET /v1/jobs", s.jobList)
-	mux.HandleFunc("GET /v1/jobs/{id}", s.jobGet)
-	mux.HandleFunc("DELETE /v1/jobs/{id}", s.jobCancel)
-	mux.HandleFunc("POST /v1/jobs/{id}/sheet", s.jobSheet)
-	mux.HandleFunc("GET /v1/assets", s.assetList)
-	mux.HandleFunc("GET /v1/assets/{id}", s.assetGet)
-	mux.HandleFunc("PUT /v1/assets/{id}/thumbnail", s.assetThumbnail)
-	mux.HandleFunc("PATCH /v1/assets/{id}", s.assetPatch)
-	mux.HandleFunc("GET /v1/artifacts/{ref}", s.artifactGet)
-	mux.HandleFunc("PUT /v1/artifacts", s.artifactPut)
-	mux.HandleFunc("POST /v1/artifacts/import", s.artifactImport)
-	mux.HandleFunc("GET /v1/events", s.eventsWS)
-	mux.HandleFunc("GET /v1/events/stream", s.eventsSSE)
-	mux.HandleFunc("POST /v1/shutdown", func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusAccepted)
-		go s.Shutdown()
-	})
+	for _, r := range s.routes() {
+		mux.HandleFunc(r.pattern, r.handler)
+	}
 	return mux
+}
+
+// Routes lists every endpoint as its pattern, such as "GET /v1/jobs/{id}", so the CLI can
+// check that it reaches each one (docs/decisions.md, decision 18).
+func Routes() []string {
+	all := (&Server{}).routes()
+	out := make([]string, len(all))
+	for i, r := range all {
+		out[i] = r.pattern
+	}
+	return out
+}
+
+func (s *Server) health(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, 200, map[string]string{"status": "ok"})
+}
+
+func (s *Server) shutdown(w http.ResponseWriter, _ *http.Request) {
+	w.WriteHeader(http.StatusAccepted)
+	go s.Shutdown()
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
@@ -164,8 +192,8 @@ func (s *Server) configEffective(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, cfg)
 }
 
-// presetView is a preset plus how it would run right now: the model and provider per stage.
-type presetView struct {
+// PresetView is a preset plus how it would run right now: the model and provider per stage.
+type PresetView struct {
 	*presets.Preset
 	Builtin bool        `json:"builtin"`
 	Plan    []jobs.Pick `json:"plan"`
@@ -222,9 +250,9 @@ func (s *Server) presets(w http.ResponseWriter, r *http.Request) {
 	if q := r.URL.Query().Get("views"); q != "" {
 		views = strings.Split(q, ",")
 	}
-	list := make([]presetView, len(ordered))
+	list := make([]PresetView, len(ordered))
 	for i, p := range ordered {
-		v := presetView{Preset: p, Builtin: p.Builtin(), Plan: []jobs.Pick{}}
+		v := PresetView{Preset: p, Builtin: p.Builtin(), Plan: []jobs.Pick{}}
 		plan, err := s.Runner.Resolve(ctx, project, p, views)
 		if err != nil {
 			v.Error = err.Error()
@@ -379,6 +407,9 @@ func (s *Server) assetList(w http.ResponseWriter, r *http.Request) {
 	if list == nil {
 		list = []*library.Asset{}
 	}
+	for _, a := range list {
+		s.withStats(r.Context(), a)
+	}
 	writeJSON(w, 200, list)
 }
 
@@ -392,6 +423,7 @@ func (s *Server) assetGet(w http.ResponseWriter, r *http.Request) {
 		problem(w, 500, err.Error())
 		return
 	}
+	s.withStats(r.Context(), a)
 	writeJSON(w, 200, a)
 }
 
@@ -416,28 +448,21 @@ func (s *Server) assetThumbnail(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, a)
 }
 
-// assetPatch accepts viewer-computed stats (triangles, materials, texture sizes).
-func (s *Server) assetPatch(w http.ResponseWriter, r *http.Request) {
-	a, err := s.DB.Asset(r.Context(), r.PathValue("id"))
-	if err != nil {
-		problem(w, 404, "no asset "+r.PathValue("id"))
+// withStats reads the stats of an asset made before the core read them from its GLB. One
+// it cannot read gets empty stats, so it is tried once.
+func (s *Server) withStats(ctx context.Context, a *library.Asset) {
+	if a.Stats != nil {
 		return
 	}
-	var patch struct {
-		Stats map[string]any `json:"stats"`
+	a.Stats = map[string]any{}
+	if path, err := s.Store.Path(a.GLB); err == nil {
+		if st, err := glb.ReadFile(path); err == nil {
+			a.Stats = st.Map()
+		}
 	}
-	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&patch); err != nil {
-		problem(w, 400, err.Error())
-		return
+	if err := s.DB.SaveAsset(ctx, a); err != nil {
+		s.Log.Warn("saving asset stats", "asset", a.ID, "err", err)
 	}
-	if patch.Stats != nil {
-		a.Stats = patch.Stats
-	}
-	if err := s.DB.SaveAsset(r.Context(), a); err != nil {
-		problem(w, 500, err.Error())
-		return
-	}
-	writeJSON(w, 200, a)
 }
 
 func (s *Server) artifactGet(w http.ResponseWriter, r *http.Request) {

@@ -41,14 +41,9 @@ export function ensureThumbnail(asset: Asset, onDone: () => void): void {
   queue = queue
     .then(async () => {
       const v = offscreenViewer()
-      const stats = await v.load(artifactURL(asset.glb))
+      await v.load(artifactURL(asset.glb))
       const blob = await v.thumbnail(256)
       if (blob) await fetch(`${CORE}/v1/assets/${asset.id}/thumbnail`, { method: 'PUT', body: blob })
-      await fetch(`${CORE}/v1/assets/${asset.id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ stats: { triangles: stats.triangles, vertices: stats.vertices, lods: stats.lods } }),
-      })
       onDone()
     })
     .catch((err: unknown) => {

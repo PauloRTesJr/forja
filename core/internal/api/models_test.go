@@ -95,6 +95,12 @@ func (e *fakeEngine) CancelTask(context.Context, string) error                { 
 
 func server(t *testing.T) (*httptest.Server, *fakeEngine, *events.Hub) {
 	t.Helper()
+	ts, s, eng := newServer(t)
+	return ts, eng, s.Hub
+}
+
+func newServer(t *testing.T) (*httptest.Server, *Server, *fakeEngine) {
+	t.Helper()
 	dir := t.TempDir()
 	t.Setenv("FORJA_CONFIG_DIR", filepath.Join(dir, "config"))
 	st, _ := store.Open(filepath.Join(dir, "store"))
@@ -118,7 +124,7 @@ func server(t *testing.T) (*httptest.Server, *fakeEngine, *events.Hub) {
 	}
 	ts := httptest.NewServer(s.Handler())
 	t.Cleanup(ts.Close)
-	return ts, eng, hub
+	return ts, s, eng
 }
 
 func call(t *testing.T, ts *httptest.Server, method, path string, body any, out any) int {
@@ -142,7 +148,7 @@ func call(t *testing.T, ts *httptest.Server, method, path string, body any, out 
 
 func TestSetupRecommendsWhatThisMachineCanRun(t *testing.T) {
 	ts, _, _ := server(t)
-	var got setupView
+	var got SetupView
 	if code := call(t, ts, "GET", "/v1/setup", nil, &got); code != 200 {
 		t.Fatalf("status %d", code)
 	}
@@ -188,7 +194,7 @@ func TestRestrictedLicensesMustBeAcceptedOnce(t *testing.T) {
 	if code := call(t, ts, "POST", "/v1/models/paint/install", map[string]any{}, nil); code != 202 {
 		t.Fatalf("second install: status %d", code)
 	}
-	var models []modelView
+	var models []ModelView
 	call(t, ts, "GET", "/v1/models", nil, &models)
 	for _, m := range models {
 		if m.ID == "paint" && (m.AcceptedAt == nil || len(m.Uses) != 1 || m.Uses[0].Use != "texture") {
@@ -207,7 +213,7 @@ func TestPinningAModelWritesTheUserConfig(t *testing.T) {
 	if cfg.Models.Stages["shape"] != "shape" {
 		t.Fatalf("stages %v", cfg.Models.Stages)
 	}
-	var models []modelView
+	var models []ModelView
 	call(t, ts, "GET", "/v1/models?fresh=1", nil, &models)
 	for _, m := range models {
 		if m.ID == "shape" && (len(m.Uses) != 1 || !m.Uses[0].Pinned) {
@@ -226,9 +232,9 @@ func TestPinningAModelWritesTheUserConfig(t *testing.T) {
 func TestSettingsSayWhereEachValueComesFromAndSaveToTheUserFile(t *testing.T) {
 	ts, _, _ := server(t)
 	t.Setenv("FORJA_ENGINE__FIT_MODE", "quality-first")
-	var view settingsView
+	var view SettingsView
 	call(t, ts, "GET", "/v1/settings", nil, &view)
-	by := map[string]settingView{}
+	by := map[string]SettingView{}
 	for _, s := range view.Settings {
 		by[s.Key] = s
 	}
@@ -297,7 +303,7 @@ func TestAddingAComputerByCodeStoresItsTokenInTheKeychainOnly(t *testing.T) {
 	if strings.Join(cfg.Routing.Priority, ",") != "local,studio-pc" {
 		t.Fatalf("priority %v", cfg.Routing.Priority)
 	}
-	var rows []providerRow
+	var rows []ProviderRow
 	call(t, ts, "GET", "/v1/providers", nil, &rows)
 	if len(rows) != 2 || rows[1].Key == nil || rows[1].Key.Hint != "…6789" || !rows[1].Healthy {
 		t.Fatalf("rows %+v", rows)

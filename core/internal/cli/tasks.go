@@ -1,21 +1,18 @@
 package cli
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"slices"
-	"strings"
 	"time"
 
 	"forja/internal/installs"
 )
 
-// runTask starts an install or removal through the core, asking about the model's license
-// when it needs accepting, and prints its progress until it ends.
+// runTask starts an install, removal or fix through the core, asking about the model's
+// license when it needs accepting, and prints its progress until it ends.
 func (a *app) runTask(model, method, path string, body map[string]any, accept bool) error {
 	c, err := a.client()
 	if err != nil {
@@ -36,7 +33,7 @@ func (a *app) runTask(model, method, path string, body map[string]any, accept bo
 	err = c.Do(ctx, method, path, in, &entry)
 	var apiErr *APIError
 	if errors.As(err, &apiErr) && apiErr.Status == 409 && apiErr.Body["license"] != nil && body != nil {
-		if !confirmLicense(model, apiErr) {
+		if !a.confirmLicense(model, apiErr) {
 			return errors.New("the license was not accepted; nothing was installed")
 		}
 		body["accept_license"] = true
@@ -48,24 +45,22 @@ func (a *app) runTask(model, method, path string, body map[string]any, accept bo
 	return a.follow(ctx, c, evs, entry)
 }
 
-func confirmLicense(model string, prob *APIError) bool {
+func (a *app) confirmLicense(model string, prob *APIError) bool {
 	lic, _ := prob.Body["license"].(map[string]any)
-	fmt.Println(prob.Detail + ".")
+	a.printf("%s.\n", prob.Detail)
 	if rs, _ := lic["restrictions"].([]any); len(rs) > 0 {
 		for _, r := range rs {
-			fmt.Printf("  - %v\n", r)
+			a.printf("  - %v\n", r)
 		}
 	}
 	if u, _ := lic["url"].(string); u != "" {
-		fmt.Println("  License text: " + u)
+		a.printf("  License text: %s\n", u)
 	}
-	if st, err := os.Stdin.Stat(); err != nil || st.Mode()&os.ModeCharDevice == 0 {
-		fmt.Println("Re-run with --accept-license to accept it.")
+	if !a.tty {
+		a.printf("Re-run with --accept-license to accept it.\n")
 		return false
 	}
-	fmt.Printf("Accept the license of %s? [y/N] ", model)
-	answer, _ := bufio.NewReader(os.Stdin).ReadString('\n')
-	return strings.EqualFold(strings.TrimSpace(answer), "y") || strings.EqualFold(strings.TrimSpace(answer), "yes")
+	return a.confirm("Accept the license of " + model + "?")
 }
 
 // follow prints a task's steps, new log lines and download progress until it ends; Ctrl-C
@@ -85,20 +80,20 @@ func (a *app) follow(ctx context.Context, c *Client, evs <-chan Event, e install
 			steps[s.ID] = s.Status
 			switch s.Status {
 			case "running":
-				fmt.Printf("→ %s\n", s.Label)
+				a.printf("→ %s\n", s.Label)
 			case "done":
-				fmt.Printf("✓ %s\n", s.Label)
+				a.printf("✓ %s\n", s.Label)
 			case "failed":
-				fmt.Printf("✗ %s\n", s.Label)
+				a.printf("✗ %s\n", s.Label)
 			}
 		}
 		for _, line := range newLines(lastLog, e.Log) {
-			fmt.Println("    " + line)
+			a.printf("    %s\n", line)
 		}
 		lastLog = e.Log
 		if p := e.Progress; p != nil && p.Total > 0 && p.Done*10/p.Total != tenth {
 			tenth = p.Done * 10 / p.Total
-			fmt.Printf("    %.1f of %.1f GB\n", float64(p.Done)/(1<<30), float64(p.Total)/(1<<30))
+			a.printf("    %.1f of %.1f GB\n", float64(p.Done)/(1<<30), float64(p.Total)/(1<<30))
 		}
 	}
 	show(e)

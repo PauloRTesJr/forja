@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -23,25 +24,42 @@ type Client struct {
 func NewClient(addr string) *Client { return &Client{addr: addr, http: ipc.HTTPClient(addr)} }
 
 func (c *Client) Do(ctx context.Context, method, path string, in, out any) error {
+	body, err := c.Open(ctx, method, path, in)
+	if err != nil {
+		return err
+	}
+	defer body.Close()
+	if out != nil {
+		err = json.NewDecoder(body).Decode(out)
+		if errors.Is(err, io.EOF) { // 202 and 204 answers may have no body
+			err = nil
+		}
+	}
+	return err
+}
+
+// Open sends a request and returns the answer's body, for answers that are not JSON (an
+// artifact, the diagnostics report). The caller closes it.
+func (c *Client) Open(ctx context.Context, method, path string, in any) (io.ReadCloser, error) {
 	var body io.Reader
 	if in != nil {
 		raw, err := json.Marshal(in)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		body = bytes.NewReader(raw)
 	}
 	req, err := http.NewRequestWithContext(ctx, method, ipc.BaseURL+path, body)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	defer resp.Body.Close()
 	if resp.StatusCode >= 400 {
+		defer resp.Body.Close()
 		raw, _ := io.ReadAll(resp.Body)
 		e := &APIError{Status: resp.StatusCode, Body: map[string]any{}}
 		if json.Unmarshal(raw, &e.Body) == nil {
@@ -50,12 +68,9 @@ func (c *Client) Do(ctx context.Context, method, path string, in, out any) error
 		if e.Detail == "" {
 			e.Detail = fmt.Sprintf("%s: %s", resp.Status, raw)
 		}
-		return e
+		return nil, e
 	}
-	if out != nil {
-		return json.NewDecoder(resp.Body).Decode(out)
-	}
-	return nil
+	return resp.Body, nil
 }
 
 // APIError is a problem document from the core; Body holds its extension members.

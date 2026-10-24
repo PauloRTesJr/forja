@@ -1067,11 +1067,12 @@ func (r *Runner) createAsset(ctx context.Context, a *active, plan *planner.Plan,
 		ID: ulid.Make().String(), JobID: job.ID, Name: job.Name, Preset: job.Preset, GLB: last.Outputs[0].Hash,
 		Input: job.Input, Project: job.Project, CreatedAt: time.Now(),
 	}
+	glbPath, err := r.store.Path(asset.GLB)
+	if err != nil {
+		return err
+	}
+	asset.Stats = AssetStats(glbPath, r.log)
 	if job.Project != "" {
-		glbPath, err := r.store.Path(asset.GLB)
-		if err != nil {
-			return err
-		}
 		side := export.Sidecar{
 			Generator: "forja " + r.version, JobID: job.ID, AssetID: asset.ID, Preset: job.Preset,
 			Input: job.Input, CreatedAt: asset.CreatedAt,
