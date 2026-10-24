@@ -51,7 +51,7 @@ func (s *Server) hubAdd(w http.ResponseWriter, r *http.Request, vendor, key stri
 		_ = config.Edit(config.UserFile(), map[string]any{"routing.priority": anySlice(priority)}, validateUser)
 	}
 	s.rebuild(pc)
-	writeJSON(w, 201, map[string]any{"id": id, "label": pc.Label})
+	writeJSON(w, 201, AddedProvider{ID: id, Label: pc.Label})
 }
 
 func validateUser() error {
@@ -185,7 +185,14 @@ func (s *Server) hubModels(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(204)
 }
 
-// spend is what paid providers cost today and this month, next to the limits.
+// SpendView is what paid providers cost today and this month, next to the limits.
+type SpendView struct {
+	Currency string        `json:"currency"`
+	Today    float64       `json:"today"`
+	Month    float64       `json:"month"`
+	Limits   config.Budget `json:"limits"`
+}
+
 func (s *Server) spend(w http.ResponseWriter, r *http.Request) {
 	cfg, err := s.Runner.Config("")
 	if err != nil {
@@ -199,5 +206,5 @@ func (s *Server) spend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	month, _ := s.DB.Spent(r.Context(), time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location()))
-	writeJSON(w, 200, map[string]any{"currency": "USD", "today": today, "month": month, "limits": cfg.Routing.Budget})
+	writeJSON(w, 200, SpendView{Currency: "USD", Today: today, Month: month, Limits: cfg.Routing.Budget})
 }

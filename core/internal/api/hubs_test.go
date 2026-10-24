@@ -83,9 +83,9 @@ func TestAHubConnectsWithAKeyAndItsModelsCanBePinned(t *testing.T) {
 		t.Fatal("the key is in config.toml")
 	}
 
-	var models []modelView
+	var models []ModelView
 	call(t, ts, "GET", "/v1/models?all=1&fresh=1", nil, &models)
-	hosted := map[string]modelView{}
+	hosted := map[string]ModelView{}
 	for _, m := range models {
 		if m.Provider == "fal" {
 			hosted[m.ID] = m
@@ -103,7 +103,7 @@ func TestAHubConnectsWithAKeyAndItsModelsCanBePinned(t *testing.T) {
 	if code := call(t, ts, "PUT", "/v1/models/stages/shape", map[string]string{"model": "fal-ai/trellis-2", "provider": "fal"}, nil); code != 204 {
 		t.Fatalf("pin: %d", code)
 	}
-	var presets []presetView
+	var presets []PresetView
 	call(t, ts, "GET", "/v1/presets", nil, &presets)
 	for _, p := range presets {
 		if p.ID != "mobile-prop" {

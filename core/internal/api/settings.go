@@ -41,7 +41,7 @@ var settingKinds = map[string]string{
 	"models.stubs":                 "bool",
 }
 
-type settingView struct {
+type SettingView struct {
 	Key     string `json:"key"`
 	Value   any    `json:"value"`
 	Default any    `json:"default"`
@@ -49,8 +49,8 @@ type settingView struct {
 	Source string `json:"source"`
 }
 
-type settingsView struct {
-	Settings []settingView     `json:"settings"`
+type SettingsView struct {
+	Settings []SettingView     `json:"settings"`
 	Files    map[string]string `json:"files"`
 	DataDir  string            `json:"data_dir"`
 	// Engine says when engine settings take effect: "restarted", "next-start" or "".
@@ -70,7 +70,7 @@ func lookup(tree map[string]any, key string) any {
 	return cur
 }
 
-func (s *Server) settingsView(project string) (*settingsView, error) {
+func (s *Server) settingsFor(project string) (*SettingsView, error) {
 	cfg, err := s.Runner.Config(project)
 	if err != nil {
 		return nil, err
@@ -78,7 +78,7 @@ func (s *Server) settingsView(project string) (*settingsView, error) {
 	raw, _ := json.Marshal(cfg.Config)
 	effective := map[string]any{}
 	_ = json.Unmarshal(raw, &effective)
-	view := &settingsView{Files: map[string]string{"user": config.UserFile()}, DataDir: s.DataDir}
+	view := &SettingsView{Files: map[string]string{"user": config.UserFile()}, DataDir: s.DataDir}
 	if project != "" {
 		view.Files["project"] = filepath.Join(project, "forja.toml")
 	}
@@ -87,7 +87,7 @@ func (s *Server) settingsView(project string) (*settingsView, error) {
 		if src == "" {
 			src = "default"
 		}
-		view.Settings = append(view.Settings, settingView{
+		view.Settings = append(view.Settings, SettingView{
 			Key: key, Value: lookup(effective, key), Default: lookup(config.Defaults(), key), Source: src,
 		})
 	}
@@ -96,7 +96,7 @@ func (s *Server) settingsView(project string) (*settingsView, error) {
 }
 
 func (s *Server) settingsGet(w http.ResponseWriter, r *http.Request) {
-	view, err := s.settingsView(r.URL.Query().Get("project"))
+	view, err := s.settingsFor(r.URL.Query().Get("project"))
 	if err != nil {
 		problem(w, 422, err.Error())
 		return
@@ -188,7 +188,7 @@ func (s *Server) settingsPatch(w http.ResponseWriter, r *http.Request) {
 		problem(w, 422, err.Error())
 		return
 	}
-	view, err := s.settingsView(body.Project)
+	view, err := s.settingsFor(body.Project)
 	if err != nil {
 		problem(w, 422, err.Error())
 		return
@@ -257,7 +257,7 @@ func (s *Server) diagnostics(w http.ResponseWriter, r *http.Request) {
 		}
 		section("Models", ms)
 	}
-	if view, err := s.settingsView(""); err == nil {
+	if view, err := s.settingsFor(""); err == nil {
 		section("Settings", view.Settings)
 	}
 	if cfg, err := s.Runner.Config(""); err == nil {

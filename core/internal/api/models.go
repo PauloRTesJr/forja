@@ -23,21 +23,21 @@ import (
 //go:embed sample.png
 var sample []byte
 
-// modelView is a provider's model plus what only the core knows: license acceptance and
+// ModelView is a provider's model plus what only the core knows: license acceptance and
 // which stages it does now.
-type modelView struct {
+type ModelView struct {
 	engineapi.Model
 	Provider        string     `json:"provider"`
 	ProviderLabel   string     `json:"provider_label"`
 	Paid            bool       `json:"paid"`
 	NeedsAcceptance bool       `json:"needs_acceptance"`
 	AcceptedAt      *time.Time `json:"accepted_at,omitempty"`
-	Uses            []modelUse `json:"uses"`
+	Uses            []ModelUse `json:"uses"`
 }
 
-// modelUse is a stage type the model does when a preset leaves it open; pinned in config or
+// ModelUse is a stage type the model does when a preset leaves it open; pinned in config or
 // picked by rank.
-type modelUse struct {
+type ModelUse struct {
 	Use    string `json:"use"`
 	Pinned bool   `json:"pinned"`
 }
@@ -78,7 +78,7 @@ func (s *Server) models(w http.ResponseWriter, r *http.Request) {
 	}
 	accepted, _ := s.DB.Acceptances(r.Context())
 	auto := map[string]jobs.Pick{}
-	out := []modelView{}
+	out := []ModelView{}
 	for _, id := range ids {
 		e, err := get(r.Context(), id)
 		if err != nil {
@@ -89,7 +89,7 @@ func (s *Server) models(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		for _, m := range e.Models {
-			v := modelView{Model: m, Provider: id, ProviderLabel: orID(labels[id], id), Uses: []modelUse{},
+			v := ModelView{Model: m, Provider: id, ProviderLabel: orID(labels[id], id), Uses: []ModelUse{},
 				NeedsAcceptance: m.License.NeedsAcceptance()}
 			if p, ok := s.Providers.Get(id); ok {
 				v.Paid = p.Paid()
@@ -100,7 +100,7 @@ func (s *Server) models(w http.ResponseWriter, r *http.Request) {
 			for _, use := range m.Tasks {
 				if pin := cfg.Models.Stages[use]; pin != "" {
 					if pin == m.ID && (cfg.Routing.Stages[use] == "" || cfg.Routing.Stages[use] == id) {
-						v.Uses = append(v.Uses, modelUse{Use: use, Pinned: true})
+						v.Uses = append(v.Uses, ModelUse{Use: use, Pinned: true})
 					}
 					continue
 				}
@@ -110,7 +110,7 @@ func (s *Server) models(w http.ResponseWriter, r *http.Request) {
 					auto[use] = pick
 				}
 				if pick.Model == m.ID && pick.Provider == id {
-					v.Uses = append(v.Uses, modelUse{Use: use})
+					v.Uses = append(v.Uses, ModelUse{Use: use})
 				}
 			}
 			out = append(out, v)
@@ -295,8 +295,8 @@ func (s *Server) installCancel(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(202)
 }
 
-// setupStage is how one stage type that presets need is covered.
-type setupStage struct {
+// SetupStage is how one stage type that presets need is covered.
+type SetupStage struct {
 	Use string `json:"use"`
 	// ready: a provider has a model for it; install: this machine can run the model below;
 	// remote: no model runs here, so it needs another computer or a cloud provider.
@@ -308,9 +308,9 @@ type setupStage struct {
 	Fit       string  `json:"fit,omitempty"`
 }
 
-type setupView struct {
+type SetupView struct {
 	System  map[string]any `json:"system"`
-	Stages  []setupStage   `json:"stages"`
+	Stages  []SetupStage   `json:"stages"`
 	Install []string       `json:"install"`
 	DiskGB  float64        `json:"disk_gb"`
 	Ready   bool           `json:"ready"`
@@ -356,9 +356,9 @@ func (s *Server) setup(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	view := setupView{System: local.System, Stages: []setupStage{}, Install: []string{}, Ready: true}
+	view := SetupView{System: local.System, Stages: []SetupStage{}, Install: []string{}, Ready: true}
 	for _, use := range uses {
-		st := setupStage{Use: use}
+		st := SetupStage{Use: use}
 		if pick, ok := covered[use]; ok {
 			st.Status, st.Model, st.ModelName, st.Provider = "ready", pick.Model, pick.ModelName, pick.Provider
 			view.Stages = append(view.Stages, st)

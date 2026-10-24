@@ -29,14 +29,14 @@ import (
 // EvProvidersChanged tells clients that providers or sharing changed.
 const EvProvidersChanged = "providers.changed"
 
-type keyView struct {
+type KeyView struct {
 	Stored bool   `json:"stored"`
 	Hint   string `json:"hint,omitempty"`
 	// Store names where the key lives, such as "Windows Credential Manager".
 	Store string `json:"store"`
 }
 
-type providerRow struct {
+type ProviderRow struct {
 	ID          string   `json:"id"`
 	Label       string   `json:"label"`
 	Kind        string   `json:"kind"`
@@ -46,7 +46,7 @@ type providerRow struct {
 	Latency     int64    `json:"latency_ms"`
 	Error       string   `json:"error,omitempty"`
 	Fingerprint string   `json:"fingerprint,omitempty"`
-	Key         *keyView `json:"key,omitempty"`
+	Key         *KeyView `json:"key,omitempty"`
 	// Editable is false for providers set in a system or project file, which the app leaves alone.
 	Editable bool `json:"editable"`
 }
@@ -63,18 +63,18 @@ func (s *Server) providers(w http.ResponseWriter, r *http.Request) {
 	}
 	src := cfg.Sources["providers"]
 	all := s.Providers.All()
-	rows := make([]providerRow, len(all))
+	rows := make([]ProviderRow, len(all))
 	var wg sync.WaitGroup
 	for i, p := range all {
 		pc := byID[p.ID()]
-		row := providerRow{ID: p.ID(), Label: pc.Label, Kind: string(p.Kind()), URL: pc.URL, Paid: p.Paid(),
+		row := ProviderRow{ID: p.ID(), Label: pc.Label, Kind: string(p.Kind()), URL: pc.URL, Paid: p.Paid(),
 			Fingerprint: tlscert.Short(pc.Fingerprint), Editable: p.ID() != jobs.LocalProvider && (src == "" || src == "user")}
 		if row.Label == "" {
 			row.Label = p.ID()
 		}
 		if pc.Secret != "" {
 			hint, ok := secrets.Hint(pc.Secret)
-			row.Key = &keyView{Stored: ok, Hint: hint, Store: secrets.Store()}
+			row.Key = &KeyView{Stored: ok, Hint: hint, Store: secrets.Store()}
 		}
 		rows[i] = row
 		wg.Add(1)
@@ -104,7 +104,7 @@ func (s *Server) providerKinds(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, 200, providers.Kinds())
 }
 
-type probeView struct {
+type ProbeView struct {
 	URL         string `json:"url"`
 	Version     string `json:"version"`
 	GPU         string `json:"gpu,omitempty"`
@@ -124,8 +124,8 @@ func gpuName(system map[string]any) string {
 	return ""
 }
 
-func probeOf(u string, p *engine.Probe) probeView {
-	return probeView{URL: u, Version: p.Info.Version, GPU: gpuName(p.Info.System), Fingerprint: tlscert.Short(p.Fingerprint),
+func probeOf(u string, p *engine.Probe) ProbeView {
+	return ProbeView{URL: u, Version: p.Info.Version, GPU: gpuName(p.Info.System), Fingerprint: tlscert.Short(p.Fingerprint),
 		Latency: p.Latency.Milliseconds()}
 }
 
@@ -256,7 +256,15 @@ func (s *Server) providerAdd(w http.ResponseWriter, r *http.Request) {
 	s.Providers.Add(p)
 	go func() { _, _ = s.Catalog.Ask(context.Background(), id) }()
 	s.Hub.Publish(EvProvidersChanged, map[string]string{"provider": id})
-	writeJSON(w, 201, map[string]any{"id": id, "label": label, "probe": probeOf(u, probe)})
+	probed := probeOf(u, probe)
+	writeJSON(w, 201, AddedProvider{ID: id, Label: label, Probe: &probed})
+}
+
+// AddedProvider is the provider a POST /v1/providers made; Probe is set for another computer.
+type AddedProvider struct {
+	ID    string     `json:"id"`
+	Label string     `json:"label"`
+	Probe *ProbeView `json:"probe,omitempty"`
 }
 
 func anySlice(xs []string) []any {
@@ -361,7 +369,7 @@ func (s *Server) providerToken(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(204)
 }
 
-type shareView struct {
+type ShareView struct {
 	// Enabled is the setting; Active says the running engine serves the network now.
 	Enabled     bool     `json:"enabled"`
 	Active      bool     `json:"active"`
@@ -372,13 +380,13 @@ type shareView struct {
 	Pending string `json:"pending,omitempty"`
 }
 
-func (s *Server) share() (*shareView, error) {
+func (s *Server) share() (*ShareView, error) {
 	cfg, err := config.Load("", nil)
 	if err != nil {
 		return nil, err
 	}
 	sh := s.Engine.Sharing()
-	view := &shareView{Enabled: cfg.Engine.Share, Active: sh.Port != 0, Port: cfg.Engine.SharePort, Addresses: []string{},
+	view := &ShareView{Enabled: cfg.Engine.Share, Active: sh.Port != 0, Port: cfg.Engine.SharePort, Addresses: []string{},
 		Fingerprint: tlscert.Short(sh.Fingerprint)}
 	for _, ip := range tlscert.Addresses() {
 		if ip.To4() != nil {
@@ -446,5 +454,10 @@ func (s *Server) shareCode(w http.ResponseWriter, r *http.Request) {
 		problem(w, 409, err.Error())
 		return
 	}
-	writeJSON(w, 200, map[string]any{"code": code[:3] + " " + code[3:], "expires_at": time.Now().Add(ttl)})
+	writeJSON(w, 200, PairingCode{Code: code[:3] + " " + code[3:], ExpiresAt: time.Now().Add(ttl)})
+}
+
+type PairingCode struct {
+	Code      string    `json:"code"`
+	ExpiresAt time.Time `json:"expires_at"`
 }
