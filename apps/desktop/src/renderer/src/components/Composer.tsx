@@ -1,4 +1,5 @@
 import { useMutation, useQuery } from '@tanstack/react-query'
+import { Fragment, type ReactNode } from 'react'
 import { api, fetchModels, pinModel, type Model, type Pick, type Preset } from '../lib/api'
 import { keys } from '../lib/events'
 import { money, PER_CALL, stageLabel } from '../lib/format'
@@ -45,8 +46,40 @@ export function estimate(plan: Pick[]): { usd: number; unknown: string[]; hosts:
 }
 
 /**
- * How an image becomes an asset: the quality (a preset's budget) and the model of each step.
- * A model chosen here is the same setting as "Use for this stage" on the Models screen.
+ * One step of the recipe: a node on the rail, its label, and what to choose for it. An "off"
+ * node is an optional step that will not run.
+ */
+function Step({
+  label,
+  htmlFor,
+  node = 'on',
+  children,
+}: {
+  label?: string
+  htmlFor?: string
+  node?: 'on' | 'off'
+  children: ReactNode
+}) {
+  return (
+    <div className={`step ${label ? '' : 'bare'}`} data-node={node}>
+      <span className="step-node" aria-hidden />
+      {label &&
+        (htmlFor ? (
+          <label className="step-label" htmlFor={htmlFor}>
+            {label}
+          </label>
+        ) : (
+          <span className="step-label">{label}</span>
+        ))}
+      <div className="step-body">{children}</div>
+    </div>
+  )
+}
+
+/**
+ * How an image becomes an asset, in the order it goes through: the quality (a preset's
+ * budget), the model of each step and the optional steps. A model chosen here is the same
+ * setting as "Use for this stage" on the Models screen.
  */
 export function Composer({
   presets,
@@ -75,97 +108,97 @@ export function Composer({
   const byStage = new Map(current.plan.map((p) => [p.stage, p]))
   const isOptional = new Set(current.stages.filter((s) => s.optional).map((s) => s.id))
   // A skipped optional step just goes away with its switch; it has no model to stand in for.
-  const rows = current.plan.filter((p) => p.model || p.missing || (p.skipped && !isOptional.has(p.stage)))
-  const optional = current.stages.filter((s) => s.optional && !byStage.get(s.id)?.skipped)
+  const rows = new Map(
+    current.plan.filter((p) => p.model || p.missing || (p.skipped && !isOptional.has(p.stage))).map((p) => [p.stage, p]),
+  )
   const cost = estimate(current.plan)
 
   return (
-    <div className="composer">
-      <div className="composer-row">
-        <span className="composer-label">Quality</span>
-        <div className="quality" role="radiogroup" aria-label="Quality">
-          {presets.map((p) => (
-            <button
-              key={p.id}
-              role="radio"
-              aria-checked={p.id === preset}
-              className={`quality-option ${p.ready ? '' : 'unready'}`}
-              onClick={() => onPreset(p.id)}
-            >
-              <span className="quality-emblem" aria-hidden>
-                <PresetEmblem id={p.id} />
-              </span>
-              {p.name}
-            </button>
-          ))}
-        </div>
-      </div>
-      <p className="composer-note">{current.description}</p>
-
-      {rows.map((row) => {
-        const by = row.by ? byStage.get(row.by) : undefined
-        return (
-          <div className="composer-row" key={row.stage}>
-            <label className="composer-label" htmlFor={`model-${row.stage}`}>
-              {stageLabel(row.use)}
-            </label>
-            {row.skipped ? (
-              <span className="composer-skip">
-                Done by {by?.model_name || by?.model} in the {stageLabel(by?.use ?? '').toLowerCase()} step
-              </span>
-            ) : (
-              <select
-                id={`model-${row.stage}`}
-                className="input composer-select"
-                value={pins[row.use] ? `${row.provider}|${row.model}` : ''}
-                disabled={pin.isPending}
-                onChange={(e) => {
-                  const [provider, ...model] = e.target.value.split('|')
-                  pin.mutate({ use: row.use, model: model.join('|'), provider: provider || undefined })
-                }}
+    <>
+      <div className="composer">
+        <Step label="Quality">
+          <div className="quality" role="radiogroup" aria-label="Quality">
+            {presets.map((p) => (
+              <button
+                key={p.id}
+                role="radio"
+                aria-checked={p.id === preset}
+                className={`quality-option ${p.ready ? '' : 'unready'}`}
+                onClick={() => onPreset(p.id)}
               >
-                <option value="">
-                  {pins[row.use] ? 'Automatic' : `Automatic · ${row.model_name || row.model || 'none installed'}`}
-                </option>
-                {groupsFor(models.data ?? [], row.use, stubs, pins[row.use]).map(([label, list]) => (
-                  <optgroup key={label} label={label}>
-                    {list.map((m) => (
-                      <option key={`${m.provider}|${m.id}`} value={`${m.provider}|${m.id}`} disabled={!ready(m)}>
-                        {optionLabel(m)}
-                      </option>
-                    ))}
-                  </optgroup>
-                ))}
-              </select>
-            )}
+                <span className="quality-emblem" aria-hidden>
+                  <PresetEmblem id={p.id} />
+                </span>
+                {p.name}
+              </button>
+            ))}
           </div>
-        )
-      })}
+          <p className="composer-note">{current.description}</p>
+        </Step>
 
-      {optional.length > 0 && (
-        <div className="options">
-          {optional.map((s) => {
-            const on = isOn(s.id, s.optional!.default)
-            const help = s.optional!.help
-            return (
-              <span key={s.id} className="option">
-                <button className="switch" role="switch" aria-checked={on} onClick={() => onToggle(s.id, !on)}>
-                  <span className="switch-track" aria-hidden />
-                  {s.optional!.label}
-                </button>
-                {help && (
-                  <span className="help" tabIndex={0} aria-label={help}>
-                    ?
-                    <span className="help-tip" role="tooltip" aria-hidden>
-                      {help}
+        {current.stages.map((s) => {
+          const row = rows.get(s.id)
+          const by = row?.by ? byStage.get(row.by) : undefined
+          const optional = s.optional && !byStage.get(s.id)?.skipped ? s.optional : undefined
+          const on = optional ? isOn(s.id, optional.default) : false
+          if (!row && !optional) return null
+          return (
+            <Fragment key={s.id}>
+              {row && (
+                <Step label={stageLabel(row.use)} htmlFor={row.skipped ? undefined : `model-${row.stage}`}>
+                  {row.skipped ? (
+                    <span className="composer-skip">
+                      Done by {by?.model_name || by?.model} in the {stageLabel(by?.use ?? '').toLowerCase()} step
                     </span>
+                  ) : (
+                    <select
+                      id={`model-${row.stage}`}
+                      className="input composer-select"
+                      value={pins[row.use] ? `${row.provider}|${row.model}` : ''}
+                      disabled={pin.isPending}
+                      onChange={(e) => {
+                        const [provider, ...model] = e.target.value.split('|')
+                        pin.mutate({ use: row.use, model: model.join('|'), provider: provider || undefined })
+                      }}
+                    >
+                      <option value="">
+                        {pins[row.use] ? 'Automatic' : `Automatic · ${row.model_name || row.model || 'none installed'}`}
+                      </option>
+                      {groupsFor(models.data ?? [], row.use, stubs, pins[row.use]).map(([label, list]) => (
+                        <optgroup key={label} label={label}>
+                          {list.map((m) => (
+                            <option key={`${m.provider}|${m.id}`} value={`${m.provider}|${m.id}`} disabled={!ready(m)}>
+                              {optionLabel(m)}
+                            </option>
+                          ))}
+                        </optgroup>
+                      ))}
+                    </select>
+                  )}
+                </Step>
+              )}
+              {optional && (
+                <Step node={on ? 'on' : 'off'}>
+                  <span className="option">
+                    <button className="switch" role="switch" aria-checked={on} onClick={() => onToggle(s.id, !on)}>
+                      <span className="switch-track" aria-hidden />
+                      {optional.label}
+                    </button>
+                    {optional.help && (
+                      <span className="help" tabIndex={0} aria-label={optional.help}>
+                        ?
+                        <span className="help-tip" role="tooltip" aria-hidden>
+                          {optional.help}
+                        </span>
+                      </span>
+                    )}
                   </span>
-                )}
-              </span>
-            )
-          })}
-        </div>
-      )}
+                </Step>
+              )}
+            </Fragment>
+          )
+        })}
+      </div>
 
       {(cost.usd > 0 || cost.unknown.length > 0) && (
         <p className="composer-cost">
@@ -179,6 +212,6 @@ export function Composer({
           The reference image is sent there; the asset comes back to this computer.
         </p>
       )}
-    </div>
+    </>
   )
 }

@@ -42,22 +42,24 @@ export function Star({ size = 18, className }: IconProps) {
   )
 }
 
-export function BrandMark({ size = 36 }: IconProps) {
-  return (
-    <svg aria-hidden width={size} height={size} viewBox="0 0 40 40" fill="none">
-      <path d="M26 5a16 16 0 1 0 9 20a12 12 0 0 1 -9 -20z" stroke="var(--accent)" strokeWidth="1.4" strokeLinejoin="round" />
-      <path d="M31 8Q32 13 37 14Q32 15 31 20Q30 15 25 14Q30 13 31 8Z" fill="var(--accent-hi)" />
-      <circle cx="9" cy="33" r="1" fill="var(--accent)" />
-      <circle cx="4" cy="22" r="0.8" fill="var(--accent)" />
-    </svg>
-  )
+// Traced from the app icon (build/icon.*): coordinates are the source artwork's pixels, the viewBox frames the emblem.
+const EMBLEM = {
+  ring: 'M997.3 524.7A376 376 0 0 0 692.3 219.7M561.7 219.7A376 376 0 0 0 256.7 524.7M256.7 655.3A376 376 0 0 0 997.3 655.3',
+  anvil:
+    'M306 563H958L900 617C830 645 738 642 722 740C722 790 772 826 799 830V868H748C720 823 540 823 507 868H458V832C497 820 540 800 552 770Q560 752 560 740C560 690 450 625 310 601L306 597Z',
+  spark:
+    'M627 130C628.5 300 636 392 690 398C655 405 635 440 635 470V538Q635 559 642 563H612Q619 559 619 538V470C619 440 599 405 564 398C618 392 625.5 300 627 130Z',
 }
 
-export function Crescent({ size = 44 }: IconProps) {
+/** The Forja emblem from the app icon: spark, anvil and broken ring. `muted` is the dim gold of empty states. */
+export function BrandMark({ size = 36, muted = false }: IconProps & { muted?: boolean }) {
+  const gold = muted ? 'var(--gold-dim)' : 'var(--accent)'
   return (
-    <svg aria-hidden width={size} height={size} viewBox="0 0 40 40" fill="none">
-      <path d="M26 5a16 16 0 1 0 9 20a12 12 0 0 1 -9 -20z" stroke="var(--gold-dim)" strokeWidth="1.2" />
-      <path d="M31 9Q31.8 13.2 36 14Q31.8 14.8 31 19Q30.2 14.8 26 14Q30.2 13.2 31 9Z" fill="var(--gold-dim)" />
+    <svg aria-hidden width={size} height={size} viewBox="197 125 860 860">
+      {/* Heavier than in the artwork, so the ring still reads at sidebar size. */}
+      <path d={EMBLEM.ring} fill="none" stroke={gold} strokeWidth="28" />
+      <path d={EMBLEM.anvil} fill={gold} />
+      <path d={EMBLEM.spark} fill={muted ? gold : 'var(--accent-hi)'} />
     </svg>
   )
 }
@@ -140,6 +142,14 @@ export const Alert = (p: IconProps) => (
     <circle cx="12" cy="12" r="9" />
     <path d="M12 7.5v5.5" />
     <circle cx="12" cy="16.5" r="0.6" fill="currentColor" />
+  </Line>
+)
+
+export const More = (p: IconProps) => (
+  <Line size={18} {...p}>
+    <circle cx="5" cy="12" r="1.4" fill="currentColor" stroke="none" />
+    <circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none" />
+    <circle cx="19" cy="12" r="1.4" fill="currentColor" stroke="none" />
   </Line>
 )
 
@@ -312,38 +322,6 @@ const presetEmblems: Record<string, () => ReactNode> = {
 export function PresetEmblem({ id }: { id: string }) {
   const E = presetEmblems[id]
   return E ? <E /> : <D20 />
-}
-
-const Veil = (p: IconProps) => (
-  <Line {...p}>
-    <rect x="3.5" y="3.5" width="17" height="17" rx="2" strokeDasharray="2 2.5" />
-    <circle cx="12" cy="10" r="3" />
-    <path d="M6.5 19c.8-3 3-4.5 5.5-4.5s4.7 1.5 5.5 4.5" />
-  </Line>
-)
-
-const Die = (p: IconProps) => (
-  <Line {...p}>
-    <path d="M12 2.5l8.5 5v9L12 21.5l-8.5-5v-9z" />
-    <path d="M12 7l5 8H7z" />
-    <path d="M12 7V2.5M7 15l-3.5 1.5M17 15l3.5 1.5" strokeOpacity="0.6" />
-  </Line>
-)
-
-const Brush = (p: IconProps) => (
-  <Line {...p}>
-    <path d="M14.5 4.5l5 5-7.5 7.5-5-5z" />
-    <path d="M7 12l-2.5 2.5c-1.2 1.2-1.5 3.5-1 5.5 2 .5 4.3.2 5.5-1L11.5 16.5" />
-    <path d="M19 15.5Q19.4 17.6 21.5 18Q19.4 18.4 19 20.5Q18.6 18.4 16.5 18Q18.6 17.6 19 15.5Z" fill="currentColor" stroke="none" />
-  </Line>
-)
-
-/** The sigil for a model's first task: background removal, shape, texture, or anything else. */
-export function TaskSigil({ task }: { task: string | undefined }) {
-  if (task === 'background-removal') return <Veil />
-  if (task === 'shape') return <Die />
-  if (task?.startsWith('texture')) return <Brush />
-  return <Eye />
 }
 
 export const Check = (p: IconProps) => (

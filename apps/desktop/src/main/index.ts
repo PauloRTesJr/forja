@@ -1,5 +1,7 @@
 import { join } from 'node:path'
 import { app, BrowserWindow, clipboard, dialog, ipcMain, nativeImage, nativeTheme, shell, type NativeImage } from 'electron'
+import iconIco from '../../build/icon.ico?asset'
+import iconPng from '../../build/icon.png?asset'
 import { Core } from './core'
 import { handleScheme, registerScheme } from './protocol'
 
@@ -19,6 +21,8 @@ function createWindow(): BrowserWindow {
     backgroundColor: nativeTheme.shouldUseDarkColors ? '#0e0f12' : '#f6f6f4',
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     trafficLightPosition: { x: 16, y: 18 },
+    // macOS ignores this for the bundle's icon; Windows gets the .ico for its hand-drawn small sizes.
+    icon: process.platform === 'win32' ? iconIco : iconPng,
     webPreferences: {
       preload: join(import.meta.dirname, '../preload/index.cjs'),
       contextIsolation: true,
@@ -50,16 +54,16 @@ function createWindow(): BrowserWindow {
   return w
 }
 
-ipcMain.handle('dialog:pickFolder', async () => {
-  const res = await dialog.showOpenDialog(win!, { properties: ['openDirectory', 'createDirectory'] })
-  return res.canceled ? null : res.filePaths[0]
-})
 ipcMain.handle('dialog:pickImages', async () => {
   const res = await dialog.showOpenDialog(win!, {
     properties: ['openFile', 'multiSelections'],
     filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp'] }],
   })
   return res.canceled ? [] : res.filePaths
+})
+ipcMain.handle('dialog:pickFolder', async () => {
+  const res = await dialog.showOpenDialog(win!, { properties: ['openDirectory', 'createDirectory'] })
+  return res.canceled ? null : res.filePaths[0]
 })
 ipcMain.handle('dialog:saveFile', async (_e, name: string, ext: string, label: string) => {
   const extension = String(ext).replace(/^\./, '')

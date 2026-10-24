@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useEffect, useRef, useState, type CSSProperties } from 'react'
+import { useEffect, useId, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { CheckList, FitBadge, LicenseLine, TaskProgress, taskFor, useChecks, useInstalls } from '../components/Install'
-import { PauseMoon, TaskSigil } from '../components/icons'
+import { Alert, More, PauseMoon, Sparkle } from '../components/icons'
 import { ScreenHead, SectionHead } from '../components/ScreenHead'
 import { Setup } from '../components/Setup'
 import { Catalog, ConnectHub } from '../components/Hub'
@@ -18,7 +18,8 @@ import {
   type Setup as SetupView,
 } from '../lib/api'
 import { keys } from '../lib/events'
-import { money, stageLabel, taskNoun } from '../lib/format'
+import { stageLabel, taskNoun } from '../lib/format'
+import { cost, isHosted, isInstalled, licenseFact, limits, runsOn, type Fact } from '../lib/models'
 import { useToast } from '../lib/toast'
 
 const UNUSABLE = 'unusable'
@@ -80,10 +81,19 @@ export function Models() {
       {groupsOf(visible).map(([use, list]) => (
         <div className="section" key={use}>
           <SectionHead>{use === UNUSABLE ? 'Cannot be used' : stageLabel(use)}</SectionHead>
-          <div className="model-grid">
-            {list.map((m, i) => (
-              <ModelCard key={`${m.provider}|${m.id}`} model={m} i={i} onInstall={() => setInstalling(m)} />
-            ))}
+          <div className="model-list">
+            {/* Each cell names its column for screen readers and in the narrow layout. */}
+            <div className="model-cols" aria-hidden>
+              <span>Model</span>
+              <span>Runs on</span>
+              <span>Cost</span>
+              <span>License</span>
+            </div>
+            <ul>
+              {list.map((m, i) => (
+                <ModelRow key={`${m.provider}|${m.id}`} model={m} i={i} onInstall={() => setInstalling(m)} />
+              ))}
+            </ul>
           </div>
         </div>
       ))}
@@ -121,19 +131,26 @@ export function Models() {
   )
 }
 
-function ModelCard({ model: m, i, onInstall }: { model: Model; i: number; onInstall: () => void }) {
+/**
+ * One model of a stage as a row: who it is, then the facts that tell it apart from the others (where it
+ * runs, what it costs, what its license allows), then the one thing to do with it now. Rare actions
+ * (repair, remove) wait in a menu so they never compete with that one.
+ */
+function ModelRow({ model: m, i, onInstall }: { model: Model; i: number; onInstall: () => void }) {
   const toast = useToast()
   const qc = useQueryClient()
   const installs = useInstalls()
+  const menu = useId()
   const task = taskFor(installs.data, 'install', m.id) ?? taskFor(installs.data, 'remove', m.id)
   const busy = task !== undefined && !taskDone(task)
   const [confirm, setConfirm] = useState(false)
-  const installed = m.status === 'ready' || m.status === 'loaded'
-  const hosted = m.fit === 'hosted'
+  const installed = isInstalled(m)
+  const hosted = isHosted(m)
   // A hosted model Forja cannot call has no stage; its description says why.
   const use = m.tasks[0] as string | undefined
   const usedFor = use ? m.uses.find((u) => u.use === use) : undefined
   const runnable = m.fit === 'fits' || m.fit === 'offload'
+  const note = limits(m.license)
 
   const pick = useMutation({
     mutationFn: (model: string) => pinModel(use!, model, model ? m.provider : undefined),
@@ -147,97 +164,118 @@ function ModelCard({ model: m, i, onInstall }: { model: Model; i: number; onInst
   const repair = useMutation({ mutationFn: () => installModel(m.id, false), onError: (e: Error) => toast(e.message, true) })
 
   return (
-    <article className={`model-card enter ${installed ? 'installed' : ''}`} style={{ '--i': i } as CSSProperties}>
-      <div className="model-cell">
-        <span className={`sigil-badge ${m.status}`}>
-          <TaskSigil task={use ?? 'shape'} />
-        </span>
-        <div>
+    <li className={`model-row enter ${usedFor ? 'in-use' : ''}`} style={{ '--i': i } as CSSProperties}>
+      <div className="model-main">
+        <div className="model-name">
           <strong>{m.name}</strong>
-          <div className="muted mono">{m.id}</div>
+          {m.recommended && <span className="tag gold">Recommended</span>}
+          {hosted && m.tasks.length > 1 && <span className="tag">Shape and texture</span>}
         </div>
-        <span className={`status ${m.status}`}>
-          <i aria-hidden />
-          {m.status === 'loaded'
-            ? 'in VRAM'
-            : hosted
-              ? use
-                ? `on ${m.provider_label}`
-                : 'cannot be used'
-              : installed
-                ? `ready on ${m.provider === 'local' ? m.device : m.provider_label}`
-                : 'not installed'}
-        </span>
+        {m.description && <p className="model-desc">{m.description}</p>}
+        {note && (
+          <p className="model-limits">
+            <Alert size={16} />
+            {note}
+          </p>
+        )}
+        <span className="model-id mono">{m.id}</span>
       </div>
-      {m.description && <p className="model-desc">{m.description}</p>}
-      <div className="chips">
-        {m.recommended && <span className="chip recommended">Recommended</span>}
-        {hosted ? <span className="chip paid">{money(m.price)}</span> : <FitBadge fit={m.fit} />}
-        {m.disk_gb ? <span className="chip">{m.disk_gb.toFixed(1)} GB</span> : null}
-        {hosted && m.tasks.length > 1 && <span className="chip">Shape and texture in one pass</span>}
-        {usedFor && use && <span className="chip used">{usedFor.pinned ? `Chosen for ${taskNoun(use)}` : `In use for ${taskNoun(use)}`}</span>}
-      </div>
-      <LicenseLine license={m.license} />
-      {hosted ? (
-        <div className="row model-actions">
-          {use && !usedFor && (
-            <button className="btn" onClick={() => pick.mutate(m.id)} disabled={pick.isPending}>
-              Use for {taskNoun(use)}
-            </button>
-          )}
-          {usedFor?.pinned && (
-            <button className="btn ghost" onClick={() => pick.mutate('')} disabled={pick.isPending}>
-              Pick automatically
-            </button>
-          )}
-          <button
-            className={`btn ghost ${confirm ? 'danger' : ''}`}
-            onClick={() => (confirm ? remove.mutate() : setConfirm(true))}
-            onBlur={() => setConfirm(false)}
-            disabled={remove.isPending}
-          >
-            {confirm ? 'Remove from Forja?' : 'Remove'}
+      <FactCell label="Runs on" fact={runsOn(m)} />
+      <FactCell label="Cost" fact={cost(m)} />
+      <FactCell label="License" fact={licenseFact(m.license)} href={m.license.url} />
+      <div className="model-act">
+        {busy ? (
+          <span className="status running">
+            <i aria-hidden />
+            {task.kind === 'remove' ? 'Removing' : 'Installing'}
+          </span>
+        ) : usedFor && use ? (
+          <div className="in-use-mark">
+            <span className="in-use-badge">
+              <Sparkle size={9} />
+              In use
+            </span>
+            <span className="muted small">{usedFor.pinned ? 'Chosen by you' : 'Picked automatically'}</span>
+            {usedFor.pinned && (
+              <button className="text-btn" onClick={() => pick.mutate('')} disabled={pick.isPending}>
+                Pick automatically
+              </button>
+            )}
+          </div>
+        ) : use && (hosted || installed) ? (
+          <button className="btn" onClick={() => pick.mutate(m.id)} disabled={pick.isPending} aria-label={`Use ${m.name} for ${taskNoun(use)}`}>
+            Use this
           </button>
-        </div>
-      ) : busy ? (
-        <TaskProgress task={task} />
-      ) : (
-        <div className="row model-actions">
-          {!installed && runnable && !m.stub && (
+        ) : (
+          !installed &&
+          runnable &&
+          !m.stub && (
             <button className="btn primary" onClick={onInstall}>
               Install…
             </button>
-          )}
-          {!installed && !runnable && <span className="muted">Runs only on another computer or a cloud GPU.</span>}
-          {installed && use && !usedFor && (
-            <button className="btn" onClick={() => pick.mutate(m.id)} disabled={pick.isPending}>
-              Use for {taskNoun(use)}
-            </button>
-          )}
-          {installed && usedFor?.pinned && (
-            <button className="btn ghost" onClick={() => pick.mutate('')} disabled={pick.isPending}>
-              Pick automatically
-            </button>
-          )}
-          {installed && !m.stub && (
-            <>
-              <button className="btn ghost" onClick={() => repair.mutate()} disabled={repair.isPending}>
+          )
+        )}
+        {!busy && (hosted || (installed && !m.stub)) && (
+          <MoreMenu id={menu} label={`More actions for ${m.name}`}>
+            {!hosted && (
+              <button popoverTarget={menu} popoverTargetAction="hide" onClick={() => repair.mutate()} disabled={repair.isPending}>
                 Repair
+                <small>Installs its files again</small>
               </button>
-              <button
-                className={`btn ghost ${confirm ? 'danger' : ''}`}
-                onClick={() => (confirm ? remove.mutate() : setConfirm(true))}
-                onBlur={() => setConfirm(false)}
-                disabled={remove.isPending}
-              >
-                {confirm ? `Remove ${m.disk_gb ? `${m.disk_gb.toFixed(1)} GB` : 'it'}?` : 'Remove'}
-              </button>
-            </>
-          )}
+            )}
+            <button
+              className={confirm ? 'danger' : ''}
+              popoverTarget={confirm ? menu : undefined}
+              popoverTargetAction="hide"
+              onClick={() => (confirm ? remove.mutate() : setConfirm(true))}
+              onBlur={() => setConfirm(false)}
+              disabled={remove.isPending}
+            >
+              {confirm ? 'Click again to remove' : hosted ? 'Remove from Forja' : 'Remove'}
+              <small>{hosted ? 'You can add it again from the catalog' : m.disk_gb ? `Frees ${m.disk_gb.toFixed(1)} GB on disk` : 'Deletes its files'}</small>
+            </button>
+          </MoreMenu>
+        )}
+      </div>
+      {task && (busy || task.status === 'failed') && (
+        <div className="model-task">
+          <TaskProgress task={task} />
         </div>
       )}
-      {task && task.status === 'failed' && !busy && <TaskProgress task={task} />}
-    </article>
+    </li>
+  )
+}
+
+function FactCell({ label, fact, href }: { label: string; fact: Fact; href?: string }) {
+  return (
+    <div className={`fact ${fact.tone ?? ''}`}>
+      <span className="fact-label">{label}</span>
+      <span className="fact-value">
+        {href ? (
+          <a href={href} target="_blank" rel="noreferrer">
+            {fact.value}
+          </a>
+        ) : (
+          fact.value
+        )}
+      </span>
+      {fact.detail && <span className="fact-detail">{fact.detail}</span>}
+    </div>
+  )
+}
+
+/** A menu that opens beside its button, above everything, and closes on a click outside or Escape. */
+function MoreMenu({ id, label, children }: { id: string; label: string; children: ReactNode }) {
+  const anchor = `--menu-${id.replace(/[^\w-]/g, '')}`
+  return (
+    <>
+      <button className="btn ghost icon-btn" popoverTarget={id} aria-label={label} style={{ anchorName: anchor }}>
+        <More />
+      </button>
+      <div id={id} popover="auto" className="more-menu" style={{ positionAnchor: anchor }}>
+        {children}
+      </div>
+    </>
   )
 }
 
