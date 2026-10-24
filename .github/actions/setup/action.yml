@@ -1,0 +1,59 @@
+name: Set up Forja's toolchains
+description: >
+  Go, uv and pnpm at the versions the repository pins (core/go.mod, engine/.python-version,
+  apps/desktop/package.json packageManager and .node-version), with their caches, and the
+  dependencies installed from the lockfiles.
+inputs:
+  go:
+    description: Set up Go and download the core's modules
+    default: "true"
+  python:
+    description: Set up uv and sync the engine's environment
+    default: "true"
+  node:
+    description: Set up pnpm and Node and install the desktop app's packages
+    default: "true"
+runs:
+  using: composite
+  steps:
+    - if: runner.os == 'Windows'
+      shell: bash
+      run: command -v make >/dev/null || choco install make --no-progress -y
+
+    - if: inputs.go == 'true'
+      uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      with:
+        go-version-file: core/go.mod
+        cache-dependency-path: core/go.sum
+    - if: inputs.go == 'true'
+      shell: bash
+      working-directory: core
+      run: go mod download
+
+    - if: inputs.python == 'true'
+      uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+      with:
+        version: "0.12.22"
+        enable-cache: "true"
+        cache-dependency-glob: |
+          engine/uv.lock
+          engine/families/*/requirements/*.txt
+    - if: inputs.python == 'true'
+      shell: bash
+      working-directory: engine
+      run: uv sync --locked
+
+    - if: inputs.node == 'true'
+      uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      with:
+        package_json_file: apps/desktop/package.json
+    - if: inputs.node == 'true'
+      uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+      with:
+        node-version-file: apps/desktop/.node-version
+        cache: pnpm
+        cache-dependency-path: apps/desktop/pnpm-lock.yaml
+    - if: inputs.node == 'true'
+      shell: bash
+      working-directory: apps/desktop
+      run: pnpm install --frozen-lockfile
