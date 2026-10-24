@@ -105,6 +105,45 @@ type active struct {
 	cancel context.CancelFunc
 	job    *library.Job
 	mu     sync.Mutex
+	// measured is set for a benchmark's sample (Measure).
+	measured *measured
+}
+
+// measured is what a benchmark's sample keeps beside its job. Only the job's own run
+// goroutine touches it.
+type measured struct {
+	start time.Time
+	// ran are the outputs of the stages it ran, by key: they stand in for the stage cache,
+	// which a sample never reads or writes.
+	ran     map[string][]library.Output
+	metrics map[string]*engineapi.StageMetrics
+	// engine is the time spent inside provider runs; queued the wait for a slot.
+	engine, queued time.Duration
+	stats          map[string]any
+	done           chan Sample
+}
+
+// Sample is a benchmark's job once it ended, with where its time went.
+type Sample struct {
+	Job *library.Job
+	// Wall runs from submit to the end; Engine is the time inside provider runs; Queued the
+	// wait for a slot.
+	Wall, Engine, Queued time.Duration
+	// Metrics are what the engine measured, by stage id; a provider that cannot measure
+	// leaves a stage out.
+	Metrics map[string]*engineapi.StageMetrics
+	// Stats are the final GLB's, as an asset would carry them; nil when it made none.
+	Stats map[string]any
+}
+
+// Overhead is the core's own share of the job: planning, cache lookups, moving artifacts,
+// reading the result and saving state, everything but inference and waiting for a slot.
+func (s Sample) Overhead() time.Duration { return s.Wall - s.Engine - s.Queued }
+
+func (a *active) waited(d time.Duration) {
+	if a.measured != nil {
+		a.measured.queued += d
+	}
 }
 
 func NewRunner(db *library.DB, st *store.Store, hub *events.Hub, providers *provider.Registry, cat *catalog.Catalog,
@@ -148,6 +187,36 @@ func (r *Runner) Presets(project string) (map[string]*presets.Preset, error) {
 
 // Submit validates, plans and persists a job, then runs it in the background.
 func (r *Runner) Submit(ctx context.Context, req SubmitRequest) (*library.Job, error) {
+	a, err := r.submit(ctx, req, nil)
+	if err != nil {
+		return nil, err
+	}
+	return snapshot(a), nil
+}
+
+// Measure runs a job as a benchmark's sample. Every stage runs: the job neither reads nor
+// writes the stage cache, and reuses only what it ran itself (the background removal it ran
+// while looking for a sheet of views). The engine measures each stage, and no asset is made.
+// The channel receives the sample once the job ends.
+func (r *Runner) Measure(ctx context.Context, req SubmitRequest) (*library.Job, <-chan Sample, error) {
+	m := &measured{start: time.Now(), ran: map[string][]library.Output{},
+		metrics: map[string]*engineapi.StageMetrics{}, done: make(chan Sample, 1)}
+	a, err := r.submit(ctx, req, m)
+	if err != nil {
+		return nil, nil, err
+	}
+	return snapshot(a), m.done, nil
+}
+
+// Hold keeps eviction away until release, as a running job does: between a benchmark's
+// samples, none may wait for an eviction to finish.
+func (r *Runner) Hold() (release func()) {
+	r.gate.RLock()
+	var once sync.Once
+	return func() { once.Do(r.ended) }
+}
+
+func (r *Runner) submit(ctx context.Context, req SubmitRequest, m *measured) (*active, error) {
 	project := req.Project
 	if project != "" {
 		project, _ = filepath.Abs(project)
@@ -211,15 +280,15 @@ func (r *Runner) Submit(ctx context.Context, req SubmitRequest) (*library.Job, e
 	if err := r.db.SaveJob(ctx, job); err != nil {
 		return nil, err
 	}
-	a := r.start(job, prep, cfg)
+	a := r.start(job, prep, cfg, m)
 	r.hub.Publish(EvJobCreated, snapshot(a))
-	return snapshot(a), nil
+	return a, nil
 }
 
 // start makes a job active and runs it in the background.
-func (r *Runner) start(job *library.Job, prep *prepared, cfg *config.Loaded) *active {
+func (r *Runner) start(job *library.Job, prep *prepared, cfg *config.Loaded, m *measured) *active {
 	runCtx, cancel := context.WithCancel(context.Background())
-	a := &active{cancel: cancel, job: job}
+	a := &active{cancel: cancel, job: job, measured: m}
 	r.mu.Lock()
 	r.active[job.ID] = a
 	r.mu.Unlock()
@@ -519,7 +588,7 @@ func (r *Runner) AnswerSheet(ctx context.Context, id string, ans SheetAnswer) (*
 	if err := r.db.SaveJob(ctx, job); err != nil {
 		return nil, err
 	}
-	a := r.start(job, prep, cfg)
+	a := r.start(job, prep, cfg, nil)
 	r.hub.Publish(EvJobUpdated, snapshot(a))
 	return snapshot(a), nil
 }
@@ -584,6 +653,9 @@ func (r *Runner) run(ctx context.Context, a *active, prep *prepared, cfg *config
 	r.gate.RLock()
 	defer r.ended()
 	defer r.leave(a)
+	if a.measured != nil {
+		defer r.sample(a)
+	}
 	plan, err := r.runJob(ctx, a, prep, cfg)
 	switch {
 	case errors.Is(err, errWaiting):
@@ -592,6 +664,15 @@ func (r *Runner) run(ctx context.Context, a *active, prep *prepared, cfg *config
 		r.finish(a, library.Cancelled, "cancelled")
 	case err != nil:
 		r.finish(a, library.Failed, err.Error())
+	case a.measured != nil:
+		// A sample makes no asset, but reads the stats one would carry, as making it would.
+		job := snapshot(a)
+		if outs := job.Stages[len(job.Stages)-1].Outputs; len(outs) > 0 {
+			if path, err := r.store.Path(outs[0].Hash); err == nil {
+				a.measured.stats = AssetStats(path, r.log)
+			}
+		}
+		r.finish(a, library.Succeeded, "")
 	default:
 		if err := r.createAsset(context.Background(), a, plan, cfg); err != nil {
 			r.finish(a, library.Failed, "export: "+err.Error())
@@ -599,6 +680,13 @@ func (r *Runner) run(ctx context.Context, a *active, prep *prepared, cfg *config
 		}
 		r.finish(a, library.Succeeded, "")
 	}
+}
+
+// sample hands a benchmark's job, ended, to whoever measures it.
+func (r *Runner) sample(a *active) {
+	m := a.measured
+	m.done <- Sample{Job: snapshot(a), Wall: time.Since(m.start), Engine: m.engine, Queued: m.queued,
+		Metrics: m.metrics, Stats: m.stats}
 }
 
 // runJob looks for a sheet of views first when the job asks for that, then takes a job slot,
@@ -643,8 +731,10 @@ func (r *Runner) runJob(ctx context.Context, a *active, prep *prepared, cfg *con
 // sheet while the user is still on the screen they dropped it on, so finding one must not wait
 // for other jobs to finish whole runs.
 func (r *Runner) look(ctx context.Context, a *active, prep *prepared) error {
+	waiting := time.Now()
 	select {
 	case r.looking <- struct{}{}:
+		a.waited(time.Since(waiting))
 		defer func() { <-r.looking }()
 	case <-ctx.Done():
 		return ctx.Err()
@@ -658,6 +748,8 @@ func (r *Runner) look(ctx context.Context, a *active, prep *prepared) error {
 // slot waits for one of the job slots, which bound the jobs in flight; a job shows as queued
 // only while it waits for one.
 func (r *Runner) slot(ctx context.Context, a *active) (func(), error) {
+	waiting := time.Now()
+	defer func() { a.waited(time.Since(waiting)) }()
 	select {
 	case r.slots <- struct{}{}:
 	default:
@@ -875,7 +967,7 @@ func (r *Runner) execute(ctx context.Context, a *active, plan *planner.Plan) (ma
 	all := map[string][]library.Output{}
 	var pending []int
 	for i, s := range plan.Stages {
-		outs, hit, err := r.db.CacheGet(ctx, s.Key)
+		outs, hit, err := r.cached(ctx, a, s.Key)
 		if err != nil {
 			return nil, err
 		}
@@ -896,7 +988,7 @@ func (r *Runner) execute(ctx context.Context, a *active, plan *planner.Plan) (ma
 			})
 			continue
 		}
-		if hit {
+		if hit && a.measured == nil {
 			_ = r.db.CacheForget(ctx, s.Key)
 		}
 		r.update(a, func(j *library.Job) {
@@ -922,6 +1014,16 @@ func (r *Runner) execute(ctx context.Context, a *active, plan *planner.Plan) (ma
 	return all, nil
 }
 
+// cached is what the stage cache recorded for key. A benchmark's sample sees only what it ran
+// itself, so each of its stages is measured.
+func (r *Runner) cached(ctx context.Context, a *active, key string) ([]library.Output, bool, error) {
+	if a.measured != nil {
+		outs, ok := a.measured.ran[key]
+		return outs, ok, nil
+	}
+	return r.db.CacheGet(ctx, key)
+}
+
 func (r *Runner) runBatch(ctx context.Context, a *active, plan *planner.Plan, idx []int, outputs map[string]string,
 	all map[string][]library.Output,
 ) error {
@@ -936,7 +1038,7 @@ func (r *Runner) runBatch(ctx context.Context, a *active, plan *planner.Plan, id
 	first := plan.Stages[idx[0]]
 	req := engineapi.RunRequest{
 		ClientRunID: a.job.ID + "-" + first.ID + "-" + strings.TrimPrefix(first.Key, "stage:")[:8],
-		Priority:    a.job.Priority, Seed: plan.Seed,
+		Priority:    a.job.Priority, Seed: plan.Seed, Measure: a.measured != nil,
 	}
 	for _, i := range idx {
 		s := plan.Stages[i]
@@ -966,7 +1068,11 @@ func (r *Runner) runBatch(ctx context.Context, a *active, plan *planner.Plan, id
 			r.onEngineEvent(ctx, a, p, ev)
 		}
 	}()
+	running := time.Now()
 	run, err := p.Run(ctx, req, evs)
+	if a.measured != nil {
+		a.measured.engine += time.Since(running)
+	}
 	close(evs)
 	<-consumed
 	if err != nil {
@@ -1015,9 +1121,16 @@ func (r *Runner) runBatch(ctx context.Context, a *active, plan *planner.Plan, id
 				js.Status = library.Failed
 			}
 		})
+		if a.measured != nil && st.Metrics != nil {
+			a.measured.metrics[s.ID] = st.Metrics
+		}
 		if st.Status == "succeeded" && len(outs) > 0 {
 			outputs[s.ID], all[s.ID] = outs[0].Hash, outs
-			_ = r.db.CachePut(ctx, s.Key, outs, seconds)
+			if a.measured != nil {
+				a.measured.ran[s.Key] = outs
+			} else {
+				_ = r.db.CachePut(ctx, s.Key, outs, seconds)
+			}
 			_ = r.db.RecordTiming(ctx, s.Use, s.Model, p.ID(), seconds)
 			if p.Paid() && s.Model != "" {
 				r.recordCost(ctx, a.job.ID, s.ID, p.ID(), s.Model)

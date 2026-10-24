@@ -34,5 +34,11 @@ func Defaults() map[string]any {
 			"export_dir":     "Assets/Generated",
 			"default_preset": "mobile-prop",
 		},
+		// A release fails on more than 10% regression in time or VRAM (spec, section 10).
+		"bench": map[string]any{
+			"threshold_pct": 10.0,
+			"min_seconds":   0.05,
+			"min_vram_mb":   64.0,
+		},
 	}
 }

@@ -30,6 +30,7 @@ type Config struct {
 	Models    Models                    `toml:"models" json:"models"`
 	Blender   Blender                   `toml:"blender" json:"blender"`
 	Presets   map[string]PresetOverride `toml:"presets" json:"presets"`
+	Bench     Bench                     `toml:"bench" json:"bench"`
 }
 
 type General struct {
@@ -104,6 +105,15 @@ type Models struct {
 type Blender struct {
 	// Path is Blender's executable; empty means look for it where installers put it.
 	Path string `toml:"path" json:"path"`
+}
+
+// Bench sets what `forja bench compare` counts as a regression.
+type Bench struct {
+	// ThresholdPct is the growth in a stage's time or peak VRAM, in percent, that fails.
+	ThresholdPct float64 `toml:"threshold_pct" json:"threshold_pct"`
+	// Smaller changes are noise whatever their percent: a 20 ms stage that takes 30 ms once.
+	MinSeconds float64 `toml:"min_seconds" json:"min_seconds"`
+	MinVRAMMB  float64 `toml:"min_vram_mb" json:"min_vram_mb"`
 }
 
 // PresetOverride maps "stage.param" to a value, e.g. "lowpoly.target_tris" = 3000.

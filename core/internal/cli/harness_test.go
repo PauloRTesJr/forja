@@ -44,6 +44,27 @@ type fakeEngine struct {
 	installed map[string]bool
 	tasks     map[string]engineapi.Task
 	sheet     string
+	// ran lists the stages run, in order, and measured whether each run asked to measure.
+	ran      []string
+	measured []bool
+}
+
+// fakeMetrics is what an engine measures of a stage: a model's load, memory, and a mesh's stats.
+func fakeMetrics(s engineapi.StageSpec, outs []engineapi.Output) *engineapi.StageMetrics {
+	ram := int64(512 << 20)
+	m := &engineapi.StageMetrics{Device: "cpu-pool", PeakRAMBytes: &ram, Outputs: []engineapi.OutputStats{}}
+	if s.Model != "" {
+		load, util := 0.25, 80.0
+		m.Device, m.LoadSeconds, m.GPUUtil = "cuda:0", &load, &util
+	}
+	for _, o := range outs {
+		if o.Kind == "mesh/glb" {
+			cover := 0.6
+			m.Outputs = append(m.Outputs, engineapi.OutputStats{Hash: o.Hash, Triangles: 100, Vertices: 80, Watertight: true,
+				UVCoverage: &cover})
+		}
+	}
+	return m
 }
 
 var gpu = "cuda:0"
@@ -140,7 +161,19 @@ func (e *fakeEngine) Run(_ context.Context, req engineapi.RunRequest, evs chan<-
 		}
 		secs := 0.01
 		evs <- engineapi.Event{Type: "stage.started", Data: map[string]any{"stage": s.ID}}
-		run.Stages[s.ID] = engineapi.StageState{Status: "succeeded", Seconds: &secs, Outputs: outs}
+		st := engineapi.StageState{Status: "succeeded", Seconds: &secs, Outputs: outs}
+		if req.Measure {
+			st.Metrics = fakeMetrics(s, outs)
+			if s.Model != "" {
+				vram := int64(2 << 30)
+				st.PeakVRAMBytes = &vram
+			}
+		}
+		run.Stages[s.ID] = st
+		e.mu.Lock()
+		e.ran = append(e.ran, s.ID)
+		e.measured = append(e.measured, req.Measure)
+		e.mu.Unlock()
 	}
 	return run, nil
 }
