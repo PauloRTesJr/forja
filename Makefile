@@ -13,7 +13,7 @@ setup: ## Install every toolchain dependency (uv, Go modules, pnpm)
 	cd apps/desktop && pnpm install
 
 core: ## Build the forja binary into core/bin
-	cd core && go build -ldflags "-X main.version=$(VERSION)" -o bin/forja$(EXE) ./cmd/forja
+	cd core && go build -trimpath -ldflags "-X main.version=$(VERSION)" -o bin/forja$(EXE) ./cmd/forja
 
 core-all: ## Cross-compile forja for six OS/arch targets
 	cd core && for t in darwin/arm64 darwin/amd64 linux/amd64 linux/arm64 windows/amd64 windows/arm64; do \
@@ -40,5 +40,8 @@ check: ## Lint, type-check and test everything (what CI runs)
 version: ## Print the version; `make version V=X.Y.Z` writes it into the app, the core and the engine
 	@if [ -z "$(V)" ]; then cat VERSION; else uv run --no-project python scripts/version.py "$(V)" && cd engine && uv lock --quiet; fi
 
-.PHONY: version
+dist: core ## Build this OS's desktop installers into apps/desktop/release (unsigned without a certificate)
+	cd apps/desktop && pnpm build && pnpm exec electron-builder --publish never
+
+.PHONY: version dist
 .PHONY: help setup core core-all engine desktop test check

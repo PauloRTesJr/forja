@@ -1,5 +1,8 @@
 appId: dev.forja.desktop
 productName: Forja
+# No spaces, and the OS and architecture in every name, so all packages can sit in one GitHub
+# Release next to SHA256SUMS.
+artifactName: ${productName}-${version}-${os}-${arch}.${ext}
 directories:
   output: release
 files:
@@ -13,13 +16,19 @@ mac:
   target: dmg
   category: public.app-category.graphics-design
   icon: build/icon.icns
+# Authenticode-signed only when WIN_CSC_LINK and WIN_CSC_KEY_PASSWORD are set (release.yml);
+# unsigned builds work but SmartScreen warns on first run.
 win:
   target: [nsis, zip]
   icon: build/icon.ico
 nsis:
   perMachine: false
   oneClick: true
+  artifactName: ${productName}-${version}-${os}-${arch}-setup.${ext}
 linux:
   target: [AppImage, deb]
   category: Graphics
   icon: build/icon.png
+  synopsis: Turn a reference image into a game-ready 3D asset
+  # .deb requires a maintainer; there is no package.json author to take it from.
+  maintainer: Forja contributors
