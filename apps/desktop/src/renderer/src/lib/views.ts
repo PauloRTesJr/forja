@@ -19,12 +19,11 @@ export const viewHints: Record<View, string> = {
 }
 
 /**
- * The step whose model would read other views of the subject, from a plan resolved as if the
- * job brought them. The shape step is the one that matters; texturing may read them too.
+ * The shape step, when its model would read other views of the subject, from a plan resolved
+ * as if the job brought them. Texturing may read them too, but only the shape needs them.
  */
 export function viewReader(plan: Pick[]): Pick | undefined {
-  const reads = (p: Pick): boolean => !p.skipped && (p.views ?? []).some((v) => v !== 'front')
-  return plan.find((p) => p.use === 'shape' && reads(p)) ?? plan.find(reads)
+  return plan.find((p) => p.use === 'shape' && !p.skipped && (p.views ?? []).some((v) => v !== 'front'))
 }
 
 /**

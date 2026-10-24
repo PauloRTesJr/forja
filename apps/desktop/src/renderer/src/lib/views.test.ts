@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Job, Pick, SheetPart } from './api'
+import { isPreparing } from '../components/Prepare'
 import { needsAnswer, summarize } from './jobs'
 import { assignView, boxStyle, chosenParts, viewReader } from './views'
 
@@ -18,7 +19,12 @@ describe('viewReader', () => {
   it('ignores models that read the front alone, and skipped steps', () => {
     expect(viewReader([pick('shape', 'shape', { model: 'triposg' })])).toBeUndefined()
     expect(viewReader([pick('shape', 'shape', { views: ['front'] })])).toBeUndefined()
-    expect(viewReader([pick('paint', 'texture', { skipped: true, views: ['front', 'back'] })])).toBeUndefined()
+    expect(viewReader([pick('shape', 'shape', { skipped: true, views: ['front', 'back'] })])).toBeUndefined()
+  })
+
+  it('needs the shape step to read them, not only texturing', () => {
+    const plan = [pick('shape', 'shape', { model: 'triposg' }), pick('paint', 'texture', { views: ['front', 'left', 'back', 'right'] })]
+    expect(viewReader(plan)).toBeUndefined()
   })
 })
 
@@ -72,5 +78,25 @@ describe('a job waiting on a sheet', () => {
     expect(needsAnswer(waiting)).toBe(true)
     expect(summarize(waiting)).toEqual({ headline: 'Several views found', note: '2 views of one subject · check them to go on' })
     expect(needsAnswer({ ...waiting, status: 'running' })).toBe(false)
+  })
+})
+
+describe('isPreparing', () => {
+  const job = (status: Job['status'], sheet?: Partial<NonNullable<Job['sheet']>>): Job => ({
+    id: 'j', name: 'n', preset: 'p', input: 'i', priority: 'interactive', status, created_at: '', stages: [],
+    sheet: sheet && { mode: 'ask', checked: false, found: false, size: [1, 1], ...sheet },
+  })
+
+  it('holds a job from its drop until it waits or goes on', () => {
+    expect(isPreparing(job('queued', {}))).toBe(true)
+    expect(isPreparing(job('running', { checked: true, found: true }))).toBe(true) // about to wait
+    expect(isPreparing(job('waiting', { checked: true, found: true }))).toBe(false)
+    expect(isPreparing(job('running', { checked: true, found: false }))).toBe(false)
+    expect(isPreparing(job('queued', { checked: true, found: true, answer: 'split' }))).toBe(false)
+  })
+
+  it('leaves out jobs that bring their views or keep sheets whole', () => {
+    expect(isPreparing(job('queued'))).toBe(false)
+    expect(isPreparing(job('queued', { mode: 'keep' }))).toBe(false)
   })
 })

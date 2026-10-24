@@ -1,18 +1,22 @@
-import { useMutation, useQuery } from '@tanstack/react-query'
-import { useState, type DragEvent } from 'react'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useEffect, useRef, useState, type DragEvent } from 'react'
 import { Composer } from '../components/Composer'
 import { Corners, DropSigil, Folder } from '../components/icons'
+import { Confirm, isPreparing, Preparing } from '../components/Prepare'
 import { ScreenHead, SectionHead } from '../components/ScreenHead'
 import { Setup } from '../components/Setup'
 import { IMAGE, ViewsCard, type Draft } from '../components/ViewsCard'
-import { fetchPresets, importImage, submitJobs, type SubmitBody } from '../lib/api'
+import { api, fetchPresets, importImage, submitJobs, type Job, type SubmitBody } from '../lib/api'
 import { keys } from '../lib/events'
+import { needsAnswer, upsertJob } from '../lib/jobs'
 import { transition, useNavigate } from '../lib/nav'
 import { useToast } from '../lib/toast'
 import { SIDE_VIEWS, viewReader } from '../lib/views'
 
 const PROJECT_KEY = 'forja.project'
 const OPTIONS_KEY = 'forja.options'
+// A batch shows this many images being prepared, then a count of the rest.
+const SHOWN_PREPARING = 3
 
 // Per-viewer conveniences only: storage may be missing or full, and the screen works without it.
 function read(key: string): string | null {
@@ -43,7 +47,14 @@ function storedOptions(): Record<string, boolean> {
 export function Generate() {
   const navigate = useNavigate()
   const toast = useToast()
+  const qc = useQueryClient()
   const [over, setOver] = useState(false)
+  const jobs = useQuery({ queryKey: keys.jobs, queryFn: () => api<Job[]>('GET', '/v1/jobs?limit=100') })
+  const preparing = jobs.data?.filter(isPreparing) ?? []
+  const asking = jobs.data?.filter(needsAnswer) ?? []
+  // The jobs dropped here last. The screen keeps them while they are prepared and confirmed,
+  // then hands them to the queue.
+  const [submitted, setSubmitted] = useState<string[]>([])
   const [preset, setPreset] = useState('mobile-prop')
   const [project, setProject] = useState(() => read(PROJECT_KEY) ?? '')
   // Switch states for optional stages, by "<preset>.<stage>".
@@ -71,16 +82,38 @@ export function Generate() {
         project: project || undefined,
         priority: (body.paths?.length ?? 1) === 1 ? 'interactive' : 'batch',
         overrides: Object.fromEntries(optional.map((s) => [`${s.id}.enabled`, isOn(s.id, s.optional!.default)])),
-        // An image that turns out to hold several views waits in the queue for the user.
+        // An image that turns out to hold several views waits for the user, on this screen.
         sheet: 'ask',
       }),
-    onSuccess: (jobs) => {
+    onSuccess: (created) => {
       setDraft(null)
-      toast(`${jobs.length === 1 ? jobs[0]!.name : `${jobs.length} images`} queued`)
-      transition(() => navigate({ screen: 'queue' }))
+      qc.setQueryData<Job[]>(keys.jobs, (list) => created.reduce((l, j) => upsertJob(l, j), list ?? []))
+      setSubmitted(created.map((j) => j.id))
     },
     onError: (e: Error) => toast(e.message, true),
   })
+
+  // A drop's progress, and any question about it, go where the user is looking: the views
+  // card that led here may have left the page scrolled past them.
+  const prepsRef = useRef<HTMLDivElement>(null)
+  const firstAsk = asking[0]?.id
+  useEffect(() => {
+    if (submitted.length === 0 && !firstAsk) return
+    const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    prepsRef.current?.scrollIntoView({ block: 'start', behavior: reduce ? 'auto' : 'smooth' })
+  }, [submitted, firstAsk])
+
+  // Once the jobs dropped here are prepared and none waits for the user, they go to the queue.
+  // Going there unmounts this screen; the ref keeps a late job update from going twice.
+  const handedOver = useRef<string[] | null>(null)
+  useEffect(() => {
+    if (submitted.length === 0 || handedOver.current === submitted || !jobs.data) return
+    const mine = jobs.data.filter((j) => submitted.includes(j.id))
+    if (mine.length < submitted.length || mine.some((j) => isPreparing(j) || needsAnswer(j))) return
+    handedOver.current = submitted
+    toast(`${mine.length === 1 ? mine[0]!.name : `${mine.length} images`} queued`)
+    transition(() => navigate({ screen: 'queue' }))
+  }, [jobs.data, submitted, toast, navigate])
 
   // One image, when the shape model reads other views, waits on the views card for them;
   // anything else queues at once.
@@ -132,6 +165,23 @@ export function Generate() {
         </div>
       )}
       {setupOpen && <Setup onDone={() => setSetupOpen(false)} />}
+
+      {(asking.length > 0 || preparing.length > 0) && (
+        <div className="preps" ref={prepsRef}>
+          {asking.map((j, i) => (
+            <Confirm key={j.id} job={j} index={i} />
+          ))}
+          {preparing.slice(0, SHOWN_PREPARING).map((j, i) => (
+            <Preparing key={j.id} job={j} index={asking.length + i} />
+          ))}
+          {preparing.length > SHOWN_PREPARING && (
+            <p className="prep-more">
+              and {preparing.length - SHOWN_PREPARING} more {preparing.length - SHOWN_PREPARING === 1 ? 'image' : 'images'} being
+              prepared
+            </p>
+          )}
+        </div>
+      )}
 
       {draft ? (
         <ViewsCard

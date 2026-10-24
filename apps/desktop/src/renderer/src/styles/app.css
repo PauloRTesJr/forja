@@ -2518,3 +2518,82 @@ button.view-slot:disabled {
   font-size: 15px;
   font-style: italic;
 }
+
+/* What happens to a dropped image before the queue: preparing, then confirming its views. */
+.preps {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin-bottom: 18px;
+}
+.prep {
+  position: relative;
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 18px;
+  padding: 16px 20px;
+  border: 1px solid var(--frame);
+  border-radius: var(--r-3);
+  background: #17140f;
+  box-shadow: var(--halo);
+}
+.prep.confirm {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 14px;
+  padding: 20px 22px;
+}
+.prep-thumb {
+  width: 72px;
+  height: 72px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-deep);
+  overflow: hidden;
+}
+.prep-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+.prep-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+.prep-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+.prep-title {
+  font-size: 19px;
+  font-weight: 600;
+  color: #f3e6cc;
+  overflow-wrap: anywhere;
+}
+.prep-step {
+  color: var(--accent-hi);
+  font-size: 16px;
+}
+.prep .bar {
+  max-width: 420px;
+}
+.prep .bar > i {
+  background: var(--accent);
+}
+.prep-note {
+  color: var(--text-3);
+  font-size: 14.5px;
+  font-style: italic;
+}
+.prep-more {
+  margin: 0;
+  color: var(--text-3);
+  font-size: 15px;
+  font-style: italic;
+}
