@@ -146,11 +146,22 @@ export function Composer({
         <div className="options">
           {optional.map((s) => {
             const on = isOn(s.id, s.optional!.default)
+            const help = s.optional!.help
             return (
-              <button key={s.id} className="switch" role="switch" aria-checked={on} onClick={() => onToggle(s.id, !on)}>
-                <span className="switch-track" aria-hidden />
-                {s.optional!.label}
-              </button>
+              <span key={s.id} className="option">
+                <button className="switch" role="switch" aria-checked={on} onClick={() => onToggle(s.id, !on)}>
+                  <span className="switch-track" aria-hidden />
+                  {s.optional!.label}
+                </button>
+                {help && (
+                  <span className="help" tabIndex={0} aria-label={help}>
+                    ?
+                    <span className="help-tip" role="tooltip" aria-hidden>
+                      {help}
+                    </span>
+                  </span>
+                )}
+              </span>
             )
           })}
         </div>

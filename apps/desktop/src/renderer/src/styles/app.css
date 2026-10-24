@@ -699,6 +699,59 @@ h1 {
   transform: translateX(16px);
 }
 
+/* What an option does, on hover or focus of the ? beside it. */
+.option {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.help {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border: 1px solid var(--gold-dim);
+  border-radius: 50%;
+  color: var(--text-2);
+  font-size: 12px;
+  line-height: 1;
+  cursor: help;
+}
+.help:hover,
+.help:focus-visible {
+  border-color: var(--accent);
+  color: var(--text);
+  outline: none;
+}
+.help-tip {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  z-index: 10;
+  width: max-content;
+  max-width: 300px;
+  padding: 10px 12px;
+  border: 1px solid var(--gold-dim);
+  border-radius: 6px;
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-size: 14px;
+  line-height: 1.45;
+  text-align: left;
+  pointer-events: none;
+  opacity: 0;
+  transform: translate(-50%, 4px);
+  transition:
+    opacity var(--dur-2) var(--ease-out),
+    transform var(--dur-2) var(--ease-out);
+}
+.help:hover .help-tip,
+.help:focus-visible .help-tip {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
 /* Queue */
 .jobs {
   display: flex;

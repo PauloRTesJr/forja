@@ -12,7 +12,13 @@ stages:
   - id: match
     use: texture.match
     inputs: [paint, frame]
-    optional: { label: Match the reference colors, default: false }
+    optional:
+      label: Match the reference colors
+      help: >-
+        Painting models can drift from the reference image's colors. This step pulls the
+        painted texture back toward them, and projects the reference onto the parts of the
+        asset it shows.
+      default: false
   - { id: bake, use: bake, inputs: [match, cleanup] }
   - { id: lods, use: mesh.lods, params: { ratios: [0.5, 0.25] } }
   - { id: export, use: export, params: { format: glb, compression: meshopt } }

@@ -235,6 +235,11 @@ func (a *app) showPlan(p *api.PresetView) {
 			row(pick.Stage, pick.Use, model, orDash(pick.Provider), note)
 		}
 	})
+	for _, s := range p.Stages {
+		if s.Optional != nil && s.Optional.Help != "" {
+			a.printf("\n%s (%s.enabled): %s\n", s.Optional.Label, s.ID, s.Optional.Help)
+		}
+	}
 	if cost > 0 {
 		a.printf("\nEach image costs about %s on hosted models.\n", money(cost, currency))
 	}

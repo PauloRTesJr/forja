@@ -51,9 +51,11 @@ type Stage struct {
 	Views []string `yaml:"-" json:"views,omitempty"`
 }
 
-// Option is how the UI offers an optional stage: a labelled switch with a default.
+// Option is how the UI offers an optional stage: a labelled switch with a default, and what
+// the stage does for a user who wonders.
 type Option struct {
 	Label   string `yaml:"label" json:"label"`
+	Help    string `yaml:"help,omitempty" json:"help,omitempty"`
 	Default bool   `yaml:"default" json:"default"`
 }
 
