@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import struct
 from pathlib import Path
 
@@ -12,6 +13,8 @@ import trimesh
 import xatlas
 from numpy.typing import NDArray
 from PIL import Image
+
+from forja_engine.ops import skin as skin_ops
 
 TANGENTS = "tangents"  # Trimesh.metadata key: (n, 4) per-vertex tangents written as TANGENT
 
@@ -38,13 +41,23 @@ def save(mesh: trimesh.Trimesh | trimesh.Scene, path: Path) -> Path:
     tangents = {
         name: g.metadata.pop(TANGENTS) for name, g in scene.geometry.items() if TANGENTS in g.metadata
     }
+    skins, skeleton, restore = skin_ops.take(scene)
     try:
         glb = trimesh.exchange.gltf.export_glb(scene, include_normals=True)
     finally:
         for name, tan in tangents.items():
             scene.geometry[name].metadata[TANGENTS] = tan
-    path.write_bytes(_with_tangents(glb, tangents) if tangents else glb)
+        restore()
+    glb = _with_tangents(glb, tangents) if tangents else glb
+    if skins and skeleton is not None:
+        glb = skin_ops.with_skin(glb, skeleton, skins, name=_base_name(scene))
+    path.write_bytes(glb)
     return path
+
+
+def _base_name(scene: trimesh.Scene) -> str:
+    first = next(iter(scene.geometry), "")
+    return re.sub(r"_LOD\d+$", "", first) if not first.startswith("geometry_") else ""
 
 
 def _with_tangents(glb: bytes, tangents: dict[str, NDArray[np.float32]]) -> bytes:
