@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { Job, Stage } from './api'
 import { applyProgress, jobFraction, phaseState, phasesOf, previewOf, stageTime, summarize, upsertJob } from './jobs'
-import { count, roman, seconds } from './format'
+import { count, roman, seconds, skeletonName, stageLabel, taskNoun } from './format'
 
 const stage = (id: string, status: Stage['status'], extra: Partial<Stage> = {}): Stage => ({
   id, use: id, status, key: '', cached: false, outputs: [], seconds: 0, step: 0, total: 0, ...extra,
@@ -39,21 +39,31 @@ describe('progress', () => {
 })
 
 describe('phases', () => {
-  const uses = ['background-removal', 'framing', 'shape', 'mesh.cleanup', 'mesh.decimate', 'mesh.uv', 'texture', 'texture.match', 'bake', 'mesh.lods', 'export']
+  const uses = ['background-removal', 'framing', 'shape', 'mesh.cleanup', 'mesh.decimate', 'mesh.uv', 'texture', 'texture.match', 'bake', 'rig', 'mesh.lods', 'export']
 
-  it('groups a full pipeline into four phases in order', () => {
+  it('groups a full pipeline into its phases in order', () => {
     const phases = phasesOf(uses.map((u) => stage(u, 'queued')))
     expect(phases.map((p) => [p.label, p.stages.length])).toEqual([
       ['Prepare', 2],
       ['Shape', 4],
       ['Paint', 3],
+      ['Rig', 1],
       ['Finish', 2],
     ])
   })
 
+  it('gives rigging its own phase between painting and finishing', () => {
+    const phases = phasesOf(['texture', 'bake', 'rig', 'mesh.lods', 'export'].map((u) => stage(u, 'queued')))
+    expect(phases.map((p) => [p.label, p.stages.map((s) => s.id)])).toEqual([
+      ['Paint', ['texture', 'bake']],
+      ['Rig', ['rig']],
+      ['Finish', ['mesh.lods', 'export']],
+    ])
+  })
+
   it('puts an unknown stage type in the phase before it', () => {
-    const phases = phasesOf([stage('shape', 'queued'), stage('mesh.rig', 'queued'), stage('export', 'queued')])
-    expect(phases.map((p) => p.stages.map((s) => s.id))).toEqual([['shape', 'mesh.rig'], ['export']])
+    const phases = phasesOf([stage('shape', 'queued'), stage('mesh.remesh', 'queued'), stage('export', 'queued')])
+    expect(phases.map((p) => p.stages.map((s) => s.id))).toEqual([['shape', 'mesh.remesh'], ['export']])
   })
 
   it('reads a phase as failed, running, done or waiting', () => {
@@ -98,6 +108,13 @@ describe('format', () => {
     expect(seconds(4.2)).toBe('4.2 s')
     expect(seconds(95)).toBe('1 min 35 s')
     expect(count(4998)).toBe('5.0k')
+  })
+
+  it('names stage types as nouns in a sentence', () => {
+    expect(taskNoun('background-removal')).toBe('background removal')
+    expect(taskNoun('rig')).toBe('rigging')
+    expect(stageLabel('rig')).toBe('Rig')
+    expect([skeletonName({ skeleton: 'humanoid' }), skeletonName({ skeleton: 'generic' })]).toEqual(['Humanoid', 'Generic'])
   })
 
   it('numbers cards in roman numerals', () => {

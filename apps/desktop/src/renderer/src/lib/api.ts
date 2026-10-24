@@ -83,6 +83,20 @@ export interface Asset {
   created_at: string
 }
 
+export interface Rig {
+  bones: number
+  /** Humanoid when the bones carry the standard humanoid names game engines retarget by. */
+  skeleton?: 'humanoid' | 'generic'
+}
+
+/** An asset's skeleton, from the stats the core read from its GLB; undefined when it has none. */
+export function rigOf(asset: { stats?: Asset['stats'] }): Rig | undefined {
+  const bones = asset.stats?.bones
+  if (typeof bones !== 'number' || bones <= 0) return undefined
+  const skeleton = asset.stats?.skeleton
+  return { bones, skeleton: skeleton === 'humanoid' || skeleton === 'generic' ? skeleton : undefined }
+}
+
 /** A format the library exports to, and whether this computer can write it now. */
 export interface ExportFormat {
   id: string

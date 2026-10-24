@@ -23,7 +23,7 @@ import { cost, isHosted, isInstalled, licenseFact, limits, runsOn, type Fact } f
 import { useToast } from '../lib/toast'
 
 const UNUSABLE = 'unusable'
-const ORDER = ['background-removal', 'shape', 'texture']
+const ORDER = ['background-removal', 'shape', 'texture', 'rig']
 
 function groupsOf(models: Model[]): [string, Model[]][] {
   const by = new Map<string, Model[]>()

@@ -5,6 +5,7 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js'
+import { bendPhase, genericAngle, HELD, humanoidPose, skeletonOf, type Phase, type Skeleton } from './rig'
 
 export type ViewMode = 'lit' | 'albedo' | 'normals' | 'wireframe' | 'uv'
 
@@ -15,6 +16,9 @@ export interface MeshStats {
   textures: string[]
   size: [number, number, number]
   lods: number
+  /** Bones that deform the full-detail mesh; 0 when the asset is not rigged. */
+  bones: number
+  skeleton?: Skeleton
 }
 
 const MAX_PIXEL_RATIO = 1.5
@@ -62,6 +66,34 @@ function lodLevel(o: THREE.Object3D): number {
   return m ? Number(m[1]) : 0
 }
 
+/**
+ * A skinned mesh's bounds come from its bones' world matrices, cached on first use. They are
+ * stale until the bones' matrices are, so refresh both before measuring.
+ */
+function refreshSkinnedBounds(root: THREE.Object3D): void {
+  root.updateMatrixWorld(true)
+  root.traverse((o) => {
+    const mesh = o as THREE.SkinnedMesh
+    if (!mesh.isSkinnedMesh) return
+    mesh.computeBoundingBox()
+    mesh.computeBoundingSphere()
+  })
+}
+
+/** The bones of the full-detail skinned meshes, each once, and each bone's rest rotation. */
+function bonesOf(root: THREE.Object3D): Map<THREE.Bone, THREE.Quaternion> {
+  const rest = new Map<THREE.Bone, THREE.Quaternion>()
+  root.traverse((o) => {
+    const mesh = o as THREE.SkinnedMesh
+    if (!mesh.isSkinnedMesh || lodLevel(o) > 0) return
+    for (const b of mesh.skeleton.bones) if (!rest.has(b)) rest.set(b, b.quaternion.clone())
+  })
+  return rest
+}
+
+const reducedMotion = (): boolean => window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
+const HELD_MS = 1000
+
 function checkerTexture(): THREE.Texture {
   const c = document.createElement('canvas')
   c.width = c.height = 256
@@ -91,6 +123,11 @@ export class Viewer {
   private intro: { start: number; from: number } | null = null
   private resize: ResizeObserver
   private sphere = new THREE.Sphere(new THREE.Vector3(), 1)
+  private rest = new Map<THREE.Bone, THREE.Quaternion>()
+  private skeleton: Skeleton | undefined
+  private helper: THREE.SkeletonHelper | null = null
+  private bend: { start: number; done: () => void } | null = null
+  private held: ReturnType<typeof setTimeout> | undefined
 
   /** Places the camera so the model's bounding sphere fills the view at the current aspect. */
   private frameCamera(): void {
@@ -147,6 +184,14 @@ export class Viewer {
         if (k >= 1) this.intro = null
         moving = true
       }
+      if (this.bend) {
+        const phase = bendPhase(t - this.bend.start)
+        if (phase.done) this.endBend()
+        else {
+          this.pose(phase)
+          moving = true
+        }
+      }
       this.renderer.render(this.scene, this.camera)
       if (moving) this.request()
     })
@@ -173,11 +218,16 @@ export class Viewer {
 
   private setModel(group: THREE.Group): void {
     const keepCamera = this.model !== null
+    this.stopBend()
+    this.setSkeleton(false)
     if (this.model) {
       this.scene.remove(this.model)
       this.disposeModel(this.model)
     }
     this.original.clear()
+    refreshSkinnedBounds(group)
+    this.rest = bonesOf(group)
+    this.skeleton = skeletonOf([...this.rest.keys()].map((b) => b.name))
     const box = new THREE.Box3().setFromObject(group)
     const size = box.getSize(new THREE.Vector3())
     const center = box.getCenter(new THREE.Vector3())
@@ -197,6 +247,7 @@ export class Viewer {
     ;(this.grid.material as THREE.Material).transparent = true
     ;(this.grid.material as THREE.Material).opacity = 0.25
     this.scene.add(this.grid)
+    refreshSkinnedBounds(pivot)
     this.sphere = new THREE.Box3().setFromObject(pivot).getBoundingSphere(new THREE.Sphere())
     if (!keepCamera) this.frameCamera()
     this.applyMode()
@@ -213,6 +264,89 @@ export class Viewer {
   setTurntable(on: boolean): void {
     this.turntable = on
     this.request()
+  }
+
+  /** Draws the bones over the mesh, so they show through it. */
+  setSkeleton(on: boolean): void {
+    if (this.helper) {
+      this.scene.remove(this.helper)
+      this.helper.dispose()
+      this.helper = null
+    }
+    if (on && this.model && this.rest.size > 0) {
+      const helper = new THREE.SkeletonHelper(this.model)
+      helper.setColors(new THREE.Color(0xe6c58f), new THREE.Color(0xe8622c))
+      const mat = helper.material as THREE.LineBasicMaterial
+      mat.depthTest = false
+      mat.depthWrite = false
+      mat.transparent = true
+      helper.renderOrder = 999
+      this.helper = helper
+      this.scene.add(helper)
+    }
+    this.request()
+  }
+
+  /**
+   * Flexes the limbs for a moment, then restores the rest pose; resolves when it has. With
+   * reduced motion it holds one bent pose instead of moving.
+   */
+  playBend(): Promise<void> {
+    this.stopBend()
+    if (this.rest.size === 0) return Promise.resolve()
+    return new Promise((done) => {
+      if (reducedMotion()) {
+        this.pose(HELD)
+        this.request()
+        this.held = setTimeout(() => {
+          this.held = undefined
+          this.restPose()
+          this.request()
+          done()
+        }, HELD_MS)
+        return
+      }
+      this.bend = { start: performance.now(), done }
+      this.request()
+    })
+  }
+
+  private stopBend(): void {
+    if (this.held !== undefined) {
+      clearTimeout(this.held)
+      this.held = undefined
+      this.restPose()
+    }
+    if (this.bend) this.endBend()
+  }
+
+  private endBend(): void {
+    const done = this.bend?.done
+    this.bend = null
+    this.restPose()
+    done?.()
+  }
+
+  private restPose(): void {
+    for (const [bone, q] of this.rest) bone.quaternion.copy(q)
+  }
+
+  private pose(phase: Phase): void {
+    const euler = new THREE.Euler()
+    const delta = new THREE.Quaternion()
+    const angles = this.skeleton === 'humanoid' ? humanoidPose(phase) : undefined
+    for (const [bone, q] of this.rest) {
+      let e: [number, number, number] | undefined
+      if (angles) e = angles[bone.name]
+      else if (bone.children.some((c) => (c as THREE.Bone).isBone)) {
+        let depth = 0
+        for (let p = bone.parent; p && (p as THREE.Bone).isBone; p = p.parent) depth++
+        e = [genericAngle(phase, depth), 0, 0]
+      }
+      if (!e) continue
+      delta.setFromEuler(euler.set(e[0], e[1], e[2]))
+      bone.quaternion.copy(q).multiply(delta)
+    }
   }
 
   private modeMaterials: THREE.Material[] = []
@@ -276,6 +410,8 @@ export class Viewer {
       textures: [...textures],
       size: [size.x, size.y, size.z],
       lods,
+      bones: this.rest.size,
+      skeleton: this.skeleton,
     }
   }
 
@@ -291,9 +427,11 @@ export class Viewer {
     this.camera.aspect = 1
     this.frameCamera()
     if (this.grid) this.grid.visible = false
+    if (this.helper) this.helper.visible = false
     this.renderer.render(this.scene, this.camera)
     const blob = await new Promise<Blob | null>((done) => this.canvas.toBlob(done, 'image/webp', 0.9))
     if (this.grid) this.grid.visible = true
+    if (this.helper) this.helper.visible = true
     this.renderer.setPixelRatio(ratio)
     this.renderer.setSize(prev.x, prev.y, false)
     this.camera.aspect = aspect
@@ -308,6 +446,7 @@ export class Viewer {
     root.traverse((o) => {
       const mesh = o as THREE.Mesh
       if (!mesh.isMesh) return
+      if ((mesh as THREE.SkinnedMesh).isSkinnedMesh) (mesh as THREE.SkinnedMesh).skeleton.dispose()
       mesh.geometry.dispose()
       const mats = this.original.get(mesh) ?? mesh.material
       for (const m of Array.isArray(mats) ? mats : [mats]) {
@@ -318,6 +457,8 @@ export class Viewer {
   }
 
   dispose(): void {
+    this.stopBend()
+    this.setSkeleton(false) // asks for a frame, cancelled below
     cancelAnimationFrame(this.frame)
     this.resize.disconnect()
     this.controls.dispose()

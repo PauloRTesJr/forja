@@ -1555,6 +1555,12 @@ h1 {
   background: var(--accent-soft);
   color: var(--accent-hi);
 }
+.viewer-modes button:disabled {
+  cursor: default;
+}
+.viewer-modes .viewer-rig {
+  animation: fade-in var(--dur-2) var(--ease-out) both;
+}
 .panel {
   display: flex;
   flex-direction: column;
@@ -2131,6 +2137,9 @@ pre.code {
 .tag.gold {
   border-color: var(--frame);
   color: var(--accent-hi);
+}
+.rig-tag {
+  animation: fade-in var(--dur-2) var(--ease-out) both;
 }
 .model-desc {
   max-width: 64ch;
