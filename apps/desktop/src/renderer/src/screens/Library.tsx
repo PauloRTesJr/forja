@@ -8,8 +8,9 @@ import { ScreenHead } from '../components/ScreenHead'
 import { api, artifactURL, deleteAsset, type Asset } from '../lib/api'
 import { keys } from '../lib/events'
 import { count, relative } from '../lib/format'
+import { dragOut, readyDrag } from '../lib/drag'
 import { transition, useNavigate } from '../lib/nav'
-import { clickSelect } from '../lib/selection'
+import { clickSelect, dragIds } from '../lib/selection'
 import { useToast } from '../lib/toast'
 import { ensureThumbnail, subscribeThumbnailErrors, thumbnailError, thumbnailErrorsVersion } from '../viewer/thumbnails'
 
@@ -33,7 +34,7 @@ export function Library() {
   const anchor = useRef<string | null>(null)
   const grid = useRef<HTMLDivElement>(null)
   // Only what the search shows counts: nothing hidden is exported or deleted by surprise.
-  const chosen = list.filter((a) => selected.has(a.id))
+  const chosen = useMemo(() => list.filter((a) => selected.has(a.id)), [list, selected])
   const selecting = chosen.length > 0
   useFlip(grid, list.map((a) => a.id).join())
 
@@ -42,6 +43,11 @@ export function Library() {
       ensureThumbnail(a, () => void qc.invalidateQueries({ queryKey: ['assets'] }))
     }
   }, [assets.data, qc])
+
+  // Dragging a selected card carries the whole selection: have every file ready.
+  useEffect(() => {
+    for (const a of chosen) readyDrag(a)
+  }, [chosen])
 
   const toggle = (id: string, shift: boolean): void => {
     // Read before it moves: React runs the update later.
@@ -86,7 +92,7 @@ export function Library() {
     return () => window.removeEventListener('keydown', onKey)
   }, [confirming, list, selecting, clear])
 
-  const shown = assets.data ? `${assets.data.length} assets` : ' '
+  const shown = !assets.data ? ' ' : assets.data.length ? `${assets.data.length} assets · drag them into Blender, Unity or a folder` : '0 assets'
   return (
     <>
       <div className="screen library">
@@ -109,6 +115,16 @@ export function Library() {
               leaving={leaving.has(a.id)}
               selecting={selecting}
               onToggle={(shift) => toggle(a.id, shift)}
+              onDragOut={(e) =>
+                dragOut(
+                  e,
+                  dragIds(
+                    list.map((x) => x.id),
+                    selected,
+                    a.id,
+                  ),
+                )
+              }
             />
           ))}
         </div>
@@ -189,6 +205,7 @@ function AssetCard({
   leaving,
   selecting,
   onToggle,
+  onDragOut,
 }: {
   asset: Asset
   index: number
@@ -196,6 +213,7 @@ function AssetCard({
   leaving: boolean
   selecting: boolean
   onToggle: (shift: boolean) => void
+  onDragOut: (e: React.DragEvent) => void
 }) {
   const navigate = useNavigate()
   const tris = asset.stats?.triangles
@@ -208,6 +226,9 @@ function AssetCard({
     >
       <button
         className="card-main"
+        draggable
+        onPointerEnter={() => readyDrag(asset)}
+        onDragStart={onDragOut}
         aria-label={selecting ? `${selected ? 'Deselect' : 'Select'} ${asset.name}` : `Open ${asset.name}`}
         onClick={(e) => {
           // Once something is selected, a click selects; Ctrl, Cmd or Shift start a selection.
@@ -219,7 +240,7 @@ function AssetCard({
           <Sparkle size={11} className="dust a" />
           <Sparkle size={8} className="dust b" />
           {asset.thumbnail ? (
-            <img src={artifactURL(asset.thumbnail, 'image/webp')} alt="" decoding="async" loading="lazy" />
+            <img src={artifactURL(asset.thumbnail, 'image/webp')} alt="" decoding="async" loading="lazy" draggable={false} />
           ) : error ? (
             <div className="card-failed" title={error}>
               Could not load this model

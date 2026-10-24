@@ -1400,6 +1400,14 @@ h1 {
 .head-actions {
   gap: 10px;
 }
+/* A handle, not a button: it does nothing on click and leaves by being dragged. */
+.btn.drag-out {
+  border-style: dashed;
+  cursor: grab;
+}
+.btn.drag-out:active {
+  cursor: grabbing;
+}
 .search {
   position: relative;
   display: flex;

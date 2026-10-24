@@ -15,6 +15,7 @@ import (
 var appOnly = map[string]string{
 	"GET /v1/providers/{id}/thumbnail": "relays catalog pictures to the app's page, which loads images only from the core",
 	"PUT /v1/assets/{id}/thumbnail":    "stores the thumbnail the app's 3D viewer renders",
+	"POST /v1/assets/{id}/drag":        "names a GLB for the app's window to drag into other programs; `assets get` saves one",
 	"POST /v1/artifacts/import":        "copies a picked image into the store so the app can preview it; the CLI passes paths",
 	"PUT /v1/artifacts":                "uploads bytes for a client that cannot hand the core a path; the CLI runs beside it",
 	"GET /v1/events/stream":            "the GET /v1/events stream as server-sent events, for Electron's main process",

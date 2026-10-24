@@ -102,6 +102,7 @@ func (s *Server) routes() []route {
 		{"DELETE /v1/assets/{id}", s.assetDelete},
 		{"PUT /v1/assets/{id}/thumbnail", s.assetThumbnail},
 		{"POST /v1/assets/{id}/blender", s.assetBlender},
+		{"POST /v1/assets/{id}/drag", s.assetDrag},
 		{"GET /v1/export/formats", s.exportFormats},
 		{"POST /v1/export", s.exportAssets},
 		{"GET /v1/cache", s.cacheGet},

@@ -153,7 +153,7 @@ func uniqueStems(items []Item) []string {
 	taken := map[string]bool{}
 	out := make([]string, len(items))
 	for i, it := range items {
-		base := fileName(it.Name)
+		base := FileName(it.Name)
 		stem := base
 		for n := 2; taken[strings.ToLower(stem)]; n++ {
 			stem = fmt.Sprintf("%s-%d", base, n)
@@ -164,8 +164,8 @@ func uniqueStems(items []Item) []string {
 	return out
 }
 
-// fileName makes a name safe for a file on every OS.
-func fileName(name string) string {
+// FileName makes a name safe for a file on every OS.
+func FileName(name string) string {
 	name = strings.Map(func(r rune) rune {
 		if strings.ContainsRune(`<>:"/\|?*`, r) || r < 32 {
 			return '-'

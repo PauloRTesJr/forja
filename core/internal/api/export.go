@@ -5,8 +5,10 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"forja/internal/export"
 	"forja/internal/library"
@@ -159,6 +161,61 @@ func (s *Server) assetBlender(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 202, b)
+}
+
+// DragFile is a copy of an asset's GLB, named after it, that the app's window drags into
+// other programs: Blender, Unity, a folder.
+type DragFile struct {
+	Path string `json:"path"`
+}
+
+// dragDir holds the files the app drags out, one folder per asset. Each lasts a day, which
+// covers any drop; a drop that moved one away gets it written again.
+func dragDir() string { return filepath.Join(os.TempDir(), "forja-drag") }
+
+// assetDrag readies an asset's GLB for a drag out of the app. The window asks before the drag
+// begins, since the drag itself must start at once.
+func (s *Server) assetDrag(w http.ResponseWriter, r *http.Request) {
+	a, err := s.DB.Asset(r.Context(), r.PathValue("id"))
+	if errors.Is(err, library.ErrNotFound) {
+		problem(w, 404, "no asset "+r.PathValue("id"))
+		return
+	}
+	if err != nil {
+		problem(w, 500, err.Error())
+		return
+	}
+	glb, err := s.Store.Path(a.GLB)
+	src, statErr := os.Stat(glb)
+	if err != nil || statErr != nil {
+		problem(w, 422, "the GLB of "+a.Name+" is missing from the store")
+		return
+	}
+	pruneDrags(time.Now().Add(-24 * time.Hour))
+	dir := filepath.Join(dragDir(), a.ID)
+	path := filepath.Join(dir, export.FileName(a.Name)+".glb")
+	if st, err := os.Stat(path); err != nil || st.Size() != src.Size() {
+		f, _ := export.LookupFormat("glb")
+		done, err := export.ToFiles(r.Context(), nil, f, []export.Item{{Asset: a.ID, Name: a.Name, GLB: glb}}, dir)
+		if err == nil && done[0].Error != "" {
+			err = errors.New(done[0].Error)
+		}
+		if err != nil {
+			problem(w, 500, err.Error())
+			return
+		}
+	}
+	writeJSON(w, 200, DragFile{Path: path})
+}
+
+// pruneDrags removes drag folders last written before cutoff.
+func pruneDrags(cutoff time.Time) {
+	entries, _ := os.ReadDir(dragDir())
+	for _, e := range entries {
+		if info, err := e.Info(); err == nil && info.ModTime().Before(cutoff) {
+			_ = os.RemoveAll(filepath.Join(dragDir(), e.Name()))
+		}
+	}
 }
 
 // assetDelete removes an asset and the job that made it from the library. Files exported

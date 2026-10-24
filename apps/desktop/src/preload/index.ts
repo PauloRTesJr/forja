@@ -25,6 +25,10 @@ const bridge = {
   openConfig: (): Promise<void> => ipcRenderer.invoke('settings:openConfig'),
   openDataFolder: (): Promise<void> => ipcRenderer.invoke('settings:openData'),
   copyText: (text: string): Promise<void> => ipcRenderer.invoke('clipboard:write', text),
+  /** Readies an asset's GLB to drag out of the window; icon is a PNG to show under the cursor. */
+  prepareDrag: (id: string, icon?: ArrayBuffer): Promise<void> => ipcRenderer.invoke('drag:prepare', id, icon),
+  /** Drags these assets' GLBs out of the window; call it from a dragstart handler. */
+  startDrag: (ids: string[]): void => ipcRenderer.send('drag:start', ids),
 }
 
 export type Bridge = typeof bridge

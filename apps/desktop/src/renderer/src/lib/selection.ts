@@ -23,6 +23,11 @@ export function clickSelect(selected: ReadonlySet<string>, ids: readonly string[
   return next
 }
 
+/** What dragging a card carries: the whole selection, in list order, when the card is part of it. */
+export function dragIds(ids: readonly string[], selected: ReadonlySet<string>, id: string): string[] {
+  return selected.has(id) ? ids.filter((x) => selected.has(x)) : [id]
+}
+
 export const withoutAsset = (list: Asset[] | undefined, id: string): Asset[] | undefined => list?.filter((a) => a.id !== id)
 
 /** The file name at the end of a path the core wrote, from any OS. */

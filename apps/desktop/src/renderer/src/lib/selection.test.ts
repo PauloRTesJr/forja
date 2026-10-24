@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Asset } from './api'
-import { baseName, clickSelect, fileStem, rangeBetween, withoutAsset } from './selection'
+import { baseName, clickSelect, dragIds, fileStem, rangeBetween, withoutAsset } from './selection'
 
 const ids = ['a', 'b', 'c', 'd', 'e']
 
@@ -24,6 +24,15 @@ describe('clickSelect', () => {
     sel = clickSelect(sel, ids, 'e', 'c', true)
     expect([...sel].sort()).toEqual(['b', 'c', 'd', 'e'])
     expect([...clickSelect(sel, ids, 'c', 'c', false)].sort()).toEqual(['b', 'd', 'e'])
+  })
+})
+
+describe('dragIds', () => {
+  it('carries the selection when the dragged card is in it, else that card alone', () => {
+    const sel = new Set(['d', 'b'])
+    expect(dragIds(ids, sel, 'd')).toEqual(['b', 'd'])
+    expect(dragIds(ids, sel, 'a')).toEqual(['a'])
+    expect(dragIds(ids, new Set(), 'c')).toEqual(['c'])
   })
 })
 

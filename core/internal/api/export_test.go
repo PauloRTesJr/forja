@@ -163,3 +163,52 @@ func must(path string, err error) string {
 	}
 	return path
 }
+
+func TestAnAssetIsReadiedForDraggingOutOfTheApp(t *testing.T) {
+	tmp := t.TempDir()
+	for _, k := range []string{"TMP", "TEMP", "TMPDIR"} {
+		t.Setenv(k, tmp)
+	}
+	ts, s, _ := newServer(t)
+	glb := twoChests(t, s)
+	stale := filepath.Join(tmp, "forja-drag", "yesterday")
+	if err := os.MkdirAll(stale, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-48 * time.Hour)
+	_ = os.Chtimes(stale, old, old)
+
+	var d DragFile
+	if code := call(t, ts, "POST", "/v1/assets/a1/drag", nil, &d); code != 200 {
+		t.Fatalf("status %d", code)
+	}
+	if d.Path != filepath.Join(tmp, "forja-drag", "a1", "chest.glb") {
+		t.Fatalf("path %s", d.Path)
+	}
+	want, _ := os.ReadFile(must(s.Store.Path(glb)))
+	if got, _ := os.ReadFile(d.Path); string(got) != string(want) {
+		t.Fatal("the dragged file is not the asset's GLB")
+	}
+	if _, err := os.Stat(stale); err == nil {
+		t.Fatal("yesterday's drag folder was kept")
+	}
+
+	// Asked again, it hands back the same file without writing it again.
+	_ = os.Chtimes(d.Path, old, old)
+	var again DragFile
+	call(t, ts, "POST", "/v1/assets/a1/drag", nil, &again)
+	if info, _ := os.Stat(d.Path); again.Path != d.Path || !info.ModTime().Equal(old) {
+		t.Fatalf("asked again: %s, written at %s", again.Path, info.ModTime())
+	}
+	// A drop that moved it away (a folder on the same drive) gets it written again.
+	_ = os.Remove(d.Path)
+	if code := call(t, ts, "POST", "/v1/assets/a1/drag", nil, nil); code != 200 {
+		t.Fatalf("status %d", code)
+	}
+	if _, err := os.Stat(d.Path); err != nil {
+		t.Fatalf("not written again: %v", err)
+	}
+	if code := call(t, ts, "POST", "/v1/assets/nope/drag", nil, nil); code != 404 {
+		t.Fatalf("an unknown asset answered %d", code)
+	}
+}

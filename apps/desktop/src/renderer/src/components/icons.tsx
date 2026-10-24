@@ -372,3 +372,15 @@ export const Cube = (p: IconProps) => (
     <path d="M4 7.5l8 4.5 8-4.5M12 12v9" />
   </Line>
 )
+
+/** Six dots: a handle to drag something out by. */
+export const Grip = (p: IconProps) => (
+  <Line size={16} {...p}>
+    {[8, 12, 16].map((y) => (
+      <g key={y}>
+        <circle cx="9.5" cy={y} r="1.2" fill="currentColor" stroke="none" />
+        <circle cx="14.5" cy={y} r="1.2" fill="currentColor" stroke="none" />
+      </g>
+    ))}
+  </Line>
+)

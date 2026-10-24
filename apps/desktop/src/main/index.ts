@@ -1,5 +1,5 @@
 import { join } from 'node:path'
-import { app, BrowserWindow, clipboard, dialog, ipcMain, nativeTheme, shell } from 'electron'
+import { app, BrowserWindow, clipboard, dialog, ipcMain, nativeImage, nativeTheme, shell, type NativeImage } from 'electron'
 import { Core } from './core'
 import { handleScheme, registerScheme } from './protocol'
 
@@ -92,6 +92,37 @@ ipcMain.handle('settings:openData', async () => {
   if (err) throw new Error(err)
 })
 ipcMain.handle('clipboard:write', (_e, text: string) => clipboard.writeText(String(text)))
+
+// Assets' GLBs ready to drag into other programs (Blender, Unity, a folder). The OS drag has
+// to start from the page's dragstart, at once, so the core names each file beforehand.
+type DragFile = { file: string; icon: NativeImage }
+const dragFiles = new Map<string, Promise<DragFile>>()
+const dragIcons = new Map<string, NativeImage>()
+function readyDrag(id: string, png?: ArrayBuffer): Promise<DragFile> {
+  if (png) dragIcons.set(id, nativeImage.createFromBuffer(Buffer.from(png)))
+  const ready = (async (): Promise<DragFile> => {
+    const { path } = await coreJSON<{ path: string }>('POST', `/v1/assets/${encodeURIComponent(id)}/drag`)
+    let icon = dragIcons.get(id) ?? nativeImage.createEmpty()
+    if (icon.isEmpty()) icon = await app.getFileIcon(path, { size: 'large' })
+    return { file: path, icon }
+  })()
+  dragFiles.set(id, ready)
+  ready.catch(() => dragFiles.delete(id))
+  return ready
+}
+ipcMain.handle('drag:prepare', async (_e, id: string, png?: ArrayBuffer) => {
+  await readyDrag(String(id), png)
+})
+ipcMain.on('drag:start', async (e, ids: string[]) => {
+  // An asset not readied yet (one of a selection never hovered) is readied now: the button
+  // is still down while the pointer travels.
+  const got = await Promise.allSettled(ids.map((id) => dragFiles.get(String(id)) ?? readyDrag(String(id))))
+  const files = got.flatMap((r) => (r.status === 'fulfilled' ? [r.value] : []))
+  if (files.length === 0) return
+  e.sender.startDrag({ file: files[0]!.file, files: files.map((f) => f.file), icon: files[0]!.icon })
+  // A drop into a folder on the same drive may have moved the files away: ready them again.
+  for (const id of ids) readyDrag(String(id)).catch(() => {})
+})
 
 app.whenReady().then(async () => {
   handleScheme(core)

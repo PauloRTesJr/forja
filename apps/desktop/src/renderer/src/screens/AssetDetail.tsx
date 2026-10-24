@@ -1,11 +1,12 @@
 import { useMutation, useQuery } from '@tanstack/react-query'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { ConfirmDelete } from '../components/ConfirmDelete'
 import { Empty } from '../components/Empty'
 import { ExportMenu } from '../components/ExportMenu'
-import { ArrowLeft, Cube, Folder, Trash } from '../components/icons'
+import { ArrowLeft, Cube, Folder, Grip, Trash } from '../components/icons'
 import { SectionHead } from '../components/ScreenHead'
 import { api, ApiError, artifactURL, deleteAsset, openInBlender, type Asset, type Job } from '../lib/api'
+import { dragOut, readyDrag } from '../lib/drag'
 import { keys } from '../lib/events'
 import { count, relative, seconds, stageLabel } from '../lib/format'
 import { transition, useNavigate } from '../lib/nav'
@@ -26,6 +27,9 @@ export function AssetDetail({ id }: { id: string }) {
   const toast = useToast()
   const a = asset.data
   const back = (): void => transition(() => navigate({ screen: 'library' }))
+  useEffect(() => {
+    if (a) readyDrag(a)
+  }, [a])
   const blender = useMutation({
     mutationFn: () => openInBlender(id),
     onSuccess: (b) => toast(`Opening in Blender ${b.version}…`),
@@ -73,6 +77,18 @@ export function AssetDetail({ id }: { id: string }) {
             Open in Blender
           </button>
           <ExportMenu assets={a ? [a] : []} />
+          {a && (
+            <span
+              className="btn drag-out"
+              draggable
+              title="Drag the GLB into Blender, Unity or a folder"
+              onPointerEnter={() => readyDrag(a)}
+              onDragStart={(e) => dragOut(e, [a.id])}
+            >
+              <Grip />
+              Drag out
+            </span>
+          )}
           <button className="btn danger" onClick={() => setConfirming(true)} disabled={!a || remove.isPending}>
             <Trash />
             Delete
