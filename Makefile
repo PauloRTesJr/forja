@@ -37,11 +37,19 @@ check: ## Lint, type-check and test everything (what CI runs)
 	cd core && gofmt -l . | (! grep .) && go vet ./... && go test $$([ "$$(go env CGO_ENABLED)" = 1 ] && echo -race) ./...
 	cd apps/desktop && pnpm lint && pnpm typecheck && pnpm test
 
+licenses: ## Fail on strong copyleft in what ships: the core's Go modules, the engine's and the app's packages
+	cd core && GOBIN="$(CURDIR)/core/bin/tools" go install github.com/google/go-licenses/v2@v2.0.1
+	cd core && for os in linux darwin windows; do echo "go-licenses: GOOS=$$os"; \
+		GOOS=$$os GOROOT="$$(go env GOROOT)" bin/tools/go-licenses check ./... --ignore forja \
+			--disallowed_types=forbidden,restricted,unknown || exit 1; done
+	cd engine && uv run python ../scripts/licenses.py python
+	cd apps/desktop && pnpm licenses list --prod --json | uv run --project ../../engine python ../../scripts/licenses.py npm
+
 version: ## Print the version; `make version V=X.Y.Z` writes it into the app, the core and the engine
 	@if [ -z "$(V)" ]; then cat VERSION; else uv run --no-project python scripts/version.py "$(V)" && cd engine && uv lock --quiet; fi
 
 dist: core ## Build this OS's desktop installers into apps/desktop/release (unsigned without a certificate)
 	cd apps/desktop && pnpm build && pnpm exec electron-builder --publish never
 
-.PHONY: version dist
+.PHONY: licenses version dist
 .PHONY: help setup core core-all engine desktop test check
