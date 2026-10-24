@@ -89,6 +89,48 @@ func TestOptionalStagesSwitchAndRewire(t *testing.T) {
 	}
 }
 
+func TestHeroCharacterRigsBeforeTheLODs(t *testing.T) {
+	all, _ := Load()
+	hero := all["hero-character"]
+	reads := func(p *Preset, id string) []string {
+		for _, s := range p.Stages {
+			if s.ID == id {
+				return s.Inputs
+			}
+		}
+		t.Fatalf("no stage %s in %s", id, p.ID)
+		return nil
+	}
+	off := hero.Active()
+	for _, s := range off.Stages {
+		if s.Use == "rig" {
+			t.Fatal("rig is on by default")
+		}
+	}
+	if got := reads(off, "lods"); len(got) != 1 || got[0] != "bake" {
+		t.Fatalf("with rig off, lods reads %v", got)
+	}
+	on, err := hero.WithOverrides(map[string]any{"rig.enabled": true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	active := on.Active()
+	if got := reads(active, "rig"); len(got) != 1 || got[0] != "bake" {
+		t.Fatalf("rig reads %v", got)
+	}
+	if got := reads(active, "lods"); len(got) != 1 || got[0] != "rig" {
+		t.Fatalf("with rig on, lods reads %v", got)
+	}
+	// The other presets are props and pieces: nothing to rig.
+	for id, p := range all {
+		for _, s := range p.Stages {
+			if s.Use == "rig" && id != "hero-character" {
+				t.Errorf("%s has a rig stage", id)
+			}
+		}
+	}
+}
+
 func TestOptionalStagesNeedALabel(t *testing.T) {
 	_, err := Parse([]byte("id: x\nstages:\n  - {id: a, use: shape, optional: {default: true}}\n  - {id: b, use: export}\n"), "t")
 	if err == nil {

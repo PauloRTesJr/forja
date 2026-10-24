@@ -1,6 +1,6 @@
 id: hero-character
 name: Hero character
-description: 30k triangles, 2K base color with baked normal and AO maps. Rigging and FBX arrive in M6.
+description: 30k triangles, 2K base color with baked normal and AO maps, two LODs, optionally rigged.
 stages:
   - { id: bg, use: background-removal, inputs: [input:image] }
   - { id: frame, use: framing, params: { size: 1024 } }
@@ -20,5 +20,15 @@ stages:
         asset it shows.
       default: false
   - { id: bake, use: bake, inputs: [match, cleanup] }
+  # Rigs the mesh that ships, before the LODs, so every level carries the same skin.
+  - id: rig
+    use: rig
+    inputs: [bake]
+    optional:
+      label: Rig the character
+      help: >-
+        Adds a skeleton and skin weights so the character can be posed and animated. A
+        humanoid gets the standard bone names game engines retarget animations to.
+      default: false
   - { id: lods, use: mesh.lods, params: { ratios: [0.5, 0.25] } }
   - { id: export, use: export, params: { format: glb, compression: meshopt } }

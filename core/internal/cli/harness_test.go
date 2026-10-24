@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -25,6 +26,7 @@ import (
 	"forja/internal/config"
 	"forja/internal/engineapi"
 	"forja/internal/events"
+	"forja/internal/glb"
 	"forja/internal/installs"
 	"forja/internal/ipc"
 	"forja/internal/jobs"
@@ -91,6 +93,7 @@ func (e *fakeEngine) Models(context.Context) ([]engineapi.Model, error) {
 		model("shape", "shape", 10, mit),
 		mv,
 		model("paint", "texture", 10, restricted),
+		model("rig", "rig", 10, mit),
 	}, nil
 }
 
@@ -103,6 +106,7 @@ func (e *fakeEngine) set(fn func(e *fakeEngine)) {
 func (e *fakeEngine) Run(_ context.Context, req engineapi.RunRequest, evs chan<- engineapi.Event) (*engineapi.Run, error) {
 	run := &engineapi.Run{ID: "r", Status: "succeeded", Stages: map[string]engineapi.StageState{}}
 	produced := map[string]string{}
+	rigged := slices.ContainsFunc(req.Stages, func(s engineapi.StageSpec) bool { return s.Use == "rig" })
 	for _, s := range req.Stages {
 		var inputs []string
 		for _, in := range s.Inputs {
@@ -130,7 +134,10 @@ func (e *fakeEngine) Run(_ context.Context, req engineapi.RunRequest, evs chan<-
 				outs = append(outs, engineapi.Output{Hash: ref, Kind: "image/png"})
 			}
 		case "export":
-			blob = chestGLB(len(inputs))
+			blob = chestGLB(len(inputs), rigged)
+		case "rig":
+			profile, _ := e.st.PutBytes([]byte(`{"profile": "humanoid"}`))
+			outs = append(outs, engineapi.Output{Hash: profile, Kind: "application/json"})
 		}
 		if len(outs) > 0 && outs[0].Hash == "" {
 			outs[0].Hash, _ = e.st.PutBytes(blob)
@@ -189,18 +196,31 @@ func (e *fakeEngine) FollowTask(_ context.Context, id string, states chan<- engi
 	return nil
 }
 
-// chestGLB is a GLB with a full-detail mesh of 100 triangles and two LODs.
-func chestGLB(seed int) []byte {
+// chestGLB is a GLB with a full-detail mesh of 100 triangles and two LODs; rigged, every
+// level is skinned to a humanoid skeleton.
+func chestGLB(seed int, rigged bool) []byte {
+	nodes := []any{map[string]any{"name": "chest_LOD0", "mesh": 0}, map[string]any{"name": "chest_LOD1", "mesh": 0},
+		map[string]any{"name": "chest_LOD2", "mesh": 0}}
 	doc := map[string]any{
 		"asset":  map[string]string{"version": "2.0", "generator": "fake " + strconv.Itoa(seed)},
 		"scene":  0,
 		"scenes": []any{map[string]any{"nodes": []int{0, 1, 2}}},
-		"nodes": []any{map[string]any{"name": "chest_LOD0", "mesh": 0}, map[string]any{"name": "chest_LOD1", "mesh": 0},
-			map[string]any{"name": "chest_LOD2", "mesh": 0}},
 		"meshes": []any{map[string]any{"primitives": []any{map[string]any{"attributes": map[string]int{"POSITION": 0},
 			"indices": 1, "material": 0}}}},
 		"accessors": []any{map[string]int{"count": 80}, map[string]int{"count": 300}},
 	}
+	if rigged {
+		var joints []int
+		for _, name := range glb.HumanoidBones {
+			joints = append(joints, len(nodes))
+			nodes = append(nodes, map[string]any{"name": name})
+		}
+		for _, n := range nodes[:3] {
+			n.(map[string]any)["skin"] = 0
+		}
+		doc["skins"] = []any{map[string]any{"joints": joints, "extras": map[string]string{"forja_skeleton": "humanoid"}}}
+	}
+	doc["nodes"] = nodes
 	js, _ := json.Marshal(doc)
 	for len(js)%4 != 0 {
 		js = append(js, ' ')
