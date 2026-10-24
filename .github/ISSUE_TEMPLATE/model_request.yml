@@ -1,0 +1,85 @@
+name: Model request
+description: A model Forja should support.
+labels: ["model"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Forja installs models from their publishers and never bundles weights. Whether a model can join the catalog depends first on its license, so please fill those fields in as well as you can.
+  - type: input
+    id: name
+    attributes:
+      label: Model
+      placeholder: TRELLIS.2 (4B)
+    validations:
+      required: true
+  - type: input
+    id: code
+    attributes:
+      label: Code repository
+      placeholder: https://github.com/<org>/<repo>
+    validations:
+      required: true
+  - type: input
+    id: weights
+    attributes:
+      label: Weights
+      description: Where the weights are published, e.g. a Hugging Face repository.
+      placeholder: https://huggingface.co/<org>/<repo>
+    validations:
+      required: true
+  - type: checkboxes
+    id: stages
+    attributes:
+      label: Stages it would run
+      options:
+        - label: Background removal
+        - label: Shape (image to mesh)
+        - label: Texture (mesh and image to textured mesh)
+        - label: Something else (say what below)
+  - type: input
+    id: code-license
+    attributes:
+      label: Code license
+      description: The SPDX id if there is one (MIT, Apache-2.0, ...), else the license's name.
+    validations:
+      required: true
+  - type: input
+    id: weights-license
+    attributes:
+      label: Weights license
+      description: Often different from the code's.
+    validations:
+      required: true
+  - type: input
+    id: license-url
+    attributes:
+      label: License text
+      description: A link to the license itself, ideally at a fixed commit.
+    validations:
+      required: true
+  - type: dropdown
+    id: commercial
+    attributes:
+      label: Commercial use allowed
+      options:
+        - "Yes"
+        - "No"
+        - Unclear
+    validations:
+      required: true
+  - type: textarea
+    id: restrictions
+    attributes:
+      label: Restrictions
+      description: Territories excluded, user or revenue limits, attribution, acceptable-use terms.
+  - type: textarea
+    id: hardware
+    attributes:
+      label: Hardware
+      description: VRAM it needs (the publisher's figure or yours), and whether it runs on CUDA, Apple Silicon, ROCm or the CPU.
+  - type: textarea
+    id: why
+    attributes:
+      label: Why this model
+      description: What it does better than the models Forja has, with example outputs if you have them.
