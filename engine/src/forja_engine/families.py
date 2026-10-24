@@ -6,6 +6,9 @@ A family folder (`engine/families/<name>/`) holds:
 - `requirements/<lane>.txt`: the family's dependencies for one torch lane.
 - `src/forja_<name>/`: the adapter package (Apache-2.0, ours).
 
+A family can also live outside the engine, as a model package: the same folder plus a
+`manifests/` folder, listed in `engine.manifest_dirs` (see registry.Registry.load).
+
 Upstream model code is downloaded at install time from a pinned commit and verified by
 sha256 (docs/decisions.md, decision 9); it never lives in this repository.
 """
@@ -64,8 +67,9 @@ class Family:
         return self.root / "requirements" / f"{lane}.txt"
 
 
-def load(name: str) -> Family:
-    root = families_dir() / name
+def load(name: str, root: Path | None = None) -> Family:
+    """The family `name`, from `root` when it is a model package, else from families_dir()."""
+    root = root or families_dir() / name
     spec_path = root / "family.yaml"
     if not spec_path.is_file():
         raise FileNotFoundError(f"no model family {name!r} at {root}")

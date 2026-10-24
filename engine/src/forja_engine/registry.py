@@ -61,6 +61,8 @@ class Manifest:
     # Explicit interpreter; otherwise the family's environment, or the supervisor's own for
     # families that need nothing beyond the engine (built-in, stub).
     python: str | None = None
+    # The family folder when the model came in a model package instead of engine/families.
+    family_dir: Path | None = None
     env_dir: Path | None = None
     weights_dir: Path | None = None
     installed: bool = True
@@ -101,7 +103,7 @@ class Manifest:
             "installed": self.installed,
             "weights": {k: self.weights[k] for k in ("repo", "revision") if k in self.weights},
             "adapter_version": self.adapter_version,
-            "upstream": upstream_pin(self.family),
+            "upstream": upstream_pin(self.family, self.family_dir),
             "rank": self.rank,
             "stub": self.stub,
             "views": list(self.views),
@@ -113,12 +115,12 @@ class ManifestError(ValueError):
 
 
 @cache
-def upstream_pin(family: str) -> str:
+def upstream_pin(family: str, root: Path | None = None) -> str:
     """The sha256 of the upstream source a family runs, or "" for families with none."""
     if family in IN_ENGINE_FAMILIES:
         return ""
     try:
-        up = families.load(family).upstream
+        up = families.load(family, root).upstream
     except FileNotFoundError:
         return ""
     return up.sha256 if up else ""
@@ -155,6 +157,27 @@ def parse(doc: dict[str, Any], source: str) -> Manifest:
         raise ManifestError(f"{source}: invalid manifest: {e}") from e
 
 
+def _package(root: Path) -> list[Manifest]:
+    """A model package: a family folder (family.yaml, requirements/, src/) with a manifests/ folder.
+
+    It adds models from outside the engine: install builds the family's environment from the
+    package, the same way it does for engine/families.
+    """
+    doc = yaml.safe_load((root / "family.yaml").read_text(encoding="utf-8")) or {}
+    family = str(doc.get("name", ""))
+    if family in IN_ENGINE_FAMILIES or (families.families_dir() / family / "family.yaml").is_file():
+        raise ManifestError(
+            f"{root}: family {family!r} is one of the engine's; give the package its own name"
+        )
+    out = []
+    for path in sorted((root / "manifests").glob("*.y*ml")):
+        m = parse(yaml.safe_load(path.read_text(encoding="utf-8")), str(path))
+        if m.family != family:
+            raise ManifestError(f"{path}: names family {m.family!r}, but its package is {family!r}")
+        out.append(replace(m, family_dir=root.resolve()))
+    return out
+
+
 def _views(raw: list[str]) -> tuple[str, ...]:
     views = tuple(str(v) for v in raw)
     if views and ("front" not in views or not set(views) <= set(VIEWS)):
@@ -185,6 +208,9 @@ class Registry:
             if entry.name.endswith((".yaml", ".yml")):
                 found.append(parse(yaml.safe_load(entry.read_text()), entry.name))
         for d in extra_dirs or []:
+            if (d / "family.yaml").is_file():
+                found += _package(d)
+                continue
             for path in sorted(d.glob("*.y*ml")):
                 found.append(parse(yaml.safe_load(path.read_text()), str(path)))
         return cls(found)

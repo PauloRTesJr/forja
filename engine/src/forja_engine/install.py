@@ -275,7 +275,7 @@ class Installer:
             for name, _ in STEPS:
                 self.report.step(name, "skipped")
             return Path()
-        fam = families.load(manifest.family)
+        fam = families.load(manifest.family, manifest.family_dir)
         lane = lane or families.detect_lane()
         if lane not in fam.lanes:
             self.report.step("checks", "failed")
