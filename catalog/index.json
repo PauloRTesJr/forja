@@ -88,6 +88,26 @@
       "sha256": "e45dcde467df046afdb0f03b4875afa60f073bdd84ee651c669c87d493eaa1c9"
     },
     {
+      "id": "skintokens",
+      "name": "SkinTokens (TokenRig)",
+      "family": "skintokens",
+      "tasks": [
+        "rig"
+      ],
+      "license": {
+        "spdx": "MIT",
+        "commercial": true,
+        "restrictions": []
+      },
+      "adapter_version": "1",
+      "vram_gb": 14.0,
+      "disk_gb": 8.1,
+      "rank": 10,
+      "stub": false,
+      "manifest": "engine/src/forja_engine/manifests/skintokens.yaml",
+      "sha256": "3ae969dd8634d2c70d5cb893f927aa0e938e1ccf21cb37535fe4efda52175987"
+    },
+    {
       "id": "stub-background",
       "name": "Stub background removal",
       "family": "stub",
@@ -128,6 +148,26 @@
       "sha256": "23771906f3ce931f6de452dba9790934809a3d58fd1a28b5975582b1a10456f5"
     },
     {
+      "id": "stub-rig",
+      "name": "Stub rig (template skeleton)",
+      "family": "stub",
+      "tasks": [
+        "rig"
+      ],
+      "license": {
+        "spdx": "Apache-2.0",
+        "commercial": true,
+        "restrictions": []
+      },
+      "adapter_version": "1",
+      "vram_gb": 0.0,
+      "disk_gb": 0.0,
+      "rank": 0,
+      "stub": true,
+      "manifest": "engine/src/forja_engine/manifests/stub-rig.yaml",
+      "sha256": "fc2faa1d5dc71427ce690d6760fa18efd73a6fc94c652bfc221fd8eb94064e90"
+    },
+    {
       "id": "stub-shape",
       "name": "Stub shape (silhouette inflation)",
       "family": "stub",
@@ -166,6 +206,26 @@
       "stub": false,
       "manifest": "engine/src/forja_engine/manifests/triposg.yaml",
       "sha256": "2a50c2c67f64b86dcf8ed980d80da8ff8a6e8781a6d518b847321063f7cdfecc"
+    },
+    {
+      "id": "unirig",
+      "name": "UniRig",
+      "family": "unirig",
+      "tasks": [
+        "rig"
+      ],
+      "license": {
+        "spdx": "MIT",
+        "commercial": true,
+        "restrictions": []
+      },
+      "adapter_version": "1",
+      "vram_gb": 8.7,
+      "disk_gb": 10.7,
+      "rank": 5,
+      "stub": false,
+      "manifest": "engine/src/forja_engine/manifests/unirig.yaml",
+      "sha256": "72f4fdce46c985b4b20fe93cdcc138ead43a0e4c79a48d8640f397b68daca811"
     }
   ]
 }

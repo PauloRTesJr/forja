@@ -47,7 +47,8 @@
           "mesh.lods",
           "export",
           "views.detect",
-          "views.split"
+          "views.split",
+          "rig"
         ]
       }
     },

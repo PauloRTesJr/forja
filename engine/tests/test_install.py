@@ -29,6 +29,12 @@ def test_extract_drops_the_top_folder(tmp_path):
         tar.addfile(info, io.BytesIO(data))
     dest = install.extract_tarball(archive, tmp_path / "upstream")
     assert (dest / "pkg" / "mod.py").read_bytes() == b"print('hi')"
+    # Cleaned away since, its marker left behind: extracting again puts it back.
+    import shutil
+
+    shutil.rmtree(dest / "pkg")
+    assert install.extract_tarball(archive, dest) == dest
+    assert (dest / "pkg" / "mod.py").is_file()
 
 
 def test_family_specs_parse():

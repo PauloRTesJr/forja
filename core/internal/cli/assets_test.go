@@ -101,6 +101,52 @@ func TestAssetsAreExportedOpenedInBlenderAndDeleted(t *testing.T) {
 	}
 }
 
+func TestACharacterIsRiggedWhenAskedAndShowsItsSkeleton(t *testing.T) {
+	h := newHarness(t)
+	img := h.image("hero.png")
+	// The rig is off unless asked for, so a hero needs no rig model.
+	var plain []*library.Job
+	h.okJSON(&plain, "generate", img, "--preset", "hero-character")
+	if len(plain) != 1 || plain[0].Status != library.Succeeded || slices.ContainsFunc(plain[0].Stages, isRig) {
+		t.Fatalf("hero without a rig: %+v", plain)
+	}
+	if r := h.cli("", "generate", img, "--preset", "hero-character", "--with", "rig"); r.code == 0 ||
+		!strings.Contains(r.err, "no rig model is installed") {
+		t.Fatalf("a rig with no rig model: exit %d, %s", r.code, r.err)
+	}
+	if out := h.ok("generate", img, "--preset", "hero-character", "--dry-run"); !strings.Contains(out, "Rig the character (rig.enabled)") {
+		t.Fatalf("the plan does not offer the rig:\n%s", out)
+	}
+
+	h.ok("models", "install", "rig")
+	var jobs []*library.Job
+	h.okJSON(&jobs, "generate", img, "--preset", "hero-character", "--with", "rig")
+	if len(jobs) != 1 || jobs[0].Status != library.Succeeded {
+		t.Fatalf("rigged hero: %+v", jobs)
+	}
+	at := slices.IndexFunc(jobs[0].Stages, isRig)
+	if at < 0 || jobs[0].Stages[at].Model != "rig" || jobs[0].Stages[at+1].Use != "mesh.lods" ||
+		jobs[0].Stages[at-1].Use != "bake" || len(jobs[0].Stages[at].Outputs) != 2 {
+		t.Fatalf("stages %+v", jobs[0].Stages)
+	}
+	var as library.Asset
+	h.okJSON(&as, "assets", "show", jobs[0].AssetID)
+	if as.Stats["bones"] != float64(15) || as.Stats["skeleton"] != "humanoid" {
+		t.Fatalf("stats %v", as.Stats)
+	}
+	if out := h.ok("assets", "show", jobs[0].AssetID); !strings.Contains(out, "rigged     humanoid, 15 bones") {
+		t.Fatalf("show printed:\n%s", out)
+	}
+	if out := h.ok("assets", "show", plain[0].AssetID); strings.Contains(out, "rigged") {
+		t.Fatalf("an unrigged asset shows a rig:\n%s", out)
+	}
+	if out := h.ok("assets", "ls"); !strings.Contains(out, "RIG") || strings.Count(out, "humanoid") != 1 {
+		t.Fatalf("ls printed:\n%s", out)
+	}
+}
+
+func isRig(s library.Stage) bool { return s.Use == "rig" }
+
 func TestTheCacheIsShownLimitedAndCleared(t *testing.T) {
 	h := newHarness(t)
 	img := h.image("chest.png")

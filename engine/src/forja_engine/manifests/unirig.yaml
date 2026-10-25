@@ -1,0 +1,29 @@
+id: unirig
+name: UniRig
+family: unirig
+adapter: forja_unirig:UniRig
+tasks: [rig]
+# Below SkinTokens, its successor, which needs a 14 GB card; UniRig is the one that fits 12 GB.
+rank: 5
+description: Predicts a skeleton for the character, then skin weights for it; humanoids get standard bone names.
+# Measured on the reference Windows PC: environment 5.3 GB, weights 5.4 GB.
+disk_gb: 10.7
+license: { spdx: MIT, commercial: true, url: "https://github.com/VAST-AI-Research/UniRig/blob/6793c6640ff01c8fb389f3993434124bb43d2933/LICENSE" }
+# Measured on an RTX 4070 Ti: torch reserves 8.6 GB at 15 beams for a 30k-triangle character
+# (upstream's README says 8). The two models take the GPU in turn, the skin one being larger.
+vram_gb: 8.7
+requirements:
+  cuda: { status: supported, min_vram_gb: 8 }
+  mps: { status: unsupported }
+  cpu: { status: unsupported }
+weights:
+  hub: huggingface
+  repo: VAST-AI/UniRig
+  revision: 36842e2b5947e9e60f89275b83208c8e74071c63
+  files:
+    - { path: skeleton/articulation-xl_quantization_256/model.ckpt, sha256: d8cf9b42d56e7bc316d293597ecf8c4c39a8631cdd44a261ecf388242fabd0f4, bytes: 1439617174 }
+    - { path: skin/articulation-xl/model.ckpt, sha256: 9d40cf42fb9d4c10d8b373d9f4f557c6fbbc5ebacae7ae6b3dce5a0d8a18bc33, bytes: 4375464854 }
+params:
+  # Upstream's skeleton sampling: 15 beams. Fewer use less memory and vary more between seeds.
+  beams: { type: integer, default: 15, minimum: 1, maximum: 20 }
+  humanoid: { type: boolean, default: true, description: Give a humanoid's bones the standard names game engines retarget to }

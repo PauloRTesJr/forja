@@ -1,0 +1,12 @@
+id: stub-rig
+name: Stub rig (template skeleton)
+family: stub
+stub: true
+description: Deterministic stand-in for tests; its output is not a real asset.
+adapter: forja_engine.adapters.stub:StubRig
+tasks: [rig]
+license: { spdx: Apache-2.0, commercial: true }
+requirements:
+  cpu: { status: supported }
+params:
+  profile: { type: string, default: auto, enum: [auto, humanoid, generic] }

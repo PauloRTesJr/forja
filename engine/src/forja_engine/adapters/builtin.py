@@ -16,6 +16,7 @@ from forja_engine.ops import bake
 from forja_engine.ops import image as img_ops
 from forja_engine.ops import match as match_ops
 from forja_engine.ops import mesh as mesh_ops
+from forja_engine.ops import skin as skin_ops
 from forja_engine.ops import views as views_ops
 from forja_engine.sdk import (
     VIEWS,
@@ -197,16 +198,21 @@ class Bake(Adapter):
 class Lods(Adapter):
     """LOD1..n by decimating LOD0's geometry and transferring UVs from LOD0's surface.
 
-    All levels share LOD0's material, so LODs cost no extra texture memory.
+    All levels share LOD0's material, so LODs cost no extra texture memory. A rigged LOD0's
+    skin goes to every level the same way as its UVs, so all levels bend with one skeleton.
     """
 
-    version = "2"
+    # 3: keeps the skin of a rigged mesh.
+    version = "3"
 
     def capabilities(self) -> Capabilities:
         return Capabilities(tasks=(StageType.MESH_LODS,), devices=CPU)
 
     def run(self, ctx: StageContext) -> list[StageOutput]:
-        lod0 = mesh_ops.load(ctx.input(ArtifactKind.MESH_GLB).path)
+        src = ctx.input(ArtifactKind.MESH_GLB).path
+        lod0 = skin_ops.attach(mesh_ops.load(src), src)
+        weights = lod0.metadata.get(skin_ops.SKIN)
+        skeleton = lod0.metadata.get(skin_ops.SKELETON)
         name = str(ctx.params.get("name", "asset"))
         normal_mapped = getattr(getattr(lod0.visual, "material", None), "normalTexture", None) is not None
         if normal_mapped:
@@ -229,6 +235,10 @@ class Lods(Adapter):
             lod.visual = trimesh.visual.TextureVisuals(uv=uv, material=getattr(lod0.visual, "material", None))
             if normal_mapped:
                 lod.metadata[mesh_ops.TANGENTS] = mesh_ops.vertex_tangents(lod, uv)
+            if weights is not None and skeleton is not None:
+                lod.metadata[skin_ops.SKIN] = skin_ops.interpolate(
+                    weights, len(skeleton), lod0.faces[tri_ids], bary
+                )
             scene.add_geometry(lod, node_name=f"{name}_LOD{level}", geom_name=f"{name}_LOD{level}")
             ctx.progress(level, len(ratios))
         return [StageOutput(mesh_ops.save(scene, ctx.out_dir / "lods.glb"), ArtifactKind.MESH_GLB)]

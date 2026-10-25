@@ -1,0 +1,19 @@
+setuptools
+wheel
+ninja
+torch==2.7.0
+torchvision==0.22.0
+transformers>=4.57.0,<5
+diffusers>=0.35.0,<0.36
+lightning>=2.5,<2.7
+python-box
+einops
+omegaconf
+addict
+fast-simplification
+trimesh
+scipy
+requests
+# Voxelizes the mesh when the skin is post-processed.
+open3d>=0.18
+numpy>=1.26

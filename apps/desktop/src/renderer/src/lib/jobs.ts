@@ -53,26 +53,27 @@ export const isActive = (j: Job): boolean => j.status === 'queued' || j.status =
 /** Waiting for the user to check the views found in its image. */
 export const needsAnswer = (j: Job): boolean => j.status === 'waiting' && !!j.sheet?.found
 
-export type PhaseId = 'prepare' | 'shape' | 'paint' | 'finish'
+export type PhaseId = 'prepare' | 'shape' | 'paint' | 'rig' | 'finish'
 export interface Phase {
   id: PhaseId
   label: string
   stages: Stage[]
 }
 
-const phaseLabels: Record<PhaseId, string> = { prepare: 'Prepare', shape: 'Shape', paint: 'Paint', finish: 'Finish' }
+const phaseLabels: Record<PhaseId, string> = { prepare: 'Prepare', shape: 'Shape', paint: 'Paint', rig: 'Rig', finish: 'Finish' }
 
 function phaseOfUse(use: string): PhaseId | undefined {
   if (use === 'background-removal' || use === 'framing') return 'prepare'
   if (use === 'shape' || use === 'mesh.cleanup' || use === 'mesh.decimate' || use === 'mesh.uv') return 'shape'
   if (use === 'texture' || use.startsWith('texture.') || use === 'bake') return 'paint'
+  if (use === 'rig') return 'rig'
   if (use === 'mesh.lods' || use === 'export') return 'finish'
   return undefined
 }
 
 /**
  * Groups stages into the pipeline's phases, keeping their order. Ten stage names in a row are
- * too many to read at a glance; four phases are not. A stage type the UI does not know joins
+ * too many to read at a glance; a handful of phases are not. A stage type the UI does not know joins
  * the phase before it, so a new adapter never breaks the track.
  */
 export function phasesOf(stages: Stage[]): Phase[] {

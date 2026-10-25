@@ -1,0 +1,24 @@
+# torch-scatter and torch-cluster are wheels PyG builds for each torch and CUDA pair.
+--find-links https://data.pyg.org/whl/torch-2.5.0+cu124.html
+setuptools
+wheel
+ninja
+torch==2.5.1
+torchvision==0.20.1
+# Upstream's pin: the skeleton model is an OPT decoder built from its config.
+transformers==4.51.3
+lightning>=2.4,<2.7
+python-box
+einops
+omegaconf
+addict
+timm
+fast-simplification
+trimesh
+scipy
+# Voxelizes the mesh for the skin model; upstream's other choice, pyrender, needs an OpenGL context.
+open3d>=0.18
+numpy==1.26.4
+spconv-cu124==2.3.8
+torch-scatter==2.1.2+pt25cu124
+torch-cluster==1.6.3+pt25cu124

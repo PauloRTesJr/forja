@@ -67,8 +67,18 @@ class Family:
     def requirements(self, lane: str) -> Path:
         return self.root / "requirements" / f"{lane}.txt"
 
-    def builds(self, lane: str) -> tuple[str, ...]:
-        return self.build_by_lane.get(lane, ())
+    def builds(self, lane: str, environment: dict[str, str] | None = None) -> tuple[str, ...]:
+        """The lane's build entries for this machine: an entry may end in an environment marker
+        ("flash-attn==2.7.4 ; sys_platform == 'linux'") when it exists for some OSes only.
+        `environment` overrides marker variables, as for another machine."""
+        from packaging.markers import Marker
+
+        out = []
+        for spec in self.build_by_lane.get(lane, ()):
+            _, sep, marker = spec.partition(";")
+            if not sep or Marker(marker.strip()).evaluate(environment):
+                out.append(spec)
+        return tuple(out)
 
     def smoke(self, lane: str) -> str:
         return self.smoke_by_lane.get(lane, "")

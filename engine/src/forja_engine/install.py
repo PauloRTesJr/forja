@@ -198,7 +198,9 @@ def fetch_verified(url: str, sha256: str, cache: Path, log: Log) -> Path:
 
 def extract_tarball(archive: Path, dest: Path) -> Path:
     """Extract a GitHub codeload tarball, dropping its single top-level folder."""
-    if dest.is_dir() and (dest / ".forja-extracted").is_file():
+    marker = dest / ".forja-extracted"
+    # A marker beside nothing else means the source was cleaned away since: extract it again.
+    if marker.is_file() and marker.read_text() == archive.name and any(p != marker for p in dest.iterdir()):
         return dest
     tmp = dest.with_name(dest.name + ".tmp")
     shutil.rmtree(tmp, ignore_errors=True)
@@ -210,7 +212,7 @@ def extract_tarball(archive: Path, dest: Path) -> Path:
     shutil.rmtree(dest, ignore_errors=True)
     shutil.move(str(root), dest)
     shutil.rmtree(tmp, ignore_errors=True)
-    (dest / ".forja-extracted").write_text(archive.name)
+    marker.write_text(archive.name)
     return dest
 
 

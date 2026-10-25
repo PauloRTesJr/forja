@@ -64,6 +64,8 @@ _EXPECT: dict[StageType, tuple[ArtifactKind, str]] = {
     StageType.EXPORT: (ArtifactKind.MESH_GLB, "mesh"),
     StageType.VIEWS_DETECT: (ArtifactKind.JSON, ""),
     StageType.VIEWS_SPLIT: (ArtifactKind.IMAGE_PNG, ""),
+    # The skinned mesh first, then the skeleton profile; the rig keeps the baked textures.
+    StageType.RIG: (ArtifactKind.MESH_GLB, "textured"),
 }
 _PARAM_TYPES: dict[str, tuple[type, ...]] = {
     "integer": (int,),

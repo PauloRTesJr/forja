@@ -22,6 +22,8 @@ class StageType(StrEnum):
     EXPORT = "export"
     VIEWS_DETECT = "views.detect"
     VIEWS_SPLIT = "views.split"
+    # The baked low-poly in; a skinned GLB and its skeleton profile (JSON) out (API 1.7).
+    RIG = "rig"
 
 
 #: The views a reference image can show. "left" shows the subject's left side, so it faces the

@@ -5,7 +5,7 @@ import { Empty } from '../components/Empty'
 import { ExportMenu } from '../components/ExportMenu'
 import { Check, Search as SearchIcon, Sparkle, Trash } from '../components/icons'
 import { ScreenHead } from '../components/ScreenHead'
-import { api, artifactURL, deleteAsset, type Asset } from '../lib/api'
+import { api, artifactURL, deleteAsset, rigOf, type Asset } from '../lib/api'
 import { keys } from '../lib/events'
 import { count, relative } from '../lib/format'
 import { dragOut, readyDrag } from '../lib/drag'
@@ -253,7 +253,8 @@ function AssetCard({
           <strong>{asset.name}</strong>
           <span className="muted">
             {asset.preset}
-            {typeof tris === 'number' && ` · ${count(tris)} tris`} · {relative(asset.created_at)}
+            {typeof tris === 'number' && ` · ${count(tris)} tris`}
+            {rigOf(asset) && ' · Rigged'} · {relative(asset.created_at)}
           </span>
         </div>
       </button>

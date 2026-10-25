@@ -72,6 +72,82 @@ func TestStatsCountTheFullDetailLevelAndTheDeepestLOD(t *testing.T) {
 	}
 }
 
+// rigged is how the engine writes a rigged character: the joints at the scene root beside the
+// LOD meshes, every LOD skinned by the one skin.
+func rigged(names []string, extras any) map[string]any {
+	doc := lods()
+	nodes := []any{
+		map[string]any{"name": "hero_LOD0", "mesh": 0, "skin": 0},
+		map[string]any{"name": "hero_LOD1", "mesh": 1, "skin": 0},
+	}
+	joints := []int{}
+	for i, n := range names {
+		node := map[string]any{"name": n, "translation": []float64{0, float64(i) * 0.1, 0}}
+		if i+1 < len(names) {
+			node["children"] = []int{len(nodes) + 1}
+		}
+		joints = append(joints, len(nodes))
+		nodes = append(nodes, node)
+	}
+	doc["nodes"] = nodes
+	doc["scenes"] = []any{map[string]any{"nodes": []int{0, 1, 2}}}
+	skin := map[string]any{"joints": joints, "inverseBindMatrices": 0, "skeleton": 2}
+	if extras != nil {
+		skin["extras"] = extras
+	}
+	doc["skins"] = []any{skin}
+	return doc
+}
+
+func TestStatsOfARiggedAsset(t *testing.T) {
+	humanoid := append([]string(nil), HumanoidBones...)
+	humanoid = append(humanoid, "Chest", "Neck", "Bone_17")
+	for name, tc := range map[string]struct {
+		names  []string
+		extras any
+		want   string
+	}{
+		"says it is humanoid":     {humanoid, map[string]any{"forja_skeleton": "humanoid"}, SkeletonHumanoid},
+		"humanoid by bone names":  {humanoid, nil, SkeletonHumanoid},
+		"says it is generic":      {humanoid, map[string]any{"forja_skeleton": "generic"}, SkeletonGeneric},
+		"a tail and no arms":      {[]string{"Root", "Bone_1", "Bone_2"}, nil, SkeletonGeneric},
+		"extras that are no help": {[]string{"Root", "Bone_1"}, "a string", SkeletonGeneric},
+	} {
+		got, err := Read(bytes.NewReader(build(t, rigged(tc.names, tc.extras))))
+		if err != nil {
+			t.Fatal(name, err)
+		}
+		if got.Bones != len(tc.names) || got.Skeleton != tc.want || got.LODs != 1 || got.Triangles != 2300 {
+			t.Errorf("%s: got %+v, want %d bones, a %s skeleton", name, got, len(tc.names), tc.want)
+		}
+		m := got.Map()
+		if m["bones"] != len(tc.names) || m["skeleton"] != tc.want {
+			t.Errorf("%s: stats %v", name, m)
+		}
+	}
+}
+
+func TestUnriggedStatsHaveNoBones(t *testing.T) {
+	got, err := Read(bytes.NewReader(build(t, lods())))
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := got.Map()
+	if _, ok := m["bones"]; ok || len(m) != 4 {
+		t.Fatalf("stats %v", m)
+	}
+	// A skin only the lower levels use, or one that names no joints, is no rig of the asset.
+	doc := rigged([]string{"Root", "Bone_1"}, nil)
+	doc["nodes"].([]any)[0].(map[string]any)["skin"] = nil
+	if got, _ := Read(bytes.NewReader(build(t, doc))); got.Bones != 0 || got.Skeleton != "" {
+		t.Fatalf("got %+v", got)
+	}
+	doc = rigged(nil, nil)
+	if got, _ := Read(bytes.NewReader(build(t, doc))); got.Bones != 0 {
+		t.Fatalf("got %+v", got)
+	}
+}
+
 func TestStatsWithoutIndicesOrScenes(t *testing.T) {
 	doc := map[string]any{
 		"asset": map[string]string{"version": "2.0"},
