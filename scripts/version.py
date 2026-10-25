@@ -19,6 +19,10 @@ TARGETS = [
     ("apps/desktop/package.json", r'^(  "version": ")([^"]+)(")'),
     ("engine/pyproject.toml", r'^(version = ")([^"]+)(")'),
     ("engine/src/forja_engine/__init__.py", r'^(__version__ = ")([^"]+)(")'),
+    # The adapter SDK is released with the engine, which pins it exactly.
+    ("engine/sdk/pyproject.toml", r'^(version = ")([^"]+)(")'),
+    ("engine/sdk/src/forja_sdk/__init__.py", r'^(__version__ = ")([^"]+)(")'),
+    ("engine/pyproject.toml", r'^(    "forja-engine-sdk==)([^"]+)(")'),
 ]
 
 
