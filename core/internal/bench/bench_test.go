@@ -2,9 +2,12 @@ package bench
 
 import (
 	"bytes"
+	"encoding/json"
 	"image"
 	"image/color"
 	"image/png"
+	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -238,6 +241,30 @@ func TestTheReportCarriesItsThumbnails(t *testing.T) {
 	html := string(page)
 	if !strings.Contains(html, "&lt;suite&gt;") || strings.Count(html, `<img class="thumb"`) != 1 || !strings.Contains(html, "boom") {
 		t.Fatalf("report:\n%s", html)
+	}
+}
+
+// The app opens a result's report with the OS's default program, so its path comes from the
+// result's id inside the bench folder, never from what the result file says.
+func TestAReportIsTheHTMLFileNamedAfterItsResult(t *testing.T) {
+	dir := t.TempDir()
+	b := &Bench{Dir: dir, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	const id = "01J00000000000000000000000"
+	res := result(id, 1, 1, 0.01, 0)
+	res.Report = filepath.Join(t.TempDir(), "run-me.exe")
+	raw, _ := json.Marshal(res)
+	write(t, filepath.Join(dir, id+".json"), string(raw))
+	got, err := b.Get(id)
+	if err != nil || got.Report != "" {
+		t.Fatalf("a result without its report: %q %v", got.Report, err)
+	}
+	write(t, filepath.Join(dir, id+".html"), "<!doctype html>")
+	if got, _ := b.Get(id); got.Report != filepath.Join(dir, id+".html") {
+		t.Fatalf("report %q", got.Report)
+	}
+	list, err := b.List()
+	if err != nil || len(list.Results) != 1 || list.Results[0].Report != filepath.Join(dir, id+".html") {
+		t.Fatalf("list %+v %v", list.Results, err)
 	}
 }
 
