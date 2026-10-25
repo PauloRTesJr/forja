@@ -175,6 +175,15 @@ def test_the_core_runs_a_job_with_the_packaged_model(tmp_path):
             time.sleep(0.5)
         installed = cli("models", "install", MODEL, timeout=1800)
         assert installed.returncode == 0, installed.stdout + installed.stderr
+        # An install reports success a moment before the core refreshes its model list, and a
+        # job submitted in between is refused; wait for the list, as a script should.
+        deadline = time.monotonic() + 30
+        while not any(
+            m["id"] == MODEL and m["status"] in ("ready", "loaded")
+            for m in json.loads(cli("--json", "models", "ls").stdout)
+        ):
+            assert time.monotonic() < deadline, "the core never listed the model as ready"
+            time.sleep(0.5)
         made = cli("--json", "generate", str(FIXTURE), timeout=600)
         assert made.returncode == 0, made.stdout + made.stderr
         (job,) = json.loads(made.stdout)
