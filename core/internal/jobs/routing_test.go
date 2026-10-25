@@ -409,6 +409,24 @@ func TestASpendingLimitStopsAStageBilledByTheSecond(t *testing.T) {
 	}
 }
 
+func TestABatchIsMeteredAtTheRateOfTheStageRunning(t *testing.T) {
+	r, _, _, _, _ := setup(t)
+	project := withProject(t, "[routing.budget_usd]\nper_job = 5.0\n")
+	charges := []charge{{Rate: 1, Overhead: 1}, {Rate: 1, Overhead: 1}, {Rate: 1.5, Overhead: 1}}
+	release, err := r.admit(context.Background(), project, "j", charges, func(error) {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for m := range r.meters {
+		if m.rate != 1.5 {
+			t.Fatalf("metered at $%v a second", m.rate)
+		}
+	}
+}
+
 func TestAPaidStageDoesNotStartPastTheDailyLimit(t *testing.T) {
 	r, _, _, st, img := setup(t)
 	cloud := newEngine(st, "cloud", provider.KindServerless, true)

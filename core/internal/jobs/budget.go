@@ -248,7 +248,8 @@ func (r *Runner) admit(ctx context.Context, project, job string, charges []charg
 	expected, unpriced := 0.0, false
 	for _, c := range charges {
 		m.fixed += c.PerCall
-		m.rate += c.Rate
+		// A batch's stages run one after another: it is billed at one stage's rate at a time.
+		m.rate = max(m.rate, c.Rate)
 		expected += c.USD()
 		unpriced = unpriced || c.Unpriced
 	}
