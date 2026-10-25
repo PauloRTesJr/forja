@@ -77,7 +77,10 @@ def candidates() -> list[str]:
 
 
 def _windows() -> list[str]:
-    out = []
+    out: list[str] = []
+    # Also tells mypy, checking on another OS, that the registry calls below are Windows-only.
+    if sys.platform != "win32":
+        return out
     try:
         import winreg
 

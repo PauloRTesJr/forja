@@ -24,6 +24,7 @@ from forja_sdk.cli import main as sdk_main
 from forja_sdk.conformance import assert_conforms, run_suite
 
 import forja_engine.sdk as engine_sdk
+from forja_engine import blender
 from forja_engine.adapters.builtin import BUILTINS
 from forja_engine.ops import mesh as mesh_ops
 from forja_engine.worker import ctx_from_json
@@ -49,6 +50,8 @@ def test_stub_models_conform(name, tmp_path):
 
 @pytest.mark.parametrize("task", list(BUILTINS), ids=str)
 def test_builtin_stages_keep_the_contract_too(task, tmp_path):
+    if getattr(BUILTINS[task], "blender", False) and blender.problem() is not None:
+        pytest.skip("Blender 4.2+ is not installed")
     # QuadriFlow makes a different mesh on each run for the same seed (see Remesh), so neither a
     # second run nor one after a reload can match the first byte for byte.
     skip = ("determinism", "reload") if task == StageType.MESH_REMESH else ()
