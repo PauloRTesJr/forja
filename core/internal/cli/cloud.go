@@ -16,7 +16,7 @@ var vendors = map[string]string{
 	"runpod":     "RunPod serverless: the endpoint id; its API key on stdin",
 	"runpod-pod": "a RunPod pod: its address; its token on stdin",
 	"modal":      "a Modal gateway: its address; its token on stdin",
-	"comfyui":    "ComfyUI: its address and --workflow <stage>=<file>",
+	"comfyui":    "ComfyUI: its address and --workflow <stage>=<file>; with --token-stdin, an https address",
 }
 
 // cloudFlags are the settings of providers that are not another computer.

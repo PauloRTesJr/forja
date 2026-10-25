@@ -27,6 +27,7 @@ import (
 	"fmt"
 	"io"
 	"mime/multipart"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -166,7 +167,27 @@ func (p *Provider) HasArtifact(_ context.Context, ref string) (bool, error) {
 func (p *Provider) Upload(context.Context, string) error   { return nil }
 func (p *Provider) Download(context.Context, string) error { return nil }
 
+// cleartext is true when the token would cross the network unencrypted: plain http to another
+// machine. Such a ComfyUI gets no request at all rather than the token in the clear.
+func (p *Provider) cleartext() bool {
+	if p.token == "" {
+		return false
+	}
+	u, err := url.Parse(p.base)
+	if err != nil {
+		return true
+	}
+	ip := net.ParseIP(u.Hostname())
+	return u.Scheme != "https" && u.Hostname() != "localhost" && (ip == nil || !ip.IsLoopback())
+}
+
+var errCleartext = errors.New("Forja sends ComfyUI's access token only over https, or to a ComfyUI on this computer; " +
+	"give it an https address, or remove the token")
+
 func (p *Provider) request(ctx context.Context, method, path string, body io.Reader, kind string) (*http.Response, error) {
+	if p.cleartext() {
+		return nil, errCleartext
+	}
 	req, err := http.NewRequestWithContext(ctx, method, p.base+path, body)
 	if err != nil {
 		return nil, err
@@ -558,7 +579,7 @@ func sniff(head []byte) (kind, ext string) {
 // passes no WebSockets), and the run then reads the history instead.
 func (p *Provider) listen(ctx context.Context, client string) *websocket.Conn {
 	u, err := url.Parse(p.base + "/ws?clientId=" + url.QueryEscape(client))
-	if err != nil {
+	if err != nil || p.cleartext() {
 		return nil
 	}
 	u.Scheme = strings.Replace(u.Scheme, "http", "ws", 1)

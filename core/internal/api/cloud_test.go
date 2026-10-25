@@ -180,6 +180,15 @@ func TestAComfyUIJoinsWithItsWorkflows(t *testing.T) {
 		t.Fatalf("an editor-format workflow: %d %v", code, prob)
 	}
 	body["workflows"] = map[string]string{"shape": good}
+	// A token goes only over https, or to a ComfyUI on this computer.
+	plain := map[string]any{"kind": "comfyui", "url": "192.0.2.10:8188", "token": "proxy-fake-token", "workflows": body["workflows"]}
+	if code := call(t, ts, "POST", "/v1/providers/test", plain, &prob); code != 422 || !strings.Contains(prob["detail"].(string), "https://192.0.2.10") {
+		t.Fatalf("a token over plain http: %d %v", code, prob)
+	}
+	local := map[string]any{"kind": "comfyui", "url": comfy.URL, "token": "proxy-fake-token", "workflows": body["workflows"]}
+	if code := call(t, ts, "POST", "/v1/providers/test", local, nil); code != 200 {
+		t.Fatalf("a token to this computer: %d", code)
+	}
 	var probe ProbeView
 	if code := call(t, ts, "POST", "/v1/providers/test", body, &probe); code != 200 || probe.GPU != "cuda:0 Test GPU" {
 		t.Fatalf("test %d %+v", code, probe)

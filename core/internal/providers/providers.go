@@ -201,7 +201,7 @@ func Kinds() []Kind {
 				{Key: "workflows", Label: "Workflows", Type: "workflows",
 					Help: "One API-format workflow per stage it does: background removal, shape or texture. Forja keeps a copy."},
 				{Key: "token", Label: "Access token", Type: "secret", Optional: true,
-					Help: "Only for a ComfyUI behind a proxy that asks for one."},
+					Help: "Only for a ComfyUI behind a proxy that asks for one, at its https address (plain http only on this computer)."},
 			},
 		},
 	}

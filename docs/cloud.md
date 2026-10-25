@@ -221,6 +221,12 @@ forja providers add comfyui 192.0.2.10:8188 --workflow shape=hunyuan-shape.json 
 
 An address without a scheme means `http://`, and without a port, 8188. `--token-stdin` reads a proxy's token from stdin; `--price <usd-per-second>` makes it a paid provider.
 
+A token goes only over https: a ComfyUI that takes one needs its proxy's `https://` address, unless it runs on this computer (`localhost`, `127.0.0.1`). Forja refuses to add one at a plain `http://` address on another machine, and refuses to call one whose address in `config.toml` was changed to that, rather than send the token in the clear.
+
+```sh
+forja providers add comfyui https://comfy.example.com --workflow shape=hunyuan-shape.json --token-stdin < token.txt
+```
+
 Forja checks each workflow (the API format, known placeholders, the inputs its stage needs) and asks ComfyUI's `/system_stats`, then copies each workflow beside `config.toml`, to `comfyui/<provider id>/<stage type>.json`. To change a workflow, edit that copy; the core reads it when it starts. A workflow is keyed by its content, so an edited workflow never reuses results cached from the old one.
 
 ### Use it
