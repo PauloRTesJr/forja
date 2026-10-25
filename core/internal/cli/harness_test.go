@@ -66,9 +66,12 @@ func (e *fakeEngine) Info(context.Context) (*engineapi.Info, error) {
 		"mesh.lods", "export", "views.detect", "views.split"} {
 		stages[use] = "1"
 	}
-	return &engineapi.Info{Stages: stages, System: map[string]any{"os": "TestOS",
-		"devices":         []any{map[string]any{"id": "cuda:0", "backend": "cuda", "name": "Test GPU", "vram_bytes": 12 << 30}},
-		"disk_free_bytes": 500 << 30}}, nil
+	// Like an engine on a computer without Blender.
+	noBlender := "Blender 4.2 or newer was not found on the computer that runs the engine"
+	return &engineapi.Info{Stages: stages, Unavailable: map[string]string{"mesh.remesh": noBlender, "mesh.uv.smart": noBlender},
+		System: map[string]any{"os": "TestOS",
+			"devices":         []any{map[string]any{"id": "cuda:0", "backend": "cuda", "name": "Test GPU", "vram_bytes": 12 << 30}},
+			"disk_free_bytes": 500 << 30}}, nil
 }
 
 func (e *fakeEngine) Models(context.Context) ([]engineapi.Model, error) {

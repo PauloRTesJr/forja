@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useEffectEvent, useRef, useState, type DragEvent } from 'react'
-import { Composer } from '../components/Composer'
+import { Composer, optionalOverrides } from '../components/Composer'
 import { Corners, DropSigil } from '../components/icons'
 import { Confirm, isPreparing, Preparing } from '../components/Prepare'
 import { ScreenHead } from '../components/ScreenHead'
@@ -65,7 +65,6 @@ export function Generate() {
   // A single image waiting for its other views, when the shape model reads them.
   const [draft, setDraft] = useState<Draft | null>(null)
   const current = presets.data?.find((p) => p.id === preset)
-  const optional = current?.stages.filter((s) => s.optional) ?? []
   const isOn = (stage: string, fallback: boolean): boolean => options[`${preset}.${stage}`] ?? fallback
   const blocked = current !== undefined && !current.ready
   // Once shown, setup stays until it is finished or skipped: its last step, the test run,
@@ -79,7 +78,7 @@ export function Generate() {
         ...body,
         preset,
         priority: (body.paths?.length ?? 1) === 1 ? 'interactive' : 'batch',
-        overrides: Object.fromEntries(optional.map((s) => [`${s.id}.enabled`, isOn(s.id, s.optional!.default)])),
+        overrides: current ? optionalOverrides(current, isOn) : {},
         // An image that turns out to hold several views waits for the user, on this screen.
         sheet: 'ask',
       }),

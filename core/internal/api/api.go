@@ -208,6 +208,8 @@ type PresetView struct {
 	Plan    []jobs.Pick `json:"plan"`
 	Ready   bool        `json:"ready"`
 	Error   string      `json:"error,omitempty"`
+	// Unavailable says why an optional stage that is off could not run if turned on, by stage id.
+	Unavailable map[string]string `json:"unavailable,omitempty"`
 }
 
 // fresh is ?fresh=1: ask providers now, even if that starts the local engine, instead of
@@ -269,6 +271,9 @@ func (s *Server) presets(w http.ResponseWriter, r *http.Request) {
 			v.Plan, v.Ready = plan, true
 			for _, pick := range plan {
 				v.Ready = v.Ready && !pick.Missing
+			}
+			if off, err := s.Runner.Unavailable(ctx, project, p); err == nil && len(off) > 0 {
+				v.Unavailable = off
 			}
 		}
 		list[i] = v

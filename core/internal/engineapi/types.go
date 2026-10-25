@@ -67,6 +67,9 @@ type Info struct {
 	Lanes      map[string]any `json:"lanes"`
 	// Stages maps each built-in stage type to its adapter version (API 1.2+).
 	Stages map[string]string `json:"stages"`
+	// Unavailable says why the engine runs some built-in stage types nowhere here: those backed
+	// by Blender where none is found (API 1.7). Routing passes such an engine by.
+	Unavailable map[string]string `json:"unavailable,omitempty"`
 }
 
 type Model struct {

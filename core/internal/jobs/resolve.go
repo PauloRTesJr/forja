@@ -18,8 +18,10 @@ type Pick struct {
 	Model     string `json:"model,omitempty"`
 	ModelName string `json:"model_name,omitempty"`
 	Provider  string `json:"provider,omitempty"`
-	// Missing is set when the stage needs a model and no provider has one ready.
-	Missing bool `json:"missing,omitempty"`
+	// Missing is set when the stage needs a model and no provider has one ready, or when it is
+	// a built-in no provider can run; Problem then says why (Blender was not found).
+	Missing bool   `json:"missing,omitempty"`
+	Problem string `json:"problem,omitempty"`
 	// Skipped stages are done by the model of an earlier stage, named by By: a hosted model
 	// that returns a textured mesh does the texture stage too (docs/decisions.md, 16).
 	Skipped bool   `json:"skipped,omitempty"`
@@ -34,23 +36,42 @@ type Pick struct {
 	NeedsViews []string `json:"needs_views,omitempty"`
 }
 
-// MissingError is a job that cannot run until models are installed for some stage types.
-type MissingError struct{ Uses []string }
+// MissingError is a job that cannot run until models are installed for some stage types, or
+// until a provider can run some built-in stage (Problems, by stage type).
+type MissingError struct {
+	Uses     []string
+	Problems map[string]string
+}
 
 func (e *MissingError) Error() string {
-	return fmt.Sprintf("no %s model is installed: install one on the Models screen or with `forja models install`",
-		strings.Join(e.Uses, ", "))
+	var parts, models []string
+	for _, use := range e.Uses {
+		if why, ok := e.Problems[use]; ok {
+			parts = append(parts, fmt.Sprintf("no provider can run %s: %s", use, why))
+		} else {
+			models = append(models, use)
+		}
+	}
+	if len(models) > 0 {
+		parts = append(parts, fmt.Sprintf(
+			"no %s model is installed: install one on the Models screen or with `forja models install`",
+			strings.Join(models, ", ")))
+	}
+	return strings.Join(parts, "; ")
 }
 
 func missingError(picks []Pick) error {
-	var uses []string
+	e := &MissingError{Problems: map[string]string{}}
 	for _, p := range picks {
 		if p.Missing && !p.Skipped {
-			uses = append(uses, p.Use)
+			e.Uses = append(e.Uses, p.Use)
+			if p.Problem != "" {
+				e.Problems[p.Use] = p.Problem
+			}
 		}
 	}
-	if len(uses) > 0 {
-		return &MissingError{Uses: uses}
+	if len(e.Uses) > 0 {
+		return e
 	}
 	return nil
 }
@@ -90,6 +111,37 @@ func (r *Runner) Resolve(ctx context.Context, project string, p *presets.Preset,
 		}
 	}
 	return picks, nil
+}
+
+// Unavailable says, for each optional stage of a preset that is off in project, why turning it
+// on would refuse the job: no provider runs it (a Blender stage where no Blender is found) or
+// no model for it is ready. Stages that could run are left out.
+func (r *Runner) Unavailable(ctx context.Context, project string, p *presets.Preset) (map[string]string, error) {
+	cfg, err := r.config(project)
+	if err != nil {
+		return nil, err
+	}
+	if po, ok := cfg.Presets[p.ID]; ok && len(po.Overrides) > 0 {
+		if p, err = p.WithOverrides(po.Overrides); err != nil {
+			return nil, err
+		}
+	}
+	out := map[string]string{}
+	for _, s := range p.Stages {
+		if s.Optional == nil || !s.Off {
+			continue
+		}
+		pick, err := r.pick(ctx, cfg, s, nil)
+		if err != nil || !pick.Missing {
+			continue
+		}
+		if pick.Problem != "" {
+			out[s.ID] = pick.Problem
+		} else {
+			out[s.ID] = fmt.Sprintf("no %s model is installed", s.Use)
+		}
+	}
+	return out, nil
 }
 
 // resolve picks a provider and a model for every stage (docs/decisions.md, decisions 12 and
@@ -179,8 +231,9 @@ func (r *Runner) pick(ctx context.Context, cfg *config.Loaded, s presets.Stage, 
 			continue
 		}
 		reached = true
+		// Not every provider runs every built-in (a Blender stage needs Blender there).
 		if builtin(e, s.Use) {
-			pick.Provider = cands[0]
+			pick.Provider = id
 			break
 		}
 		if m := best(e.Models, s.Use, cfg.Models.Stubs, views); m != nil {
@@ -188,11 +241,17 @@ func (r *Runner) pick(ctx context.Context, cfg *config.Loaded, s presets.Stage, 
 			r.describe(&pick, m)
 			break
 		}
+		if why, ok := e.Unavailable[s.Use]; ok && pick.Problem == "" {
+			pick.Problem = why
+		}
 	}
 	if !reached {
 		return pick, firstErr
 	}
 	pick.Missing = pick.Provider == ""
+	if !pick.Missing {
+		pick.Problem = ""
+	}
 	return pick, nil
 }
 

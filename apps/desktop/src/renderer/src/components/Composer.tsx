@@ -46,6 +46,21 @@ export function estimate(plan: Pick[]): { usd: number; unknown: string[]; hosts:
 }
 
 /**
+ * The optional steps' switches as a job's overrides. A step no provider can run here (a Blender
+ * step without Blender) goes off, so a switch left on earlier never refuses the job.
+ */
+export function optionalOverrides(
+  preset: Preset,
+  isOn: (stage: string, fallback: boolean) => boolean,
+): Record<string, boolean> {
+  return Object.fromEntries(
+    preset.stages
+      .filter((s) => s.optional)
+      .map((s) => [`${s.id}.enabled`, isOn(s.id, s.optional!.default) && !preset.unavailable?.[s.id]]),
+  )
+}
+
+/**
  * One step of the recipe: a node on the rail, its label, and what to choose for it. An "off"
  * node is an optional step that will not run.
  */
@@ -140,7 +155,8 @@ export function Composer({
           const row = rows.get(s.id)
           const by = row?.by ? byStage.get(row.by) : undefined
           const optional = s.optional && !byStage.get(s.id)?.skipped ? s.optional : undefined
-          const on = optional ? isOn(s.id, optional.default) : false
+          const cannot = current.unavailable?.[s.id]
+          const on = optional ? isOn(s.id, optional.default) && !cannot : false
           if (!row && !optional) return null
           return (
             <Fragment key={s.id}>
@@ -150,6 +166,8 @@ export function Composer({
                     <span className="composer-skip">
                       Done by {by?.model_name || by?.model} in the {stageLabel(by?.use ?? '').toLowerCase()} step
                     </span>
+                  ) : row.problem ? (
+                    <span className="composer-skip">{row.problem}</span>
                   ) : (
                     <select
                       id={`model-${row.stage}`}
@@ -180,7 +198,13 @@ export function Composer({
               {optional && (
                 <Step node={on ? 'on' : 'off'}>
                   <span className="option">
-                    <button className="switch" role="switch" aria-checked={on} onClick={() => onToggle(s.id, !on)}>
+                    <button
+                      className="switch"
+                      role="switch"
+                      aria-checked={on}
+                      disabled={!!cannot}
+                      onClick={() => onToggle(s.id, !on)}
+                    >
                       <span className="switch-track" aria-hidden />
                       {optional.label}
                     </button>
@@ -193,6 +217,7 @@ export function Composer({
                       </span>
                     )}
                   </span>
+                  {cannot && <span className="composer-skip">{cannot}</span>}
                 </Step>
               )}
             </Fragment>

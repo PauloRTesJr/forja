@@ -98,6 +98,15 @@ func Command(cfg *config.Loaded) ([]string, error) {
 	return nil, errors.New("cannot find forja-engine: install it, or set [engine] command in config.toml")
 }
 
+// Env is what the engine reads from its environment besides its token: the Blender the user set
+// (blender.path) for the stages Blender does. Without it the engine looks where the core would.
+func Env(cfg *config.Loaded) []string {
+	if cfg.Blender.Path != "" {
+		return []string{"FORJA_BLENDER=" + cfg.Blender.Path}
+	}
+	return nil
+}
+
 func findRepoEngine() string {
 	starts := []string{}
 	if exe, err := os.Executable(); err == nil {
@@ -150,6 +159,7 @@ func (m *Manager) start(ctx context.Context) error {
 	}
 	cmd := exec.Command(base[0], args...)
 	cmd.Env = append(os.Environ(), "FORJA_ENGINE_TOKEN="+token, "PYTHONUNBUFFERED=1")
+	cmd.Env = append(cmd.Env, Env(cfg)...)
 	if err := os.MkdirAll(filepath.Dir(m.logPath), 0o755); err != nil {
 		return err
 	}
