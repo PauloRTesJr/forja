@@ -141,29 +141,33 @@ class Bake(Adapter):
     color (docs/decisions.md, 16).
     """
 
-    version = "2"
+    # 3: MikkTSpace tangents, measured cage, 4 samples per texel, padded gutters, smoother AO.
+    version = "3"
 
     def capabilities(self) -> Capabilities:
         return Capabilities(tasks=(StageType.BAKE,), devices=CPU)
 
     def run(self, ctx: StageContext) -> list[StageOutput]:
-        low = mesh_ops.load(ctx.input(ArtifactKind.MESH_GLB, 0).path)
+        # The maps are baked against the low-poly's normals, so the GLB must carry those same ones.
+        low = mesh_ops.load(ctx.input(ArtifactKind.MESH_GLB, 0).path, keep_normals=True)
         high = mesh_ops.load(ctx.input(ArtifactKind.MESH_GLB, 1).path)
         if getattr(low.visual, "uv", None) is None:
             low = mesh_ops.unwrap(low)
         material = getattr(low.visual, "material", None)
         base = getattr(material, "baseColorTexture", None)
         size = int(ctx.params.get("resolution") or (base.size[0] if base is not None else 1024))
+        cage = ctx.params.get("cage")
         ctx.progress(1, 3)
         result = bake.bake(
             low,
             high,
             size,
-            cage=float(ctx.params.get("cage", 0.02)),
-            ao_samples=int(ctx.params.get("ao_samples", 24)),
+            cage=None if cage is None else float(cage),
+            ao_samples=int(ctx.params.get("ao_samples", 32)),
             ao_radius=float(ctx.params.get("ao_radius", 0.15)),
             seed=ctx.seed,
             color=base is None,
+            samples=int(ctx.params.get("samples", 4)),
         )
         if base is None:
             base = result.color
@@ -171,10 +175,13 @@ class Bake(Adapter):
         ctx.check_cancel()
         if result.hit_ratio < 0.95:
             log.warning(
-                "bake %s: the cage reached the high-poly for only %.0f%% of texels; raise bake.cage",
+                "bake %s: rays from a cage at %.1f%% of the size reached the high-poly for only %.0f%% of "
+                "texels; raise bake.cage",
                 ctx.stage_id,
+                result.cage * 100,
                 result.hit_ratio * 100,
             )
+        low = result.mesh
         out = low.copy()
         out.visual = trimesh.visual.TextureVisuals(
             uv=mesh_ops.uvs_of(low),
@@ -200,13 +207,14 @@ class Lods(Adapter):
     All levels share LOD0's material, so LODs cost no extra texture memory.
     """
 
-    version = "2"
+    # 3: MikkTSpace tangents, and LOD0 keeps the normals its maps were baked against.
+    version = "3"
 
     def capabilities(self) -> Capabilities:
         return Capabilities(tasks=(StageType.MESH_LODS,), devices=CPU)
 
     def run(self, ctx: StageContext) -> list[StageOutput]:
-        lod0 = mesh_ops.load(ctx.input(ArtifactKind.MESH_GLB).path)
+        lod0 = mesh_ops.load(ctx.input(ArtifactKind.MESH_GLB).path, keep_normals=True)
         name = str(ctx.params.get("name", "asset"))
         normal_mapped = getattr(getattr(lod0.visual, "material", None), "normalTexture", None) is not None
         if normal_mapped:
