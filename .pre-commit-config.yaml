@@ -40,7 +40,7 @@ repos:
         name: app, core and engine carry VERSION
         language: system
         entry: uv run --quiet --no-project python scripts/version.py --check
-        files: ^(VERSION|apps/desktop/package\.json|engine/pyproject\.toml|engine/families/[^/]+/pyproject\.toml|engine/src/forja_engine/__init__\.py)$
+        files: ^(VERSION|apps/desktop/package\.json|engine/pyproject\.toml|engine/families/[^/]+/pyproject\.toml|engine/src/forja_engine/__init__\.py|engine/sdk/pyproject\.toml|engine/sdk/src/forja_sdk/__init__\.py)$
         pass_filenames: false
       - id: actionlint
         name: actionlint (workflows)

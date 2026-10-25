@@ -12,7 +12,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-SEMVER = re.compile(r"\d+\.\d+\.\d+(-(alpha|beta|rc)\.\d+)?")
+# Only what release.yml publishes: a stable X.Y.Z, or a -rc.N or -beta.N prerelease.
+SEMVER = re.compile(r"\d+\.\d+\.\d+(-(beta|rc)\.\d+)?")
 
 # (file, pattern whose group 2 is the version); the first match in each file is replaced.
 TARGETS = [
@@ -54,7 +55,7 @@ def main(argv: list[str]) -> int:
     if argv == ["--check"]:
         return check()
     if len(argv) != 1 or not SEMVER.fullmatch(argv[0]):
-        print("usage: make version V=X.Y.Z (or X.Y.Z-rc.N, -beta.N, -alpha.N)", file=sys.stderr)
+        print("usage: make version V=X.Y.Z (or X.Y.Z-rc.N, -beta.N)", file=sys.stderr)
         return 2
     version = argv[0]
     (ROOT / "VERSION").write_text(version + "\n", newline="\n")

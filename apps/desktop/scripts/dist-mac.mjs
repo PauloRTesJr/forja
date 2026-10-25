@@ -28,5 +28,7 @@ if (!developerId) process.stderr.write('dist:mac: no Developer ID certificate (C
 await builder.build({
   projectDir: project,
   targets: builder.Platform.MAC.createTarget(),
+  // release.yml publishes every OS's files together; electron-builder would publish a tag build itself.
+  publish: 'never',
   config: developerId ? undefined : { mac: { identity: '-', hardenedRuntime: false, notarize: false } },
 })

@@ -1,8 +1,9 @@
 # Release pipeline (spec, section 15). A tag vX.Y.Z publishes a stable release; vX.Y.Z-rc.N and
 # vX.Y.Z-beta.N publish prereleases, the beta channel. To cut one: `make version V=X.Y.Z`,
 # commit, tag that commit. A stable tag needs the GPU nightly and the benchmark gate green on
-# its commit (tag a release candidate there first: it runs both), unless the repository has no
-# GPU runner (variable FORJA_GPU_RUNNER).
+# its commit, unless the repository has no GPU runner (variable FORJA_GPU_RUNNER): run both from
+# the Actions tab on that commit before tagging it. A release candidate's tag carries its own
+# VERSION (X.Y.Z-rc.N), so its gate runs count for the candidate, not for the stable commit.
 #
 # Signing happens only when its secrets exist; otherwise the packages are unsigned:
 #   Windows (Authenticode): WIN_CSC_LINK, WIN_CSC_KEY_PASSWORD

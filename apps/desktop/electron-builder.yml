@@ -14,7 +14,7 @@ extraResources:
     filter: ['forja', 'forja.exe']
 mac:
   # Build with `pnpm dist:mac` after `make core-all`: scripts/dist-mac.mjs picks the signing.
-  # electron-updater updates a Mac from the zip, so it ships beside the DMG.
+  # The zip is what an updater installs on a Mac (spec section 9), so it ships beside the DMG.
   target:
     - target: dmg
       arch: [arm64, x64]

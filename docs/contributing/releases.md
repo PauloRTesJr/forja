@@ -9,10 +9,10 @@ The root `VERSION` file is the one version of the app, the core, the engine, its
 ```sh
 make version              # print it
 make version V=0.2.0      # write it everywhere, then refresh engine/uv.lock
-make version V=0.2.0-rc.1 # a prerelease: -rc.N, -beta.N or -alpha.N
+make version V=0.2.0-rc.1 # a prerelease: -rc.N or -beta.N
 ```
 
-The release workflow publishes `-rc.N` and `-beta.N` prereleases; an `-alpha.N` version has no release tag.
+The release workflow publishes `-rc.N` and `-beta.N` prereleases; `make version` accepts no other kind.
 
 `make version V=` (`scripts/version.py`) writes `VERSION`, `apps/desktop/package.json`, `engine/pyproject.toml` (the version and the exact `forja-engine-sdk` pin), `engine/src/forja_engine/__init__.py`, `engine/sdk/pyproject.toml`, `engine/sdk/src/forja_sdk/__init__.py` and each `engine/families/*/pyproject.toml`. The core is not written: `make core` and `make core-all` stamp the version into the binary when they build it. `uv run --no-project python scripts/version.py --check` fails when a file disagrees with `VERSION`; CI and the release workflow run it.
 
@@ -46,7 +46,7 @@ Commits are grouped as Features (`feat`), Fixes (`fix`), Performance (`perf`), R
 ## Cut a release
 
 1. `make version V=X.Y.Z`, commit, and tag that commit `vX.Y.Z`.
-2. For a stable release, the GPU nightly and the benchmark gate must have passed on that commit first: start both by hand on it (Actions, Run workflow), or push a release candidate tag on it, which runs both.
+2. For a stable release, the GPU nightly and the benchmark gate must have passed on that commit first: start both by hand on it (Actions, Run workflow). A release candidate's tag sits on a commit whose `VERSION` is the candidate's own (`X.Y.Z-rc.N`), so its runs count for the candidate, not the stable commit.
 3. Push the tag. The release workflow does the rest.
 
 | Tag | Release | Channel |

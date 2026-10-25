@@ -132,8 +132,8 @@ func (a *app) benchCompareCmd() *cobra.Command {
 		Long: "Each side is a result file (" + benchJSON + ") or the id of a result the core keeps. Per preset it\n" +
 			"compares the median image-to-GLB time and the failures, per stage the median time and peak\n" +
 			"VRAM, and the core's overhead per job. A value regresses when it grows by more than the\n" +
-			"threshold and by at least --min-seconds or --min-vram-mb. Defaults: the bench section of the\n" +
-			"config (`forja config set bench.threshold_pct=5`).",
+			"threshold and by at least --min-seconds or --min-vram-mb. Defaults: the [bench] section of\n" +
+			"config.toml (threshold_pct, min_seconds, min_vram_mb).",
 		Args: cobra.ExactArgs(2),
 		RunE: func(_ *cobra.Command, args []string) error {
 			req := api.CompareRequest{Baseline: resultRef(args[0]), Current: resultRef(args[1]), Thresholds: &t}
