@@ -418,7 +418,8 @@ func TestAStageTheProviderBilledNeverMovesToAnotherPaidProvider(t *testing.T) {
 	r.providers.Add(hub)
 	other := newEngine(st, "other", provider.KindAPI, true)
 	r.providers.Add(other)
-	project := withProject(t, "[routing]\npriority = [\"hub\", \"other\", \"local\"]\nallow_paid_fallback = true\n")
+	withUser(t, "[routing]\nallow_paid_fallback = true\n")
+	project := withProject(t, "[routing]\npriority = [\"hub\", \"other\", \"local\"]\n")
 	j, err := r.Submit(context.Background(), SubmitRequest{Input: img, Preset: "draft", Project: project})
 	if err != nil {
 		t.Fatal(err)
@@ -442,7 +443,8 @@ func TestARefusalIsNotAnOutage(t *testing.T) {
 	pod := newEngine(st, "pod", provider.KindServerless, true)
 	pod.with(func(e *engine) { e.answer = &answeredErr{http.StatusPaymentRequired} })
 	r.providers.Add(pod)
-	project := withProject(t, "[routing]\npriority = [\"pod\", \"local\"]\nallow_paid_fallback = true\n")
+	withUser(t, "[routing]\nallow_paid_fallback = true\n")
+	project := withProject(t, "[routing]\npriority = [\"pod\", \"local\"]\n")
 	j, err := r.Submit(context.Background(), SubmitRequest{Input: img, Preset: "draft", Project: project})
 	if err != nil {
 		t.Fatal(err)

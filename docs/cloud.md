@@ -38,7 +38,7 @@ docker run -d --gpus all -p 7861:7861 -v forja-data:/data \
 
 | Variable | What it does |
 |---|---|
-| `FORJA_ENGINE_TOKEN` | Required: the token cores send. Without it the container exits, because an engine other machines reach needs one |
+| `FORJA_ENGINE_TOKEN` | Required: the token cores send, 16 characters or more. Without one the container exits, because an engine other machines reach needs a token nobody can guess |
 | `FORJA_PORT` | The port to serve on (default 7861) |
 | `FORJA_TLS_CERT`, `FORJA_TLS_KEY` | A certificate and key to serve. Without them, the container makes a self-signed certificate once, in `/data/tls` |
 | `FORJA_MODELS` | Models to install before serving, comma separated. You can also install them from Forja afterwards (`forja models install <id> --provider <provider>`) |

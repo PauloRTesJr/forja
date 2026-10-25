@@ -16,8 +16,9 @@ if [ "$#" -gt 0 ]; then
 fi
 
 data="${FORJA_DATA_DIR:-/data}"
-if [ -z "${FORJA_ENGINE_TOKEN:-}" ]; then
-	echo "forja-engine: set FORJA_ENGINE_TOKEN; engines reachable from other machines need a token" >&2
+token="${FORJA_ENGINE_TOKEN:-}"
+if [ "${#token}" -lt 16 ]; then
+	echo "forja-engine: set FORJA_ENGINE_TOKEN to 16 characters or more; engines reachable from other machines need a token that cannot be guessed" >&2
 	exit 2
 fi
 
