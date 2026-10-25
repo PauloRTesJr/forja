@@ -18,7 +18,7 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
 from forja_engine import __version__, checks, families
-from forja_engine.adapters.builtin import BUILTINS
+from forja_engine.adapters.builtin import offered
 from forja_engine.api.version import API_VERSION
 from forja_engine.devices import detect
 from forja_engine.install import STEPS, Installer, InstallError, Reporter, _run
@@ -142,14 +142,18 @@ def create_app(cfg: EngineConfig) -> FastAPI:
 
     @app.get("/v1/info", dependencies=guarded)
     async def info() -> dict[str, Any]:
+        # Finding Blender may start it once to ask its version; keep that off the event loop.
+        stages, unavailable = await asyncio.to_thread(offered)
         return {
             "version": __version__,
             "api_version": API_VERSION,
             "system": detect(cfg.store_root).to_json(),
             "fit_mode": cfg.fit_mode,
             # Built-in stage versions; the core puts them in the cache key (model versions are
-            # in /v1/models).
-            "stages": {str(task): cls.version for task, cls in BUILTINS.items()},
+            # in /v1/models). Stages this engine cannot run here are left out, with the reason
+            # in "unavailable" (API 1.7).
+            "stages": stages,
+            "unavailable": unavailable,
             "lanes": {
                 dev: {
                     "budget_bytes": lane.vram.budget,

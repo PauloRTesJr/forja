@@ -12,7 +12,8 @@ import trimesh
 from PIL import Image
 from scipy.spatial import cKDTree
 
-from forja_engine.ops import bake
+from forja_engine import blender
+from forja_engine.ops import bake, blender_mesh
 from forja_engine.ops import image as img_ops
 from forja_engine.ops import match as match_ops
 from forja_engine.ops import mesh as mesh_ops
@@ -74,6 +75,44 @@ class Unwrap(Adapter):
     def run(self, ctx: StageContext) -> list[StageOutput]:
         mesh = mesh_ops.unwrap(mesh_ops.load(ctx.input(ArtifactKind.MESH_GLB).path))
         return [StageOutput(mesh_ops.save(mesh, ctx.out_dir / "uv.glb"), ArtifactKind.MESH_GLB)]
+
+
+class Remesh(Adapter):
+    """Quad remesh by Blender's QuadriFlow: an alternative to decimation with even, quad-based
+    topology, at most `target_tris` triangles (the budget of the decimation it replaces)."""
+
+    blender = True
+
+    def capabilities(self) -> Capabilities:
+        return Capabilities(tasks=(StageType.MESH_REMESH,), devices=CPU)
+
+    def run(self, ctx: StageContext) -> list[StageOutput]:
+        mesh = mesh_ops.load(ctx.input(ArtifactKind.MESH_GLB).path)
+        target = int(ctx.params.get("target_tris", 5000))
+        ctx.progress(1, 2)
+        low = blender_mesh.quad_remesh(
+            mesh, target, seed=ctx.seed, preserve_sharp=bool(ctx.params.get("preserve_sharp", False))
+        )
+        ctx.progress(2, 2)
+        return [StageOutput(mesh_ops.save(low, ctx.out_dir / "remeshed.glb"), ArtifactKind.MESH_GLB)]
+
+
+class SmartUnwrap(Adapter):
+    """UVs by Blender's Smart UV Project: fewer, straighter islands than xatlas on hard surfaces."""
+
+    blender = True
+
+    def capabilities(self) -> Capabilities:
+        return Capabilities(tasks=(StageType.MESH_UV_SMART,), devices=CPU)
+
+    def run(self, ctx: StageContext) -> list[StageOutput]:
+        mesh = mesh_ops.load(ctx.input(ArtifactKind.MESH_GLB).path)
+        out = blender_mesh.smart_uv(
+            mesh,
+            angle_limit=float(ctx.params.get("angle_limit", 66.0)),
+            margin=float(ctx.params.get("margin", 0.004)),
+        )
+        return [StageOutput(mesh_ops.save(out, ctx.out_dir / "uv.glb"), ArtifactKind.MESH_GLB)]
 
 
 def _factor(material: object, name: str, default: float) -> float:
@@ -304,7 +343,9 @@ BUILTINS: dict[StageType, type[Adapter]] = {
     StageType.FRAMING: Framing,
     StageType.MESH_CLEANUP: Cleanup,
     StageType.MESH_DECIMATE: Decimate,
+    StageType.MESH_REMESH: Remesh,
     StageType.MESH_UV: Unwrap,
+    StageType.MESH_UV_SMART: SmartUnwrap,
     StageType.TEXTURE_MATCH: TextureMatch,
     StageType.BAKE: Bake,
     StageType.MESH_LODS: Lods,
@@ -312,3 +353,29 @@ BUILTINS: dict[StageType, type[Adapter]] = {
     StageType.VIEWS_DETECT: ViewsDetect,
     StageType.VIEWS_SPLIT: ViewsSplit,
 }
+
+
+def offered() -> tuple[dict[str, str], dict[str, str]]:
+    """The built-in stages this engine runs, by adapter version, and why it runs no others.
+
+    A Blender-backed stage is offered only where Blender is found, and its version names the
+    Blender too: another Blender makes other quads and UVs, so it must key the cache apart.
+    """
+    found: blender.Blender | None = None
+    problem: str | None = None
+    stages: dict[str, str] = {}
+    missing: dict[str, str] = {}
+    for task, cls in BUILTINS.items():
+        if not getattr(cls, "blender", False):
+            stages[str(task)] = cls.version
+            continue
+        if found is None and problem is None:
+            try:
+                found = blender.find()
+            except blender.BlenderError as e:
+                problem = str(e)
+        if found is None:
+            missing[str(task)] = str(problem)
+        else:
+            stages[str(task)] = f"{cls.version}+blender-{found.version}"
+    return stages, missing
