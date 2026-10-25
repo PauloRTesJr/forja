@@ -342,6 +342,9 @@ func engineExec(sub string, args []string) error {
 		full = append(full, "--manifests", d)
 	}
 	c := exec.Command(base[0], append(full, args...)...)
+	// What the engine the core starts gets too: blender.path, and no programs from this folder.
+	c.Env = append(os.Environ(), "NoDefaultCurrentDirectoryInExePath=1")
+	c.Env = append(c.Env, localengine.Env(cfg)...)
 	c.Stdin, c.Stdout, c.Stderr = os.Stdin, os.Stdout, os.Stderr
 	return c.Run()
 }
