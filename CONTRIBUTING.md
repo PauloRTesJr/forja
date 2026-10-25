@@ -100,7 +100,7 @@ It appends `Signed-off-by: Your Name <you@example.com>`, using your Git name and
 - User-visible changes update the docs in `docs/`; changes to scope, defaults, presets or licensing add a row to `docs/decisions.md`.
 - The template asks for what changed, why, and how you tested it.
 
-CI, release and versioning are documented after integration.
+CI, releases, versioning, license scanning and the optional pre-commit hooks (`make hooks`) are in [CI, releases and versioning](docs/contributing/releases.md).
 
 ## Conduct
 

@@ -6,10 +6,10 @@ Forja ships no model weights. Each model is described by a manifest (where its w
 
 | Model | id | Stage | License | VRAM | Disk | Runs on |
 |---|---|---|---|---|---|---|
-| BiRefNet (general) | `birefnet` | Background removal | MIT | 8 GB¹ | 3.8 GB | NVIDIA, Apple Silicon, CPU |
-| BiRefNet lite | `birefnet-lite` | Background removal | MIT | 0.8 GB | 3.1 GB | NVIDIA, Apple Silicon, CPU |
+| BiRefNet (general) | `birefnet` | Background removal | MIT | 8 GB¹ | 3.8 GB | NVIDIA, CPU (a Mac's included) |
+| BiRefNet lite | `birefnet-lite` | Background removal | MIT | 0.8 GB | 3.1 GB | NVIDIA, CPU (a Mac's included) |
 | TripoSG | `triposg` | Shape | MIT | 8 GB (needs 8) | 12.5 GB | NVIDIA |
-| Hunyuan3D-2mv (turbo) | `hunyuan3d2-mv` | Shape, from the front plus side and back views | Tencent Hunyuan 3D 2.0 Community² | 6 GB (needs 6) | 5.0 GB | NVIDIA |
+| Hunyuan3D-2mv (turbo) | `hunyuan3d2-mv` | Shape, from the front plus side and back views | Tencent Hunyuan 3D 2.0 Community² | 6 GB (needs 6) | 5.0 GB | NVIDIA, Apple Silicon (experimental: [macOS](macos.md)) |
 | Hunyuan3D-2 Paint (turbo) | `hunyuan3d2-paint` | Texture (base color) | Tencent Hunyuan 3D 2.0 Community² | 12.5 GB (needs 10) | 23.1 GB | NVIDIA |
 
 VRAM is the peak at default settings; "needs" is the least the model runs in at all. The engine replaces these figures with the peaks it measures on your GPU. The [hardware guide](hardware.md) says what runs on 8, 12, 16 and 24 GB.

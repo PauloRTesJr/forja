@@ -17,15 +17,17 @@ forja daemon stop     # stop it and its engine
 | Command | What it does |
 |---|---|
 | `forja setup` | Install what the built-in presets need on this computer, then test them ([install](install.md)) |
-| `forja generate <image>...` | One job per image, followed until it ends ([install](install.md#make-your-first-asset)) |
+| `forja generate <image>...` | One job per image, followed until it ends ([install](install.md#make-your-first-asset)); `--estimate` shows each stage's expected time, cost and provider instead ([routing](routing.md#estimates-before-queueing)), `--dry-run` the plan |
 | `forja jobs ls / show / watch / cancel / sheet` | Jobs: list, inspect, follow, cancel, answer a turnaround sheet |
 | `forja assets ls / show / get / export / formats / blender / rm` | The library ([library](library.md)) |
 | `forja presets ls / show` | Presets and the plan each would run now ([presets](presets.md)) |
 | `forja models ls / install / rm / checks / fix / pin / unpin` | Models ([models](models.md)) |
 | `forja installs ls / watch / cancel` | Installs, removals and fixes in progress |
 | `forja share`, `share on / off / code` | Share this computer's GPU ([sharing](sharing.md)) |
-| `forja providers ls / kinds / test / add / rm / token` | Other computers that run models for this one |
-| `forja hubs ls / connect / search / add / rm`, `forja spend` | Model hubs and what they cost ([hubs](hubs.md)) |
+| `forja providers ls / kinds / test / add / rm / token` | Other computers that run models for this one ([sharing](sharing.md)); `add runpod`, `runpod-pod`, `modal` and `comfyui` add a rented GPU or a ComfyUI ([cloud](cloud.md)) |
+| `forja hubs ls / connect / search / add / rm` | Model hubs ([hubs](hubs.md)) |
+| `forja prices ls / set / rm`, `forja spend` | The price table, and what paid providers cost today and this month ([routing](routing.md#the-price-table)) |
+| `forja bench`, `bench ls / show / report / cancel / compare` | Benchmarks: measure a suite of images, compare two runs ([bench](bench.md)) |
 | `forja cache`, `cache clear` | The stage cache ([library](library.md#the-cache)) |
 | `forja config show / get / set / unset / edit / path` | Settings ([configuration](configuration.md)) |
 | `forja secret set / rm` | Store a key in the OS keychain, read from stdin |
@@ -48,7 +50,10 @@ Keys never go on the command line, where shell history would keep them. Commands
 forja hubs connect fal < fal-key.txt
 forja secret set my-key < key.txt
 forja providers add 192.0.2.10 --token-stdin < token.txt
+forja providers add runpod <your-endpoint-id> < runpod-key.txt
 ```
+
+A command that needs two, such as a RunPod endpoint with its network volume's key, reads one per line ([cloud](cloud.md#runpod-serverless)).
 
 ## Questions and scripts
 
@@ -59,9 +64,8 @@ A command asks only at a terminal, and every question has a flag that answers it
 | Code | Meaning |
 |---|---|
 | 0 | Done |
-| 1 | An error, printed on stderr |
-| 3 | A job failed |
-| 4 | Cancelled (Ctrl+C cancels the jobs a command follows) |
+| 1 | An error, printed on stderr; for `forja generate --estimate`, a job that would be refused |
+| 3 | A job failed; for `forja bench`, a sample |
+| 4 | Cancelled (Ctrl+C cancels the jobs, or the benchmark, a command follows) |
 | 5 | A job waits for an answer no one at a terminal could give; `forja jobs sheet` gives it |
-
-Benchmarks (`forja bench`) are documented after integration ([bench](bench.md)).
+| 6 | `forja bench compare` found a regression past the threshold |

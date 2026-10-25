@@ -2,7 +2,7 @@
 
 `forja-engine-sdk` (`engine/sdk/`, imported as `forja_sdk`) is the contract between Forja and a model adapter. It needs only the Python standard library, so an adapter can depend on it alone. The engine re-exports the same objects as `forja_engine.sdk`: an adapter may import either, and `isinstance` checks and `except Cancelled` hold across both.
 
-Inside a model family's environment it is already installed, with the engine. Elsewhere, install it from a checkout: `pip install ./engine/sdk` (PyPI releases are documented after integration).
+Inside a model family's environment it is already installed, with the engine. Elsewhere, install it from a checkout: `pip install ./engine/sdk` (it is not published to PyPI yet: [decision 1](../decisions.md)).
 
 ## Types
 

@@ -42,11 +42,11 @@ forja models unpin shape
 
 or, in Settings, turn on **Let paid providers step in** (`routing.allow_paid_fallback`) so a stage no free provider can run may use one.
 
-The price shows before a job is queued: on Generate, and with `forja generate --dry-run` or `forja presets show <preset>`. When a hosted model does both shape and texture, the job skips its own later shape and texture stages (and the optional stages that refine them); bake transfers the hosted model's colors onto the low-poly mesh. Inputs go to fal inline; results come back into your library.
+The price shows before a job is queued: on Generate, and with `forja generate --estimate`, `forja generate --dry-run` or `forja presets show <preset>` ([estimates](routing.md#estimates-before-queueing)). An entry in the [price table](routing.md#the-price-table) named after a model's id replaces the price fal reports. When a hosted model does both shape and texture, the job skips its own later shape and texture stages (and the optional stages that refine them); bake transfers the hosted model's colors onto the low-poly mesh. Inputs go to fal inline; results come back into your library.
 
 ## Spending limits
 
-Limits are in US dollars; 0 means no limit. A job is checked when it is submitted, against its paid stages' prices and the costs already recorded.
+Limits are in US dollars, for every paid provider; 0 means no limit. A job is checked when it is submitted, against its paid stages' prices, what queued jobs are expected to spend and the costs already recorded, and again before its paid stages start ([spending limits](routing.md#spending-limits)).
 
 | Limit | Setting | A job is refused when |
 |---|---|---|
@@ -54,11 +54,11 @@ Limits are in US dollars; 0 means no limit. A job is checked when it is submitte
 | Per day | `routing.budget_usd.per_day` | it would take today's spending past the limit |
 | Per month | `routing.budget_usd.per_month` | it would take this month's spending past the limit |
 
-While any limit is set, a hosted model without a fixed price per generation is refused, because its cost cannot be checked in advance.
+While any limit is set, a hosted model with no known price is refused, because its cost cannot be checked in advance. A model fal prices in its own compute units has none until you give it a price per image: Settings, **Prices**, or `forja prices set <model-id> <usd>`.
 
 ```sh
 forja config set routing.budget_usd.per_day=5
 forja spend          # today, this month, and the limits
 ```
 
-Spend caps for rented GPUs and routing policies beyond these are documented after integration ([routing](routing.md)).
+Rented GPUs ([cloud](cloud.md)) count toward the same limits, and the [routing policies](routing.md#routing-policies) decide when a paid provider is used at all.

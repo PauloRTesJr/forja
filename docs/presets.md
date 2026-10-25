@@ -86,6 +86,6 @@ When a job is submitted, each stage without a model gets one, first match wins:
 
 1. The job's own `<stage>.model` override.
 2. The model pinned for the stage type: `forja models pin shape triposg` (the Models screen does the same), stored under `[models.stages]` in `config.toml`.
-3. The highest-ranked model that is installed and ready, on the first provider in `routing.priority` that has one. For a job with side views, a model that reads them comes first.
+3. The highest-ranked model that is installed and ready, on the first provider that has one, in `routing.priority` order as the routing policy sorts it ([routing](routing.md#routing-policies)). For a job with side views, a model that reads them comes first.
 
 A stage with no ready model refuses the job instead of falling back to a lesser stage. Stub models are picked only when `models.stubs = true`.

@@ -46,4 +46,4 @@ A newly added computer goes after this one in `routing.priority`. With the defau
 
 The core moves only what is missing: it asks the other engine whether it already holds an input by its content hash, uploads only when it does not, and downloads the outputs into this computer's store.
 
-Other routing policies, cost estimates and the price table are documented after integration ([routing](routing.md)).
+The other policies, **Cheapest** and **Fastest**, fallback when a computer drops out, and cost estimates are in [routing](routing.md). A GPU you rent can run stages too ([cloud](cloud.md)).

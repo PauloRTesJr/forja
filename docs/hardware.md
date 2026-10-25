@@ -12,7 +12,7 @@ What runs where, from the VRAM figures in the model manifests. Your own numbers 
 
 ## By VRAM
 
-Figures are for NVIDIA GPUs; the shape and texture models run only on CUDA.
+Figures are for NVIDIA GPUs. The shape and texture models run only on CUDA, except Hunyuan3D-2mv, which also runs on Apple GPUs ([macOS](macos.md)).
 
 | | 8 GB | 12 GB | 16 GB | 24 GB |
 |---|---|---|---|---|
@@ -24,7 +24,7 @@ Figures are for NVIDIA GPUs; the shape and texture models run only on CUDA.
 
 ¹ BiRefNet's figure is its ONNX Runtime arena on a 12 GB card, which grows to the free memory; it runs in much less.
 
-- **8 GB** (RTX 3060 Ti, 3070, 4060): cut-outs and shapes, with Hunyuan3D-2mv. Texture on another computer ([sharing](sharing.md)) or a hosted model ([hubs](hubs.md)), or use the Draft preset.
+- **8 GB** (RTX 3060 Ti, 3070, 4060): cut-outs and shapes, with Hunyuan3D-2mv. Texture on another computer ([sharing](sharing.md)), a rented GPU ([cloud](cloud.md)) or a hosted model ([hubs](hubs.md)), or use the Draft preset.
 - **12 GB** (RTX 3060 12 GB, 4070, 4070 Ti): every preset. Hunyuan3D-2 Paint runs with offload, so the texture stage is the slow one. This is the setup Forja is built and tested on.
 - **16 GB** (RTX 4060 Ti 16 GB, 4080, 5080): every preset without offload. Shape and texture models take turns on the GPU.
 - **24 GB** (RTX 3090, 4090): TripoSG and Hunyuan3D-2 Paint fit side by side (20.5 GB), so jobs in a row reload models less often. BiRefNet lite leaves them more room than BiRefNet general.
@@ -33,7 +33,8 @@ Larger texture models that paint full PBR materials need more than 24 GB and are
 
 ## Other computers
 
-- **Apple Silicon Macs** run BiRefNet (on the CPU, about 6 seconds a cut-out). Shape and texture models need CUDA, so a Mac uses a GPU computer on the network or a hosted model. macOS builds and Apple GPU support are documented after integration ([macOS](macos.md)).
+- **Apple Silicon Macs** run BiRefNet on the CPU (about 6 seconds a cut-out) and, as an experimental option, Hunyuan3D-2mv shapes on the Apple GPU, which needs a Mac with 16 GB of memory or more. TripoSG and Hunyuan3D-2 Paint need CUDA, so a Mac sends those stages to a GPU computer on the network, a rented GPU or a hosted model ([macOS](macos.md)).
+- **Rented GPUs** (a RunPod endpoint or pod, or Modal) run Forja's engine image on a GPU larger than yours, billed by the second or the hour; a ComfyUI anywhere runs your own workflows ([cloud](cloud.md)). The [routing](routing.md) settings decide where each stage runs and what it may cost.
 - **AMD GPUs and computers without a GPU** have no local shape or texture model yet. The stub models (`models.stubs = true`) run the pipeline anywhere, with placeholder output.
 
 ## Disk and memory

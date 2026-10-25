@@ -16,8 +16,8 @@ forja CLI ───────────────────────�
                                         │ Provider interface
               ┌─────────────────────────┼─────────────────────┬───────────────┐
               v                         v                     v               v
-        local engine            engine on the LAN       hosted model hub   (cloud GPUs,
-      (same object store)      (TLS, pinned cert)          (fal.ai)        after integration)
+        local engine            engine on the LAN       hosted model hub   rented GPUs, ComfyUI
+      (same object store)      (TLS, pinned cert)          (fal.ai)        (RunPod, Modal)
               │
        model workers: one process per family, each in its own uv environment
 ```
@@ -50,7 +50,7 @@ A model is data plus code: a manifest (`engine/src/forja_engine/manifests/`, or 
 
 ## Providers
 
-Everything that can run a stage implements one Go interface, `Provider` in `core/internal/provider/`: the local engine, an engine on another computer, a model hub. Code depends on the interface, never on a concrete provider. See [adding a provider](adding-a-provider.md).
+Everything that can run a stage implements one Go interface, `Provider` in `core/internal/provider/`: the local engine, an engine on another computer or a rented pod, a RunPod serverless endpoint, a Modal gateway, a ComfyUI, a model hub. Code depends on the interface, never on a concrete provider. See [adding a provider](adding-a-provider.md), [cloud GPUs](../cloud.md) and [routing](../routing.md).
 
 ## Where things live
 
@@ -64,6 +64,8 @@ engine/sdk/       forja-engine-sdk: stage types, Adapter, artifact validators, c
 engine/families/  one folder per model family: family.yaml, requirements/, src/forja_<name>/
 catalog/          manifest and family schemas, the catalog index
 templates/adapter/  a model package to start an adapter from
-bench/            reference images and results
+bench/            benchmark suites, the M0 spike's reference images and results
+docker/           the engine's images, the RunPod worker and the Modal app
+scripts/          version, license scan and end-to-end scripts
 docs/             this documentation; decisions.md overrides the spec
 ```

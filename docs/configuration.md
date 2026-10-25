@@ -29,9 +29,9 @@ forja config path                     # where the files are
 | `engine.idle_unload_minutes` | 15 | Unload models after this long without work |
 | `engine.vram_reserve_gb` | 1.0 | VRAM kept free for the desktop and other apps |
 | `engine.fit_mode` | `fit-first` | `fit-first` offloads a model that does not fit; `quality-first` refuses |
-| `routing.policy` | `prefer-local` | `prefer-local` or `offline-only` ([sharing](sharing.md#which-computer-a-stage-runs-on)) |
-| `routing.allow_paid_fallback` | false | Let a paid provider run a stage no free one can |
-| `routing.budget_usd.per_job`, `per_day`, `per_month` | 0 | Spending limits for paid providers; 0 is none ([hubs](hubs.md#spending-limits)) |
+| `routing.policy` | `prefer-local` | `prefer-local`, `cheapest`, `fastest` or `offline-only` ([routing](routing.md#routing-policies)) |
+| `routing.allow_paid_fallback` | false | Let paid providers run a stage no free one can, or take over one whose provider failed ([routing](routing.md#paid-providers)) |
+| `routing.budget_usd.per_job`, `per_day`, `per_month` | 0 | Spending limits for paid providers; 0 is none ([routing](routing.md#spending-limits)) |
 | `project.export_dir` | `Assets/Generated` | Where a project's assets are copied, inside the project |
 | `project.default_preset` | `mobile-prop` | The preset jobs use when none is given |
 | `models.stubs` | false | Allow the deterministic stub models |
@@ -60,8 +60,36 @@ shape = "triposg"
 [routing]
 priority = ["local"]                   # providers in the order stages try them
 
+[routing.stages]                       # forja models pin --provider: where a stage type runs
+shape = "studio-pc"
+
 [presets.mobile-prop.overrides]        # change a preset's values for every job
 "lowpoly.target_tris" = 3000
+
+[bench]                                # what forja bench compare counts as a regression
+threshold_pct = 10                     # growth in percent that fails
+min_seconds = 0.05                     # smaller time changes are noise
+min_vram_mb = 64                       # smaller VRAM changes are noise
+
+[prices.runpod-serverless-4090]        # forja prices set; the price table
+usd = 0.00031
+per = "second"                         # second, hour or generation
+label = "RunPod serverless, RTX 4090 24 GB (flex worker)"
 ```
 
-Providers you add are written as `[[providers]]` entries that hold the address and a keychain entry's name, never the key itself. Keys live only in the OS keychain (`forja secret set`, or the app's key fields).
+[Routing](routing.md) explains `[routing.stages]` and the price table, [benchmarks](bench.md#compare-two-runs) the `[bench]` section.
+
+Providers you add are written as `[[providers]]` entries that hold the address and a keychain entry's name, never the key itself. Keys live only in the OS keychain (`forja secret set`, or the app's key fields). Besides `id`, `kind`, `label`, `url`, `secret` and `fingerprint`, an entry can hold:
+
+| Key | For | What it is |
+|---|---|---|
+| `vendor` | RunPod, Modal, a hub | `runpod`, `modal` or `fal` |
+| `paid` | any | Whether it costs money |
+| `price_usd_per_second` | rented GPUs, a paid ComfyUI | What its time costs |
+| `price` | rented GPUs | A price table entry for its time, when `price_usd_per_second` is not set |
+| `endpoint_id` | RunPod serverless | The endpoint's ID |
+| `volume`, `region` | RunPod serverless | The endpoint's network volume and its datacenter, such as `EU-RO-1` |
+| `workflows` | ComfyUI | Workflow files by stage type, relative to the settings folder |
+| `models` | a hub | The hub models you added |
+
+[Cloud GPUs](cloud.md#manage-providers) has examples.

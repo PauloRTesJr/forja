@@ -18,7 +18,7 @@ FORJA_ENGINE_TOKEN=<a long random token> forja engine serve --host 0.0.0.0 --por
   --tls-cert cert.pem --tls-key key.pem
 ```
 
-Binding beyond loopback requires a token and TLS. Add it from another computer with `forja providers add <address> --token-stdin`, or use pairing ([sharing](../sharing.md)) when the computer runs Forja. Engines on rented GPUs (RunPod, Modal) and the engine's Docker image are documented after integration ([cloud](../cloud.md)).
+Binding beyond loopback requires a token and TLS. Add it from another computer with `forja providers add <address> --token-stdin`, or use pairing ([sharing](../sharing.md)) when the computer runs Forja. The engine's Docker image, and the RunPod and Modal providers that run it on rented GPUs, are in [cloud GPUs](../cloud.md).
 
 ## A vendor's API
 
@@ -52,4 +52,4 @@ Map the vendor's models onto stage types as `core/internal/provider/fal/` does: 
 
 Adding a provider kind is a feature: the app's setup and the CLI's commands reach it through the same core endpoints ([feature parity](../../.claude/skills/feature-parity/SKILL.md)). Test it against a fake server, as `core/internal/provider/fal/fal_test.go` does; tests never call a real vendor or need a real key.
 
-Routing policies, estimates, the price table and fallback rules are documented after integration ([routing](../routing.md)).
+How the job runner picks among providers, falls back from one that fails, prices a paid one and enforces spending limits is in [routing](../routing.md). A paid provider's time is priced by its `price_usd_per_second`, else by its `price` entry, else by the first price table entry named `<vendor>-<kind>` or starting with it; built-in entries live in `core/internal/config/defaults.go`. A provider that bills for waking up implements `provider.Sleeper`, so the catalog describes it from its last answer instead of starting a worker.

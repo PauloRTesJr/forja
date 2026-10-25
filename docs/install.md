@@ -8,7 +8,7 @@
 
 ## Get Forja
 
-There are no installers yet (installers are documented after integration); run Forja from source:
+Run Forja from source. (`make dist` builds installers for your OS, but they carry the app and the core, not the engine: see [releases](contributing/releases.md#build-the-installers).)
 
 ```sh
 git clone https://github.com/PauloRTesJr/forja.git
