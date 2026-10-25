@@ -19,7 +19,7 @@
       "rank": 5,
       "stub": false,
       "manifest": "engine/src/forja_engine/manifests/birefnet-lite.yaml",
-      "sha256": "93190df5e423c84f2e5b179cf2b9c50e2b8452966232904106d024fe6fcd7179"
+      "sha256": "a2bb0cad6ea6db47ef3755eb9d407596708d10b731c8a2c4f17db905c1a67b52"
     },
     {
       "id": "birefnet",
@@ -39,7 +39,7 @@
       "rank": 10,
       "stub": false,
       "manifest": "engine/src/forja_engine/manifests/birefnet.yaml",
-      "sha256": "6d83b3c79f4410fbabf4b3c93b36870c6cc4230a99245639eec4eeff087afa2d"
+      "sha256": "8a51840872a72b525dbce951be0d1aae63f36275d6fea92fe6fa140fa1029382"
     },
     {
       "id": "hunyuan3d2-mv",
@@ -62,7 +62,7 @@
       "rank": 5,
       "stub": false,
       "manifest": "engine/src/forja_engine/manifests/hunyuan3d2-mv.yaml",
-      "sha256": "718ca87d17ca17a6e848c01522cf037b34385a63307323f9b59c9bb88d4eda79"
+      "sha256": "761f2dd912e22a871409dc81cbdaae1697bc51ab78a72e586b27eb1510ec4e7c"
     },
     {
       "id": "hunyuan3d2-paint",
@@ -85,7 +85,7 @@
       "rank": 10,
       "stub": false,
       "manifest": "engine/src/forja_engine/manifests/hunyuan3d2-paint.yaml",
-      "sha256": "2b75d2edc9f7341a709a2ed2b0e802549ddb51a0bde43543374f8f1bd4f48ec7"
+      "sha256": "e45dcde467df046afdb0f03b4875afa60f073bdd84ee651c669c87d493eaa1c9"
     },
     {
       "id": "stub-background",
@@ -165,7 +165,7 @@
       "rank": 10,
       "stub": false,
       "manifest": "engine/src/forja_engine/manifests/triposg.yaml",
-      "sha256": "9ed787a11107aefe36db27855aea7ec32aca2ab2b4f3973e28a313c6f2df319a"
+      "sha256": "2a50c2c67f64b86dcf8ed980d80da8ff8a6e8781a6d518b847321063f7cdfecc"
     }
   ]
 }
