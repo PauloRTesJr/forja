@@ -44,7 +44,7 @@ Both stages run Blender 4.2 or newer on the computer that runs the engine, on it
 The engine looks for Blender:
 
 1. at `FORJA_BLENDER`. The core passes your `blender.path` setting there to the engine it starts (Settings, "Blender's program", or `forja config set blender.path=<full path to blender>`), and restarts that engine when the setting changes and no job runs;
-2. as `blender` on the `PATH`;
+2. as `blender` in a folder of the `PATH`, absolute folders only, so a Blender left in the folder where you run `forja` is never started;
 3. where Blender's installers put it: on Windows, the program `.blend` files open with, `Program Files\Blender Foundation\Blender <version>\blender.exe` (the newest first) and Steam's Blender; on macOS, `/Applications/Blender.app` and `~/Applications/Blender.app`; on Linux, the snap and the Flatpak.
 
 An engine started by hand (`forja engine serve`) reads only `FORJA_BLENDER`, the `PATH` and the installers' locations. Another computer that shares its GPU uses its own Blender.

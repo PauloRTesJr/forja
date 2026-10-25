@@ -137,7 +137,7 @@ usd = 0.3
 per = "generation"
 ```
 
-`forja prices rm` removes only an entry from your `config.toml`; one set in the system file, a project or the environment is changed there.
+`forja prices rm` removes only an entry from your `config.toml`; one set in the system file or the environment is changed there. A project's `forja.toml` cannot set prices ([configuration](configuration.md)).
 
 ## Spending limits
 
@@ -149,7 +149,7 @@ Limits are in US dollars, for every paid provider; 0 means no limit.
 | Per day | `routing.budget_usd.per_day` | it would take today's spending past the limit |
 | Per month | `routing.budget_usd.per_month` | it would take this month's spending past the limit |
 
-Days and months follow this computer's clock. A limit is a hard stop:
+Days and months follow this computer's clock. A project's `forja.toml` can set a stricter limit than yours, never a looser one, and can turn paid fallback off but not on ([configuration](configuration.md)). A limit is a hard stop:
 
 1. **At submit**, a job's expected cost, added to what the queued and running jobs are expected to spend and what was already spent, must fit every limit.
 2. **Before each paid batch** starts, it is checked again.
