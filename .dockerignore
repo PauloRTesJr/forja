@@ -1,0 +1,10 @@
+# Images build from engine/ and docker/ only (docker/engine/Dockerfile).
+*
+!engine/
+!docker/
+engine/.venv
+**/__pycache__
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
+engine/tests

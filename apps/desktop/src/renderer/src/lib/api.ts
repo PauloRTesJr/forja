@@ -493,6 +493,10 @@ export interface ProviderRow {
   /** Where its key lives and how it ends; never the key itself. */
   key?: { stored: boolean; hint?: string; store: string }
   editable: boolean
+  /** Rented GPUs: who rents it (runpod, modal), a RunPod endpoint, what a GPU second costs. */
+  vendor?: string
+  endpoint_id?: string
+  price_usd_per_second?: number
 }
 
 export interface ShareView {
@@ -708,3 +712,39 @@ export const setPrice = (id: string, price: { usd: number; per: PriceUnit; label
   api('PUT', pricePath(id), price)
 /** Removes the user's entry: a built-in one goes back to its default, a hosted model to its provider's price. */
 export const removePrice = (id: string): Promise<Prices> => api('DELETE', pricePath(id))
+/** A kind of provider the core can add, field by field (GET /v1/provider-kinds). */
+export interface ProviderKind {
+  kind: string
+  vendor?: string
+  label: string
+  description: string
+  pairing: boolean
+  paid: boolean
+  key_url?: string
+  fields: ProviderField[]
+}
+
+export interface ProviderField {
+  key: string
+  label: string
+  type: 'text' | 'url' | 'secret' | 'number' | 'workflows'
+  placeholder?: string
+  help?: string
+  optional?: boolean
+  unit?: string
+}
+
+/** What trying a provider's settings found. */
+export interface ProbeView {
+  url: string
+  version: string
+  gpu?: string
+  fingerprint?: string
+  latency_ms: number
+  detail?: string
+}
+
+export const providerKinds = (): Promise<ProviderKind[]> => api('GET', '/v1/provider-kinds')
+export const testProvider = (body: Record<string, unknown>): Promise<ProbeView> => api('POST', '/v1/providers/test', body)
+export const addCloudProvider = (body: Record<string, unknown>): Promise<{ id: string; label: string; probe?: ProbeView }> =>
+  api('POST', '/v1/providers', body)

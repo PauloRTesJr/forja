@@ -12,8 +12,10 @@ import {
   type ShareView,
   type Spend,
 } from '../lib/api'
+import { placeNote, priceNote } from '../lib/cloud'
 import { keys } from '../lib/events'
 import { useToast } from '../lib/toast'
+import { AddCloud } from './Cloud'
 import { Choices, NumberInput, Row } from './Controls'
 import { ConnectHub } from './Hub'
 import { PriceTable } from './PriceTable'
@@ -24,6 +26,7 @@ export function Providers({ settings, onSet }: { settings: Map<string, Setting>;
   const providers = useQuery({ queryKey: keys.providers, queryFn: () => api<ProviderRow[]>('GET', '/v1/providers') })
   const [adding, setAdding] = useState(false)
   const [connecting, setConnecting] = useState(false)
+  const [renting, setRenting] = useState(false)
   const paid = providers.data?.some((p) => p.paid) ?? false
   const hub = providers.data?.some((p) => p.kind === 'api') ?? false
   const spend = useQuery({ queryKey: keys.spend, queryFn: () => api<Spend>('GET', '/v1/spend'), enabled: paid })
@@ -48,6 +51,9 @@ export function Providers({ settings, onSet }: { settings: Map<string, Setting>;
               Connect fal.ai
             </button>
           )}
+          <button className="btn" onClick={() => setRenting(true)}>
+            Add a cloud GPU or ComfyUI
+          </button>
           <span className="muted">Stages use them for models this computer cannot run, or when you pick one.</span>
         </div>
         <ShareCard />
@@ -102,6 +108,7 @@ export function Providers({ settings, onSet }: { settings: Map<string, Setting>;
       </div>
       {adding && <AddComputer onClose={() => setAdding(false)} />}
       {connecting && <ConnectHub onClose={() => setConnecting(false)} />}
+      {renting && <AddCloud onClose={() => setRenting(false)} />}
     </div>
   )
 }
@@ -130,8 +137,9 @@ function ProviderItem({ provider: p }: { provider: ProviderRow }) {
       <div className="grow">
         <strong>{local ? 'This computer' : p.label}</strong>
         <div className="muted provider-meta">
-          {!local && p.url && <span className="mono">{p.url}</span>}
+          {!local && placeNote(p) && <span className="mono">{placeNote(p)}</span>}
           <span>{status}</span>
+          {priceNote(p) && <span>{priceNote(p)}</span>}
           {p.fingerprint && <span className="mono">certificate {p.fingerprint}</span>}
         </div>
         {p.key && (

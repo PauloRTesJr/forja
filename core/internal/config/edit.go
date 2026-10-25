@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/BurntSushi/toml"
@@ -73,13 +74,32 @@ func appendProvider(text string, fields map[string]any) string {
 		b.WriteString("\n\n")
 	}
 	b.WriteString("[[providers]]\n")
-	for _, k := range []string{"id", "label", "kind", "vendor", "url", "secret", "fingerprint", "paid", "models", "price"} {
+	for _, k := range []string{"id", "label", "kind", "vendor", "url", "secret", "fingerprint", "paid", "models",
+		"price", "endpoint_id", "price_usd_per_second", "volume", "region", "workflows"} {
 		if v, ok := fields[k]; ok {
 			val, _ := encodeValue(v)
+			if m, ok := v.(map[string]any); ok {
+				val = inlineTable(m)
+			}
 			b.WriteString(k + " = " + val + "\n")
 		}
 	}
 	return b.String()
+}
+
+// inlineTable writes a map of strings as a TOML inline table, keys sorted.
+func inlineTable(m map[string]any) string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	parts := make([]string, len(keys))
+	for i, k := range keys {
+		val, _ := encodeValue(m[k])
+		parts[i] = quoteKey(k) + " = " + val
+	}
+	return "{ " + strings.Join(parts, ", ") + " }"
 }
 
 // RemoveProvider deletes the [[providers]] table with this id from a config file.
@@ -103,7 +123,8 @@ func RemoveProvider(path, id string, validate func() error) error {
 func providerFields(p Provider) map[string]any {
 	out := map[string]any{"id": p.ID, "kind": p.Kind}
 	for k, v := range map[string]string{"label": p.Label, "vendor": p.Vendor, "url": p.URL, "secret": p.Secret,
-		"fingerprint": p.Fingerprint, "price": p.Price} {
+		"fingerprint": p.Fingerprint, "price": p.Price, "endpoint_id": p.EndpointID, "volume": p.Volume,
+		"region": p.Region} {
 		if v != "" {
 			out[k] = v
 		}
@@ -117,6 +138,16 @@ func providerFields(p Provider) map[string]any {
 			models[i] = m
 		}
 		out["models"] = models
+	}
+	if p.PriceUSDPerSecond > 0 {
+		out["price_usd_per_second"] = p.PriceUSDPerSecond
+	}
+	if len(p.Workflows) > 0 {
+		workflows := make(map[string]any, len(p.Workflows))
+		for use, path := range p.Workflows {
+			workflows[use] = path
+		}
+		out["workflows"] = workflows
 	}
 	return out
 }

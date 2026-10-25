@@ -119,7 +119,9 @@ def create_app(cfg: EngineConfig) -> FastAPI:
         if cfg.token is None:
             return
         header = request.headers.get("authorization", "")
-        if not hmac.compare_digest(header, f"Bearer {cfg.token}"):
+        # As bytes: compare_digest refuses str with non-ASCII, which a stray BOM in a pasted
+        # token is, and the caller would get a 500 instead of a 401.
+        if not hmac.compare_digest(header.encode(), f"Bearer {cfg.token}".encode()):
             raise HTTPException(401, "missing or wrong bearer token")
 
     @app.exception_handler(HTTPException)

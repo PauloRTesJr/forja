@@ -19,12 +19,12 @@ const bridge = {
   pickImages: (): Promise<string[]> => ipcRenderer.invoke('dialog:pickImages'),
   /** Asks for a folder, such as where to export several assets. */
   pickFolder: (): Promise<string | null> => ipcRenderer.invoke('dialog:pickFolder'),
+  /** Asks for one file of a type, such as a ComfyUI workflow or a benchmark suite (`label`, `['json']`). */
+  pickFile: (label: string, extensions: string[]): Promise<string | null> => ipcRenderer.invoke('dialog:pickFile', label, extensions),
   /** Asks where to save one file of a format, suggesting `name` plus its extension. */
   pickSavePath: (name: string, ext: string, label: string): Promise<string | null> =>
     ipcRenderer.invoke('dialog:saveFile', name, ext, label),
   showItem: (path: string): Promise<void> => ipcRenderer.invoke('shell:showItem', path),
-  /** Asks for one file of a kind, such as a benchmark suite. */
-  pickFile: (label: string, extensions: string[]): Promise<string | null> => ipcRenderer.invoke('dialog:pickFile', label, extensions),
   /** Opens a benchmark's HTML report in the default browser. */
   openBenchReport: (id: string): Promise<void> => ipcRenderer.invoke('bench:openReport', id),
   openConfig: (): Promise<void> => ipcRenderer.invoke('settings:openConfig'),

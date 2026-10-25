@@ -230,12 +230,15 @@ func (a *app) readSecret(what string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	s := strings.TrimSpace(string(raw))
+	s := strings.TrimSpace(withoutBOM(string(raw)))
 	if s == "" {
 		return "", fmt.Errorf("no %s on stdin", what)
 	}
 	return s, nil
 }
+
+// withoutBOM drops the byte-order mark PowerShell puts before what it pipes to a program.
+func withoutBOM(s string) string { return strings.TrimPrefix(s, "\ufeff") }
 
 func signalContext() (context.Context, context.CancelFunc) {
 	return signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

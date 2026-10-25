@@ -31,11 +31,15 @@ func (a *app) providersCmd() *cobra.Command {
 			a.print(rows, func() {
 				a.table("ID\tNAME\tKIND\tADDRESS\tHEALTH\tKEY\tCERTIFICATE", func(row func(...any)) {
 					for _, r := range rows {
-						kind := r.Kind
+						kind := strings.TrimSpace(r.Kind + " " + r.Vendor)
 						if r.Paid {
 							kind += " (paid)"
 						}
-						row(r.ID, r.Label, kind, orDash(r.URL), health(r), keyHint(r.Key), orDash(r.Fingerprint))
+						addr := orDash(r.URL)
+						if r.EndpointID != "" {
+							addr = "endpoint " + r.EndpointID
+						}
+						row(r.ID, r.Label, kind, addr, health(r), keyHint(r.Key), orDash(r.Fingerprint))
 					}
 				})
 			})
@@ -64,16 +68,31 @@ func (a *app) providersCmd() *cobra.Command {
 	}, "GET /v1/provider-kinds"))
 
 	var testToken bool
+	var testCloud cloudFlags
 	test := calls(&cobra.Command{
-		Use: "test <address>", Short: "Try another computer's address (and token) before adding it", Args: cobra.ExactArgs(1),
+		Use:   "test [runpod|runpod-pod|modal|comfyui] <address>",
+		Short: "Try a provider's address and keys before adding it",
+		Long:  "With only an address, tries another computer. Before an address, the kind of provider:\n" + vendorHelp(),
+		Args:  cobra.RangeArgs(1, 2),
 		RunE: func(_ *cobra.Command, args []string) error {
-			body := map[string]string{"url": args[0]}
-			if testToken {
-				token, err := a.readSecret("access token")
+			var body any
+			if len(args) == 2 {
+				testCloud.tokenStdin = testToken
+				b, err := a.cloudBody(args[0], args[1], &testCloud)
 				if err != nil {
 					return err
 				}
-				body["token"] = token
+				body = b
+			} else {
+				b := map[string]string{"url": args[0]}
+				if testToken {
+					token, err := a.readSecret("access token")
+					if err != nil {
+						return err
+					}
+					b["token"] = token
+				}
+				body = b
 			}
 			var probe api.ProbeView
 			c, err := a.client()
@@ -83,25 +102,61 @@ func (a *app) providersCmd() *cobra.Command {
 			if err := c.Do(context.Background(), "POST", "/v1/providers/test", body, &probe); err != nil {
 				return err
 			}
-			a.print(probe, func() { a.showProbe(probe) })
+			a.print(probe, func() {
+				if len(args) == 2 {
+					a.showCloudProbe(probe)
+				} else {
+					a.showProbe(probe)
+				}
+			})
 			return nil
 		},
 	}, "POST /v1/providers/test")
 	test.Flags().BoolVar(&testToken, "token-stdin", false, "also try the access token read from stdin")
+	testCloud.register(test)
 	cmd.AddCommand(test)
 
 	var label, code string
 	var addToken bool
+	var addCloud cloudFlags
 	add := calls(&cobra.Command{
-		Use:   "add <address>",
-		Short: "Add another computer, paired with its code or given its token",
+		Use:   "add [runpod|runpod-pod|modal|comfyui] <address>",
+		Short: "Add another computer, a rented GPU or a ComfyUI",
 		Long: "Adds another computer that shares its GPU. On it, `forja share on` then `forja share code`\n" +
 			"(or the app's Settings) shows the address and a six-digit code:\n" +
 			"  forja providers add 192.168.1.20 --code 482913\n" +
 			"Without a code, --token-stdin reads its access token from stdin. The token stays in the OS\n" +
-			"keychain; config.toml keeps the address and the certificate to trust.",
-		Args: cobra.ExactArgs(1),
+			"keychain; config.toml keeps the address and the certificate to trust.\n\n" +
+			"Before the address, the kind of provider adds a rented GPU or a ComfyUI instead:\n" + vendorHelp() +
+			"For example:\n" +
+			"  forja providers add runpod abc123xyz789 --price 0.00031 < runpod-key.txt\n" +
+			"  forja providers add comfyui 192.168.1.30:8188 --workflow shape=hunyuan-shape.json\n" +
+			"Rented GPUs are paid: stages use them when pinned (forja models pin), or when\n" +
+			"routing.allow_paid_fallback is on.",
+		Args: cobra.RangeArgs(1, 2),
 		RunE: func(_ *cobra.Command, args []string) error {
+			if len(args) == 2 {
+				addCloud.label, addCloud.tokenStdin = label, addToken
+				body, err := a.cloudBody(args[0], args[1], &addCloud)
+				if err != nil {
+					return err
+				}
+				c, err := a.client()
+				if err != nil {
+					return err
+				}
+				var added api.AddedProvider
+				if err := c.Do(context.Background(), "POST", "/v1/providers", body, &added); err != nil {
+					return err
+				}
+				a.print(added, func() {
+					a.printf("Added %s as %s.\n", added.Label, added.ID)
+					if added.Probe != nil {
+						a.showCloudProbe(*added.Probe)
+					}
+				})
+				return nil
+			}
 			body := map[string]string{"url": args[0], "label": label}
 			switch {
 			case code != "" && addToken:
@@ -137,6 +192,7 @@ func (a *app) providersCmd() *cobra.Command {
 	add.Flags().StringVar(&label, "label", "", "a name for it (default: the name it gives)")
 	add.Flags().StringVar(&code, "code", "", "the six-digit pairing code the other computer shows")
 	add.Flags().BoolVar(&addToken, "token-stdin", false, "read its access token from stdin instead")
+	addCloud.register(add)
 	cmd.AddCommand(add)
 
 	cmd.AddCommand(calls(&cobra.Command{

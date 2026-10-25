@@ -65,6 +65,15 @@ ipcMain.handle('dialog:pickFolder', async () => {
   const res = await dialog.showOpenDialog(win!, { properties: ['openDirectory', 'createDirectory'] })
   return res.canceled ? null : res.filePaths[0]
 })
+ipcMain.handle('dialog:pickFile', async (_e, label: string, extensions: string[]) => {
+  const res = await dialog.showOpenDialog(win!, {
+    properties: ['openFile'],
+    filters: [
+      { name: String(label), extensions: (Array.isArray(extensions) ? extensions : []).map((x) => String(x).replace(/^\./, '')) },
+    ],
+  })
+  return res.canceled ? null : res.filePaths[0]
+})
 ipcMain.handle('dialog:saveFile', async (_e, name: string, ext: string, label: string) => {
   const extension = String(ext).replace(/^\./, '')
   const res = await dialog.showSaveDialog(win!, {
@@ -75,14 +84,6 @@ ipcMain.handle('dialog:saveFile', async (_e, name: string, ext: string, label: s
   return res.canceled || !res.filePath ? null : res.filePath
 })
 ipcMain.handle('shell:showItem', (_e, path: string) => shell.showItemInFolder(path))
-ipcMain.handle('dialog:pickFile', async (_e, label: string, extensions: string[]) => {
-  const res = await dialog.showOpenDialog(win!, {
-    properties: ['openFile'],
-    filters: [{ name: String(label), extensions: extensions.map((x) => String(x).replace(/^\./, '')) }],
-  })
-  return res.canceled ? null : res.filePaths[0]
-})
-
 // The renderer never names a path to open: these ask the core where its files are.
 async function coreJSON<T>(method: string, path: string): Promise<T> {
   const res = await core.request(method, path, {})

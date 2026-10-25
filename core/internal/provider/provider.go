@@ -106,3 +106,10 @@ type Hub interface {
 	// own image hosts.
 	Thumbnail(ctx context.Context, url string) (io.ReadCloser, string, error)
 }
+
+// Sleeper is implemented by providers that bill for waking up (serverless endpoints). While one
+// is asleep, the catalog describes it from its last answer instead of asking, which would
+// start a worker; keying a job still asks.
+type Sleeper interface {
+	Asleep() bool
+}

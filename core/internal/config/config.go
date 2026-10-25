@@ -86,6 +86,13 @@ type Provider struct {
 	Models []string `toml:"models" json:"models,omitempty"`
 	// Price names the price table entry for the provider's time, when price_usd_per_second is unset.
 	Price string `toml:"price" json:"price,omitempty"`
+	// Volume and Region name a RunPod endpoint's network volume and its datacenter (EU-RO-1),
+	// whose S3 API moves artifacts by hash; the volume's S3 key is in the keychain.
+	Volume string `toml:"volume" json:"volume,omitempty"`
+	Region string `toml:"region" json:"region,omitempty"`
+	// Workflows maps stage types to ComfyUI workflow files (API format), relative to the config
+	// folder, for kind = "comfyui" providers.
+	Workflows map[string]string `toml:"workflows" json:"workflows,omitempty"`
 }
 
 type Project struct {
