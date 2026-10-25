@@ -1,5 +1,6 @@
 import type { CSSProperties } from 'react'
 import type { Stage } from '../lib/api'
+import { whereItRan } from '../lib/estimate'
 import { stageName } from '../lib/format'
 import { phaseState, phasesOf, stageFraction, stageTime } from '../lib/jobs'
 import { Star } from './icons'
@@ -39,18 +40,25 @@ export function StageTrack({ stages }: { stages: Stage[] }) {
   )
 }
 
-/** Every stage on its own line: what ran it and how long it took. */
+/** Every stage on its own line: what ran it, where when not here, and how long it took. */
 export function StageList({ stages }: { stages: Stage[] }) {
   return (
     <ol className="stage-list">
-      {stages.map((s) => (
-        <li key={s.id} className={`${s.status} ${s.cached ? 'cached' : ''}`}>
-          <Star size={13} />
-          <span className="stage-name">{stageName(s)}</span>
-          <span className="stage-model">{s.model ?? 'built-in'}</span>
-          <span className="stage-time">{stageTime(s)}</span>
-        </li>
-      ))}
+      {stages.map((s) => {
+        const where = whereItRan(s)
+        return (
+          <li key={s.id} className={`${s.status} ${s.cached ? 'cached' : ''}`}>
+            <Star size={13} />
+            <span className="stage-name">{stageName(s)}</span>
+            <span className="stage-model" title={where}>
+              {s.model ?? 'built-in'}
+              {where && ` · ${where}`}
+            </span>
+            <span className="stage-time">{stageTime(s)}</span>
+            {s.status === 'running' && s.note && <span className="stage-note">{s.note}</span>}
+          </li>
+        )
+      })}
     </ol>
   )
 }

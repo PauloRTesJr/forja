@@ -48,6 +48,21 @@ export interface Stage {
   step: number
   total: number
   error?: string
+  /** What the provider last said while it runs, such as a place in a hosted model's queue. */
+  note?: string
+  /** The providers it left after failing there, oldest first. */
+  fallbacks?: Fallback[]
+  /** Where it runs, for people: "This computer", "Studio PC", "fal.ai". */
+  provider_label?: string
+}
+
+/** A stage moving to another provider after it could not be reached or ran out of memory. */
+export interface Fallback {
+  from: string
+  to: string
+  reason: string
+  from_label?: string
+  to_label?: string
 }
 
 export interface Job {
@@ -318,6 +333,8 @@ export interface Pick {
   model?: string
   model_name?: string
   provider?: string
+  /** Where it would run, for people: "This computer", "Studio PC", "fal.ai". */
+  provider_label?: string
   missing?: boolean
   /** Done by the model of the stage named in `by` (a hosted model that returns a textured mesh). */
   skipped?: boolean
@@ -618,3 +635,76 @@ export const removeHubModel = (provider: string, model: string): Promise<void> =
   api('DELETE', `/v1/providers/${provider}/models?model=${encodeURIComponent(model)}`)
 export const connectHub = (vendor: string, token: string): Promise<{ id: string; label: string }> =>
   api('POST', '/v1/providers', { kind: 'api', vendor, token })
+
+/** A job as Generate would submit it, to estimate before queueing. */
+export interface EstimateBody {
+  preset: string
+  project?: string
+  /** The other views it brings: left, back, right. */
+  views?: View[]
+  overrides?: Record<string, unknown>
+  /** How many images would be queued this way. */
+  images?: number
+}
+
+/** One stage of an estimate: where it runs, how long it took there before, what it costs. */
+export interface StageEstimate extends Pick {
+  seconds?: number
+  /** Where the time comes from: earlier runs on this provider, or on others. */
+  measured?: 'here' | 'elsewhere'
+  cost_usd?: number
+  /** False for a paid stage without a usable price. */
+  priced: boolean
+}
+
+/** What one image would take and cost, before it is queued, against the spending limits. */
+export interface Estimate {
+  preset: string
+  images: number
+  stages: StageEstimate[]
+  /** Per image; unmeasured names the stages without a time, unpriced the paid ones without a price. */
+  seconds: number
+  cost_usd: number
+  unmeasured: string[]
+  unpriced: string[]
+  paid: boolean
+  spend: { limits: { per_job: number; per_day: number; per_month: number }; today: number; month: number; queued: number }
+  /** Why the job would be refused now: no model for a stage, a spending limit. */
+  problem?: string
+}
+
+export const fetchEstimate = (body: EstimateBody): Promise<Estimate> => api('POST', '/v1/estimate', body)
+
+export type PriceUnit = 'second' | 'hour' | 'generation'
+
+/** One entry of the price table, or a hosted model's own price that no entry replaces. */
+export interface PriceRow {
+  id: string
+  label?: string
+  usd: number
+  /** A unit of the table, or the vendor's own unit for a hosted model priced another way. */
+  per: string
+  /** The layer that set it (default, user, project…), or "vendor" for a hosted model's own price. */
+  source: string
+  default?: { usd: number; per: PriceUnit; label?: string }
+  vendor?: Price
+  /** What it prices, for people. */
+  for: string[]
+  model?: string
+  provider?: string
+}
+
+export interface Prices {
+  prices: PriceRow[]
+  units: PriceUnit[]
+  file: string
+}
+
+// A hosted model's id keeps its slashes in the address.
+const pricePath = (id: string): string => `/v1/prices/${id.split('/').map(encodeURIComponent).join('/')}`
+
+export const fetchPrices = (): Promise<Prices> => api('GET', '/v1/prices')
+export const setPrice = (id: string, price: { usd: number; per: PriceUnit; label?: string }): Promise<Prices> =>
+  api('PUT', pricePath(id), price)
+/** Removes the user's entry: a built-in one goes back to its default, a hosted model to its provider's price. */
+export const removePrice = (id: string): Promise<Prices> => api('DELETE', pricePath(id))

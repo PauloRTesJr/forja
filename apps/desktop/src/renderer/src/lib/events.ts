@@ -29,6 +29,8 @@ export const keys = {
   bench: ['bench'] as const,
   benchResult: (id: string) => ['bench', id] as const,
   benchCompare: (baseline: string, current: string) => ['benchCompare', baseline, current] as const,
+  estimate: (preset: string, overrides: Record<string, unknown>, views: string[]) => ['estimate', preset, overrides, views] as const,
+  prices: ['prices'] as const,
 }
 
 /** Keeps the newest state of each task, newest task first. */
@@ -53,10 +55,12 @@ export function useCoreEvents(qc: QueryClient): boolean {
         case 'job.updated':
         case 'job.finished':
           qc.setQueryData<Job[]>(keys.jobs, (list) => upsertJob(list, ev.data as Job))
-          // A finished job may have run paid stages, and its outputs became cache.
+          // A finished job may have run paid stages, and its outputs became cache. Its timings
+          // and costs change what the next one is estimated to take.
           if (ev.type === 'job.finished') {
             void qc.invalidateQueries({ queryKey: keys.spend })
             void qc.invalidateQueries({ queryKey: keys.cache })
+            void qc.invalidateQueries({ queryKey: ['estimate'] })
           }
           break
         case 'stage.progress': {
@@ -88,11 +92,14 @@ export function useCoreEvents(qc: QueryClient): boolean {
           void qc.invalidateQueries({ queryKey: keys.setup })
           // Pins live in config: a model chosen for a stage changes it.
           void qc.invalidateQueries({ queryKey: keys.config })
+          void qc.invalidateQueries({ queryKey: ['estimate'] })
+          void qc.invalidateQueries({ queryKey: keys.prices })
           break
         case 'providers.changed':
           void qc.invalidateQueries({ queryKey: keys.providers })
           void qc.invalidateQueries({ queryKey: keys.share })
           void qc.invalidateQueries({ queryKey: keys.info })
+          void qc.invalidateQueries({ queryKey: keys.prices })
           break
         case 'settings.changed':
           void qc.invalidateQueries({ queryKey: keys.exportFormats })
@@ -102,6 +109,9 @@ export function useCoreEvents(qc: QueryClient): boolean {
           void qc.invalidateQueries({ queryKey: keys.presets })
           void qc.invalidateQueries({ queryKey: keys.models })
           void qc.invalidateQueries({ queryKey: keys.setup })
+          // Prices and limits are settings: estimates read both.
+          void qc.invalidateQueries({ queryKey: keys.prices })
+          void qc.invalidateQueries({ queryKey: ['estimate'] })
           break
         case 'bench.updated':
         case 'bench.finished': {

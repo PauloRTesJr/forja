@@ -123,6 +123,10 @@ func (s *Server) routes() []route {
 		{"DELETE /v1/bench/{id}", s.benchCancel},
 		{"GET /v1/bench/{id}/report", s.benchReport},
 		{"POST /v1/bench/compare", s.benchCompare},
+		{"POST /v1/estimate", s.estimate},
+		{"GET /v1/prices", s.prices},
+		{"PUT /v1/prices/{id...}", s.priceSet},
+		{"DELETE /v1/prices/{id...}", s.priceRemove},
 	}
 }
 

@@ -99,6 +99,9 @@ type Runner struct {
 	gate sync.RWMutex
 	// OnIdle, when set, is called after the last running job ends.
 	OnIdle func()
+
+	// meters are the paid batches running now, with what they owe so far (under mu).
+	meters map[*meter]bool
 }
 
 type active struct {
@@ -107,6 +110,13 @@ type active struct {
 	mu     sync.Mutex
 	// measured is set for a benchmark's sample (Measure).
 	measured *measured
+	// picks are where each stage runs now, owed what its paid stages are expected to cost
+	// until they are billed, and avoid the providers stages failed on. Under mu.
+	picks map[string]Pick
+	owed  map[string]float64
+	avoid failed
+	// asked is what each provider said it runs, asked once per run of the job. Under mu.
+	asked map[string]*catalog.Entry
 }
 
 // measured is what a benchmark's sample keeps beside its job. Only the job's own run
@@ -146,13 +156,20 @@ func (a *active) waited(d time.Duration) {
 	}
 }
 
+// set takes on how a job runs now.
+func (a *active) set(prep *prepared) {
+	a.mu.Lock()
+	a.picks, a.owed = prep.picks, prep.owed
+	a.mu.Unlock()
+}
+
 func NewRunner(db *library.DB, st *store.Store, hub *events.Hub, providers *provider.Registry, cat *catalog.Catalog,
 	cfg func(project string) (*config.Loaded, error), log *slog.Logger, version string, maxInFlight int,
 ) *Runner {
 	return &Runner{
 		db: db, store: st, hub: hub, providers: providers, catalog: cat, config: cfg, log: log, version: version,
 		slots: make(chan struct{}, maxInFlight), looking: make(chan struct{}, max(1, maxInFlight/4)),
-		active: map[string]*active{}, claimed: map[string]bool{},
+		active: map[string]*active{}, claimed: map[string]bool{}, meters: map[*meter]bool{},
 	}
 }
 
@@ -272,7 +289,7 @@ func (r *Runner) submit(ctx context.Context, req SubmitRequest, m *measured) (*a
 	if len(views) == 0 {
 		job.Sheet = &library.Sheet{Mode: mode}
 	}
-	prep, err := r.prepare(ctx, cfg, job)
+	prep, err := r.prepare(ctx, cfg, job, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -288,7 +305,8 @@ func (r *Runner) submit(ctx context.Context, req SubmitRequest, m *measured) (*a
 // start makes a job active and runs it in the background.
 func (r *Runner) start(job *library.Job, prep *prepared, cfg *config.Loaded, m *measured) *active {
 	runCtx, cancel := context.WithCancel(context.Background())
-	a := &active{cancel: cancel, job: job, measured: m}
+	a := &active{cancel: cancel, job: job, measured: m, avoid: failed{}, asked: map[string]*catalog.Entry{}}
+	a.set(prep)
 	r.mu.Lock()
 	r.active[job.ID] = a
 	r.mu.Unlock()
@@ -326,11 +344,16 @@ func (r *Runner) putViews(views map[string]string) (map[string]string, error) {
 type prepared struct {
 	preset *presets.Preset
 	routes map[string]string
+	// picks are the stages' picks by stage id, and owed what each paid one is expected to cost.
+	picks map[string]Pick
+	owed  map[string]float64
 }
 
 // prepare resolves a job's preset against what the providers run now. A job whose views
-// change (cut out of a sheet) is prepared again, since its views can change the models picked.
-func (r *Runner) prepare(ctx context.Context, cfg *config.Loaded, job *library.Job) (*prepared, error) {
+// change (cut out of a sheet) is prepared again, since its views can change the models picked,
+// and so is one whose stage fails over to another provider. avoid holds the providers its
+// stages failed on.
+func (r *Runner) prepare(ctx context.Context, cfg *config.Loaded, job *library.Job, avoid failed) (*prepared, error) {
 	all, err := r.Presets(job.Project)
 	if err != nil {
 		return nil, err
@@ -353,7 +376,7 @@ func (r *Runner) prepare(ctx context.Context, cfg *config.Loaded, job *library.J
 		return nil, err
 	}
 	views := ordered(job.SideViews())
-	picks, preset, err := r.resolve(ctx, cfg, withOverrides.Active(), views)
+	picks, preset, err := r.resolve(ctx, cfg, withOverrides.Active(), views, avoid)
 	if err != nil {
 		return nil, err
 	}
@@ -366,7 +389,7 @@ func (r *Runner) prepare(ctx context.Context, cfg *config.Loaded, job *library.J
 				p.ModelName, strings.Join(p.NeedsViews, " and "), p.Use)
 		}
 	}
-	if err := r.withinBudget(ctx, cfg, picks); err != nil {
+	if err := r.withinBudget(ctx, cfg, picks, job.ID); err != nil {
 		return nil, err
 	}
 	byStage := map[string]Pick{}
@@ -386,11 +409,22 @@ func (r *Runner) prepare(ctx context.Context, cfg *config.Loaded, job *library.J
 			for _, v := range views {
 				if orig, ok := strings.CutSuffix(s.ID, "-"+v); ok && routes[s.ID] == "" {
 					routes[s.ID] = routes[orig]
+					copied := byStage[orig]
+					copied.Stage = s.ID
+					byStage[s.ID] = copied
 				}
 			}
 		}
 	}
-	return &prepared{preset: preset, routes: routes}, nil
+	prep := &prepared{preset: preset, routes: routes, picks: map[string]Pick{}, owed: map[string]float64{}}
+	for _, s := range preset.Stages {
+		p := byStage[s.ID]
+		prep.picks[s.ID] = p
+		if c := r.chargeOf(ctx, cfg, p); c.USD() > 0 {
+			prep.owed[s.ID] = c.USD()
+		}
+	}
+	return prep, nil
 }
 
 // setStages lists the stages a job will run, all queued.
@@ -399,7 +433,7 @@ func (r *Runner) setStages(ctx context.Context, j *library.Job, prep *prepared) 
 	for _, s := range prep.preset.Stages {
 		j.Stages = append(j.Stages, library.Stage{
 			ID: s.ID, Use: s.Use, Model: s.Model, Status: library.Queued, Provider: prep.routes[s.ID],
-			Outputs: []library.Output{},
+			ProviderLabel: prep.picks[s.ID].ProviderLabel, Outputs: []library.Output{},
 		})
 		j.EstimateSec += r.db.EstimateSeconds(ctx, s.Use, s.Model, prep.routes[s.ID])
 	}
@@ -428,18 +462,31 @@ func inputs(j *library.Job) map[string]string {
 }
 
 // fingerprints asks each provider the job routes to what it runs, once per job: keys depend on
-// it, so a new adapter or new weights on that provider never reuse outputs cached before.
-func (r *Runner) fingerprints(ctx context.Context, routes map[string]string) planner.Fingerprints {
-	asked := map[string]*catalog.Entry{}
+// it, so a new adapter or new weights on that provider never reuse outputs cached before. The
+// answer serves every plan of the run (looking for a sheet of views, cutting them out, the
+// stages), since each question is a round trip.
+func (r *Runner) fingerprints(ctx context.Context, a *active, routes map[string]string) planner.Fingerprints {
 	return func(s presets.Stage) (planner.Fingerprint, error) {
 		id := routes[s.ID]
-		got, ok := asked[id]
+		a.mu.Lock()
+		got, ok := a.asked[id]
+		a.mu.Unlock()
 		if !ok {
 			var err error
 			if got, err = r.askRuns(ctx, id); err != nil {
-				return planner.Fingerprint{}, err
+				// Nothing ran there yet in this job (it would have answered), so every stage it
+				// was to run may move.
+				var on []string
+				for stage, p := range routes {
+					if p == id {
+						on = append(on, stage)
+					}
+				}
+				return planner.Fingerprint{}, &stageError{provider: id, stages: on, down: true, err: err}
 			}
-			asked[id] = got
+			a.mu.Lock()
+			a.asked[id] = got
+			a.mu.Unlock()
 		}
 		if s.Model == "" {
 			return planner.Fingerprint{Adapter: got.Stages[s.Use]}, nil
@@ -464,43 +511,6 @@ func (r *Runner) askRuns(ctx context.Context, id string) (*catalog.Entry, error)
 		return last, nil
 	}
 	return nil, err
-}
-
-// candidates lists the providers a stage may run on, in order: explicit, then project
-// routing, then the priority list.
-func (r *Runner) candidates(cfg *config.Loaded, s presets.Stage) ([]string, error) {
-	want := s.Provider
-	if want == "auto" {
-		want = ""
-	}
-	if want == "" {
-		want = cfg.Routing.Stages[s.Use]
-	}
-	offline := func(p provider.Provider) bool {
-		return cfg.Routing.Policy != "offline-only" || p.Kind() == provider.KindLocal || p.Kind() == provider.KindEngine
-	}
-	if want != "" {
-		p, ok := r.providers.Get(want)
-		if !ok {
-			return nil, fmt.Errorf("stage %s routes to provider %q, which is not configured", s.ID, want)
-		}
-		if !offline(p) {
-			return nil, fmt.Errorf("stage %s: policy offline-only forbids provider %q", s.ID, want)
-		}
-		return []string{want}, nil
-	}
-	var ids []string
-	for _, id := range cfg.Routing.Priority {
-		p, ok := r.providers.Get(id)
-		if !ok || (p.Paid() && !cfg.Routing.AllowPaidFallback) || !offline(p) {
-			continue
-		}
-		ids = append(ids, id)
-	}
-	if len(ids) == 0 {
-		ids = []string{LocalProvider}
-	}
-	return ids, nil
 }
 
 func (r *Runner) Cancel(id string) bool {
@@ -579,7 +589,7 @@ func (r *Runner) AnswerSheet(ctx context.Context, id string, ans SheetAnswer) (*
 	if err != nil {
 		return nil, err
 	}
-	prep, err := r.prepare(ctx, cfg, job)
+	prep, err := r.prepare(ctx, cfg, job, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -693,7 +703,7 @@ func (r *Runner) sample(a *active) {
 // cuts the views out once they are chosen, and runs the plan.
 func (r *Runner) runJob(ctx context.Context, a *active, prep *prepared, cfg *config.Loaded) (*planner.Plan, error) {
 	if sh := snapshot(a).Sheet; sh != nil && !sh.Checked {
-		if err := r.look(ctx, a, prep); err != nil {
+		if err := r.withFallback(ctx, a, cfg, &prep, func(p *prepared) error { return r.look(ctx, a, p) }); err != nil {
 			return nil, err
 		}
 		sh := snapshot(a).Sheet
@@ -707,24 +717,53 @@ func (r *Runner) runJob(ctx context.Context, a *active, prep *prepared, cfg *con
 	}
 	defer release()
 	if job := snapshot(a); job.Sheet != nil && job.Sheet.Answer == library.SheetSplit && job.Views["front"] == "" {
-		if err := r.split(ctx, a, prep); err != nil {
+		if err := r.withFallback(ctx, a, cfg, &prep, func(p *prepared) error { return r.split(ctx, a, p) }); err != nil {
 			return nil, err
 		}
 		var err error
-		if prep, err = r.prepare(ctx, cfg, snapshot(a)); err != nil {
+		if prep, err = r.prepare(ctx, cfg, snapshot(a), a.avoid); err != nil {
 			return nil, err
 		}
-		r.update(a, func(j *library.Job) { r.setStages(ctx, j, prep) })
+		r.update(a, func(j *library.Job) {
+			before := slices.Clone(j.Stages)
+			r.setStages(ctx, j, prep)
+			for _, o := range before {
+				if s := stage(j, o.ID); s != nil {
+					s.Fallbacks = o.Fallbacks
+				}
+			}
+		})
+		a.set(prep)
 		r.hub.Publish(EvJobUpdated, snapshot(a))
 	}
 	// Keyed here, not at submit: asking a provider what it runs may start the local engine.
-	job := snapshot(a)
-	plan, err := r.plan(ctx, prep.preset, prep.routes, job)
-	if err != nil {
-		return nil, err
-	}
-	_, err = r.execute(ctx, a, plan)
+	var plan *planner.Plan
+	err = r.withFallback(ctx, a, cfg, &prep, func(p *prepared) error {
+		var err error
+		if plan, err = r.plan(ctx, a, p.preset, p.routes); err != nil {
+			return err
+		}
+		_, err = r.execute(ctx, a, plan)
+		return err
+	})
 	return plan, err
+}
+
+// withFallback runs step with how the job runs now. When a provider is down or runs out of
+// memory, the stages it failed go to the next place that can run them and step runs again,
+// until it succeeds or no provider can take over.
+func (r *Runner) withFallback(ctx context.Context, a *active, cfg *config.Loaded, prep **prepared, step func(*prepared) error) error {
+	for {
+		err := step(*prep)
+		if err == nil {
+			return nil
+		}
+		next, ok := r.fallback(ctx, a, cfg, *prep, err)
+		if !ok {
+			return err
+		}
+		*prep = next
+	}
 }
 
 // look looks for a sheet of views under its own limit, not a job slot: the app asks about a
@@ -772,8 +811,9 @@ func (r *Runner) setStatus(a *active, s library.Status) {
 	r.hub.Publish(EvJobUpdated, snapshot(a))
 }
 
-func (r *Runner) plan(ctx context.Context, preset *presets.Preset, routes map[string]string, job *library.Job) (*planner.Plan, error) {
-	plan, err := planner.Build(preset, inputs(job), job.Seed, r.fingerprints(ctx, routes))
+func (r *Runner) plan(ctx context.Context, a *active, preset *presets.Preset, routes map[string]string) (*planner.Plan, error) {
+	job := snapshot(a)
+	plan, err := planner.Build(preset, inputs(job), job.Seed, r.fingerprints(ctx, a, routes))
 	if err != nil {
 		return nil, err
 	}
@@ -812,7 +852,7 @@ func (r *Runner) inspect(ctx context.Context, a *active, prep *prepared) error {
 	}
 	detect := presets.Stage{ID: "sheet", Use: "views.detect", Inputs: []string{bg.ID}}
 	routes := map[string]string{bg.ID: prep.routes[bg.ID], detect.ID: prep.routes[bg.ID]}
-	plan, err := r.plan(ctx, &presets.Preset{ID: prep.preset.ID, Stages: []presets.Stage{bg, detect}}, routes, snapshot(a))
+	plan, err := r.plan(ctx, a, &presets.Preset{ID: prep.preset.ID, Stages: []presets.Stage{bg, detect}}, routes)
 	if err != nil {
 		return err
 	}
@@ -880,7 +920,7 @@ func (r *Runner) split(ctx context.Context, a *active, prep *prepared) error {
 	cut := presets.Stage{ID: "split", Use: "views.split", Inputs: []string{presets.InputImage, bg.ID},
 		Params: map[string]any{"views": wanted}}
 	routes := map[string]string{bg.ID: where, cut.ID: where}
-	plan, err := r.plan(ctx, &presets.Preset{ID: prep.preset.ID, Stages: []presets.Stage{bg, cut}}, routes, snapshot(a))
+	plan, err := r.plan(ctx, a, &presets.Preset{ID: prep.preset.ID, Stages: []presets.Stage{bg, cut}}, routes)
 	if err != nil {
 		return err
 	}
@@ -1053,33 +1093,67 @@ func (r *Runner) runBatch(ctx context.Context, a *active, plan *planner.Plan, id
 				return fmt.Errorf("stage %s: input %s has no output", s.ID, in)
 			}
 			if err := p.Upload(ctx, ref); err != nil {
-				return fmt.Errorf("uploading %s to %s: %w", ref, p.ID(), err)
+				if ctx.Err() != nil {
+					return ctx.Err()
+				}
+				err = fmt.Errorf("uploading %s to %s: %w", ref, p.ID(), err)
+				return &stageError{provider: p.ID(), stages: idsAt(plan, idx), down: unreachable(err), err: err}
 			}
 			spec.Inputs = append(spec.Inputs, ref)
 		}
 		req.Stages = append(req.Stages, spec)
 	}
 
+	// A paid batch starts only within the spending limits, and one billed by the second is
+	// stopped once it would pass one.
+	batch := make([]planner.Stage, len(idx))
+	for n, i := range idx {
+		batch[n] = plan.Stages[i]
+	}
+	charges := r.chargesFor(ctx, a, p, batch)
+	bctx, stop := context.WithCancelCause(ctx)
+	defer stop(nil)
+	if p.Paid() {
+		release, err := r.admit(ctx, a.job.Project, a.job.ID, charges, stop)
+		if err != nil {
+			return err
+		}
+		defer release()
+	}
+
 	evs := make(chan engineapi.Event, 64)
 	consumed := make(chan struct{})
+	billed := map[string]bool{}
 	go func() {
 		defer close(consumed)
 		for ev := range evs {
+			if ev.Type == "stage.billed" {
+				id, _ := ev.Data["stage"].(string)
+				billed[id] = true
+				continue
+			}
 			r.onEngineEvent(ctx, a, p, ev)
 		}
 	}()
-	running := time.Now()
-	run, err := p.Run(ctx, req, evs)
+	started := time.Now()
+	run, err := p.Run(bctx, req, evs)
 	if a.measured != nil {
-		a.measured.engine += time.Since(running)
+		a.measured.engine += time.Since(started)
 	}
 	close(evs)
 	<-consumed
+	if p.Paid() {
+		r.bill(a, p, batch, charges, run, billed, time.Since(started).Seconds())
+	}
+	if over, ok := context.Cause(bctx).(*BudgetError); ok && ctx.Err() == nil {
+		return over
+	}
 	if err != nil {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		return fmt.Errorf("provider %s: %w", p.ID(), err)
+		err = fmt.Errorf("provider %s: %w", p.ID(), err)
+		return &stageError{provider: p.ID(), stages: idsAt(plan, idx), down: unreachable(err), err: err}
 	}
 
 	for _, i := range idx {
@@ -1088,7 +1162,11 @@ func (r *Runner) runBatch(ctx context.Context, a *active, plan *planner.Plan, id
 		var outs []library.Output
 		for _, o := range st.Outputs {
 			if err := p.Download(ctx, o.Hash); err != nil {
-				return fmt.Errorf("downloading %s: %w", o.Hash, err)
+				if ctx.Err() != nil {
+					return ctx.Err()
+				}
+				return &stageError{provider: p.ID(), stages: idsAt(plan, idx), down: true,
+					err: fmt.Errorf("downloading %s: %w", o.Hash, err)}
 			}
 			outs = append(outs, library.Output{Hash: o.Hash, Kind: o.Kind, Preview: o.Preview})
 		}
@@ -1132,9 +1210,6 @@ func (r *Runner) runBatch(ctx context.Context, a *active, plan *planner.Plan, id
 				_ = r.db.CachePut(ctx, s.Key, outs, seconds)
 			}
 			_ = r.db.RecordTiming(ctx, s.Use, s.Model, p.ID(), seconds)
-			if p.Paid() && s.Model != "" {
-				r.recordCost(ctx, a.job.ID, s.ID, p.ID(), s.Model)
-			}
 		}
 	}
 	r.hub.Publish(EvJobUpdated, snapshot(a))
@@ -1146,9 +1221,36 @@ func (r *Runner) runBatch(ctx context.Context, a *active, plan *planner.Plan, id
 		if run.Status == "cancelled" {
 			return context.Canceled
 		}
-		return errors.New(msg)
+		// The stage that failed may fit on another provider; the ones after it never ran here.
+		failure := &stageError{provider: p.ID(), err: errors.New(msg), oom: outOfMemory.MatchString(msg)}
+		for _, s := range batch {
+			if st := run.Stages[s.ID]; st.Status == "failed" {
+				failure.stages = append(failure.stages, s.ID)
+				failure.oom = failure.oom || (st.Error != nil && outOfMemory.MatchString(*st.Error))
+			}
+		}
+		return failure
 	}
 	return nil
+}
+
+// idsAt are the ids of a plan's stages at idx.
+func idsAt(plan *planner.Plan, idx []int) []string {
+	out := make([]string, 0, len(idx))
+	for _, i := range idx {
+		out = append(out, plan.Stages[i].ID)
+	}
+	return out
+}
+
+// unreachable reports a run that failed for want of its provider: no connection, a timeout, a
+// server error. A provider that answered and refused the run would refuse it again.
+func unreachable(err error) bool {
+	var answered interface{ StatusCode() int }
+	if errors.As(err, &answered) {
+		return answered.StatusCode() >= 500
+	}
+	return true
 }
 
 func (r *Runner) onEngineEvent(ctx context.Context, a *active, p provider.Provider, ev engineapi.Event) {
@@ -1187,15 +1289,22 @@ func (r *Runner) onEngineEvent(ctx context.Context, a *active, p provider.Provid
 				})
 			}
 		}
+	case "stage.log":
+		// A hosted model's place in its queue: what the user sees while nothing else moves.
+		msg, _ := ev.Data["message"].(string)
+		r.update(a, func(j *library.Job) { j.Stages[idx].Note = msg })
+		r.hub.Publish(EvJobUpdated, snapshot(a))
 	case "stage.finished":
 		secs, _ := ev.Data["seconds"].(float64)
 		r.update(a, func(j *library.Job) {
-			j.Stages[idx].Status, j.Stages[idx].Seconds = library.Succeeded, secs
+			j.Stages[idx].Status, j.Stages[idx].Seconds, j.Stages[idx].Note = library.Succeeded, secs, ""
 		})
 		r.hub.Publish(EvJobUpdated, snapshot(a))
 	case "stage.failed":
 		msg, _ := ev.Data["error"].(string)
-		r.update(a, func(j *library.Job) { j.Stages[idx].Status, j.Stages[idx].Error = library.Failed, msg })
+		r.update(a, func(j *library.Job) {
+			j.Stages[idx].Status, j.Stages[idx].Error, j.Stages[idx].Note = library.Failed, msg, ""
+		})
 		r.hub.Publish(EvJobUpdated, snapshot(a))
 	}
 }
