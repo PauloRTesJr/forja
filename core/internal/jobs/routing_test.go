@@ -247,6 +247,27 @@ func TestPoliciesOrderTheProvidersThatCanRunAStage(t *testing.T) {
 	}
 }
 
+func TestOfflineOnlyKeepsStagesOffARentedPod(t *testing.T) {
+	r, _, _, st, img := setup(t)
+	r.providers.Add(newEngine(st, "pod", provider.KindEngine, true))
+	r.providers.Add(newEngine(st, "lan", provider.KindEngine, false))
+	ctx := context.Background()
+	project := withProject(t, "[routing]\npriority = [\"pod\", \"lan\", \"local\"]\npolicy = \"offline-only\"\nallow_paid_fallback = true\n")
+	j, err := r.Submit(ctx, SubmitRequest{Input: img, Preset: "draft", Project: project})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wait(t, r, j.ID)
+	// The pod is first in line and paid help is allowed, but it is someone else's cloud.
+	if got := providers(j)["shape"]; got != "lan" {
+		t.Fatalf("offline-only put the shape on %s", got)
+	}
+	routed := withProject(t, "[routing]\npolicy = \"offline-only\"\n[routing.stages]\nshape = \"pod\"\n")
+	if _, err := r.Submit(ctx, SubmitRequest{Input: img, Preset: "draft", Project: routed}); err == nil {
+		t.Fatal("offline-only accepted a stage routed to a rented pod")
+	}
+}
+
 func fallbacks(j *library.Job, id string) []library.Fallback {
 	if s := stage(j, id); s != nil {
 		return s.Fallbacks

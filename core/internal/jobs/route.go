@@ -27,9 +27,11 @@ func (f failed) add(stage, provider, reason string) {
 }
 
 // offline is false for providers the offline-only policy keeps a stage away from: anything
-// but this computer and the user's own engines.
+// but this computer and the user's own engines. A paid engine is a rented pod in someone's
+// cloud, so it is out too.
 func offline(cfg *config.Loaded, p provider.Provider) bool {
-	return cfg.Routing.Policy != "offline-only" || p.Kind() == provider.KindLocal || p.Kind() == provider.KindEngine
+	return cfg.Routing.Policy != "offline-only" || p.Kind() == provider.KindLocal ||
+		(p.Kind() == provider.KindEngine && !p.Paid())
 }
 
 // routing lists the configured providers in routing.priority that a stage may use: allowed by

@@ -38,7 +38,7 @@ Which model a stage gets is in [presets](presets.md#which-model-a-stage-uses). W
 | `prefer-local` (default) | This computer first | `routing.priority` as written: this computer, then the others for models it cannot run |
 | `cheapest` | Cheapest | By what the stage is expected to cost there: free providers first (they cost nothing), then paid ones by price. A paid provider whose cost cannot be worked out goes last |
 | `fastest` | Fastest | By the median of the last 20 times this stage type and model took on that provider. Providers where it never ran go after those where it did |
-| `offline-only` | Never leave this network | `routing.priority` as written, with only this computer and the engines you added as `engine` providers: other computers, and RunPod pods, which run an engine too. Never a model hub, a serverless endpoint or a ComfyUI |
+| `offline-only` | Never leave this network | `routing.priority` as written, with only this computer and your own engines (free `engine` providers: other computers you paired or added). Never a rented RunPod pod, which is paid and in someone else's cloud, a model hub, a serverless endpoint or a ComfyUI |
 
 Ties, and providers without a number, keep the `routing.priority` order. Policies sort only model stages: built-in stages go to the first provider in priority order that has them. Under `offline-only`, a stage routed by name to a provider the policy forbids refuses the job.
 
