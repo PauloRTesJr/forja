@@ -14,7 +14,6 @@ import glob
 import json
 import os
 import re
-import shutil
 import subprocess
 import sys
 import threading
@@ -43,10 +42,22 @@ _lock = threading.Lock()
 _probed: dict[str, tuple[int, float, str | None, str | None]] = {}  # path -> (size, mtime, version, error)
 
 
+def _on_path(name: str) -> str | None:
+    """The first `name` in an absolute PATH folder. Unlike shutil.which on Windows, never the
+    current folder: a blender.exe inside an unzipped asset pack must not run."""
+    for folder in os.environ.get("PATH", "").split(os.pathsep):
+        if not folder or not os.path.isabs(folder):
+            continue
+        exe = Path(folder) / name
+        if exe.is_file() and os.access(exe, os.X_OK):
+            return str(exe)
+    return None
+
+
 def candidates() -> list[str]:
     out = []
     # The program itself, not a .cmd or .bat wrapper of the same name.
-    on_path = shutil.which("blender.exe" if sys.platform == "win32" else "blender")
+    on_path = _on_path("blender.exe" if sys.platform == "win32" else "blender")
     if on_path:
         out.append(on_path)
     if sys.platform == "win32":

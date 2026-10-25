@@ -41,6 +41,20 @@ def test_blender_older_than_4_2_is_refused(tmp_path, monkeypatch):
     assert blender.find().version == "4.2.0"
 
 
+def test_a_blender_in_the_current_folder_is_never_picked(tmp_path, monkeypatch):
+    # An unzipped asset pack could hold a program named like Blender; only PATH folders count.
+    name = "blender.exe" if sys.platform == "win32" else "blender"
+    planted = tmp_path / "pack"
+    planted.mkdir()
+    (planted / name).write_bytes(b"")
+    (planted / name).chmod(0o755)
+    monkeypatch.chdir(planted)
+    monkeypatch.setenv("PATH", "." + blender.os.pathsep + str(tmp_path / "empty"))
+    assert blender._on_path(name) is None
+    monkeypatch.setenv("PATH", str(planted))
+    assert blender._on_path(name) == str(planted / name)
+
+
 def test_engines_without_blender_do_not_offer_its_stages(monkeypatch):
     def missing():
         raise blender.BlenderError("Blender 4.2 or newer was not found")

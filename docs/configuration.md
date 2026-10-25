@@ -9,6 +9,8 @@ Settings are TOML, read in layers. A later layer overrides an earlier one, key b
 5. Environment variables: `FORJA_<SECTION>__<KEY>`, with two underscores between levels, e.g. `FORJA_ENGINE__FIT_MODE=quality-first`.
 6. Flags and a job's own overrides.
 
+A project's `forja.toml` usually arrives with a repository someone else wrote, so Forja reads only what a project is for: `[project]`, `[routing]` (stages, priority, policy), `[models]` and `[presets]`. It ignores `[engine]`, `[blender]`, `[general]`, `[[providers]]` and `[prices]` there, because they name programs Forja runs, where it keeps data, and what paid providers cost. A project may tighten your spending limits but never loosen them: a `[routing.budget_usd]` value counts only when it is stricter than yours, and `routing.allow_paid_fallback = true` is ignored. Forja prints a warning for each key it ignores.
+
 The Settings screen shows only settings something reads, writes them to your `config.toml` without losing its comments, and says which layer set a value it cannot change. There is no settings import or export: settings describe one machine. The one export is **Copy diagnostics**.
 
 ```sh

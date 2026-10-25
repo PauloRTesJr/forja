@@ -122,6 +122,19 @@ func withProject(t *testing.T, toml string) string {
 	return dir
 }
 
+// withUser writes the user's own config.toml, the only layer that may add providers, price
+// them or allow paid fallback (a project file may not).
+func withUser(t *testing.T, toml string) {
+	t.Helper()
+	dir := os.Getenv("FORJA_CONFIG_DIR")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "config.toml"), []byte(toml), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func providers(j *library.Job) map[string]string {
 	out := map[string]string{}
 	for _, s := range j.Stages {
@@ -142,7 +155,8 @@ func TestAPinnedModelRunsWhereItIsReady(t *testing.T) {
 	lan := newEngine(st, "lan", provider.KindEngine, false)
 	lan.set(func(f *fakeProvider) { f.extra = []engineapi.Model{model("paint-cuda", "texture", 9)} })
 	r.providers.Add(lan)
-	project := withProject(t, "[routing]\npriority = [\"local\", \"lan\"]\n[models.stages]\ntexture = \"paint-cuda\"\n"+studio)
+	withUser(t, studio)
+	project := withProject(t, "[routing]\npriority = [\"local\", \"lan\"]\n[models.stages]\ntexture = \"paint-cuda\"\n")
 	j, err := r.Submit(context.Background(), SubmitRequest{Input: img, Preset: "mobile-prop", Project: project})
 	if err != nil {
 		t.Fatal(err)
@@ -165,7 +179,8 @@ func TestAStageThisComputerCannotRunGoesToOneThatCan(t *testing.T) {
 	fp.set(func(f *fakeProvider) { f.drop["stub-paint"] = true })
 	lan := newEngine(st, "lan", provider.KindEngine, false)
 	r.providers.Add(lan)
-	project := withProject(t, "[routing]\npriority = [\"local\", \"lan\"]\n"+studio)
+	withUser(t, studio)
+	project := withProject(t, "[routing]\npriority = [\"local\", \"lan\"]\n")
 	all, _ := r.Presets(project)
 	plan, err := r.Resolve(context.Background(), project, all["mobile-prop"], nil)
 	if err != nil {
@@ -197,7 +212,8 @@ func TestBuiltInStagesGoWhereTheyAreBuiltIn(t *testing.T) {
 	r, fp, _, _, img := setup(t)
 	withHub(t, r, fp, 0.4)
 	// The hub first: it has the shape model, but no built-in stages to frame or bake with.
-	project := withProject(t, "[routing]\npriority = [\"hub\", \"local\"]\nallow_paid_fallback = true\n")
+	withUser(t, "[routing]\nallow_paid_fallback = true\n")
+	project := withProject(t, "[routing]\npriority = [\"hub\", \"local\"]\n")
 	j, err := r.Submit(context.Background(), SubmitRequest{Input: img, Preset: "mobile-prop", Project: project})
 	if err != nil {
 		t.Fatal(err)
@@ -239,10 +255,11 @@ func TestPoliciesOrderTheProvidersThatCanRunAStage(t *testing.T) {
 	}
 	// With paid help allowed and the hub first in line, prefer-local follows the line; cheapest
 	// takes the free computer.
-	if got := shapeOn("priority = [\"hub\", \"local\"]\nallow_paid_fallback = true"); got != "hub" {
+	withUser(t, "[routing]\nallow_paid_fallback = true\n")
+	if got := shapeOn(`priority = ["hub", "local"]`); got != "hub" {
 		t.Fatalf("prefer-local put the shape on %s", got)
 	}
-	if got := shapeOn("priority = [\"hub\", \"local\"]\nallow_paid_fallback = true\npolicy = \"cheapest\""); got != LocalProvider {
+	if got := shapeOn("priority = [\"hub\", \"local\"]\npolicy = \"cheapest\""); got != LocalProvider {
 		t.Fatalf("cheapest put the shape on %s", got)
 	}
 }
@@ -252,7 +269,8 @@ func TestOfflineOnlyKeepsStagesOffARentedPod(t *testing.T) {
 	r.providers.Add(newEngine(st, "pod", provider.KindEngine, true))
 	r.providers.Add(newEngine(st, "lan", provider.KindEngine, false))
 	ctx := context.Background()
-	project := withProject(t, "[routing]\npriority = [\"pod\", \"lan\", \"local\"]\npolicy = \"offline-only\"\nallow_paid_fallback = true\n")
+	withUser(t, "[routing]\nallow_paid_fallback = true\n")
+	project := withProject(t, "[routing]\npriority = [\"pod\", \"lan\", \"local\"]\npolicy = \"offline-only\"\n")
 	j, err := r.Submit(ctx, SubmitRequest{Input: img, Preset: "draft", Project: project})
 	if err != nil {
 		t.Fatal(err)
@@ -282,7 +300,8 @@ func TestAProviderThatCannotBeReachedHandsItsStagesOn(t *testing.T) {
 	r.providers.Add(lan)
 	evs, unsubscribe := hub.Subscribe()
 	defer unsubscribe()
-	project := withProject(t, "[routing]\npriority = [\"lan\", \"local\"]\n"+studio)
+	withUser(t, studio)
+	project := withProject(t, "[routing]\npriority = [\"lan\", \"local\"]\n")
 	j, err := r.Submit(context.Background(), SubmitRequest{Input: img, Preset: "draft", Project: project})
 	if err != nil {
 		t.Fatal(err)
@@ -328,7 +347,8 @@ func TestAStageThatRunsOutOfMemoryMovesAlone(t *testing.T) {
 	local.with(func(e *engine) { e.oom["texture"] = true })
 	lan := newEngine(st, "lan", provider.KindEngine, false)
 	r.providers.Add(lan)
-	project := withProject(t, "[routing]\npriority = [\"local\", \"lan\"]\n"+studio)
+	withUser(t, studio)
+	project := withProject(t, "[routing]\npriority = [\"local\", \"lan\"]\n")
 	j, err := r.Submit(context.Background(), SubmitRequest{Input: img, Preset: "mobile-prop", Project: project})
 	if err != nil {
 		t.Fatal(err)
@@ -372,8 +392,9 @@ func TestAFailureNeverEscalatesToAPaidProviderUnlessAllowed(t *testing.T) {
 	if got := wait(t, r, j.ID); got.Status != library.Failed || !strings.Contains(got.Error, "out of memory") || cloud.stagesRun() != "" {
 		t.Fatalf("%s %q; the cloud ran %q", got.Status, got.Error, cloud.stagesRun())
 	}
+	withUser(t, "[routing]\nallow_paid_fallback = true\n")
 	j, err = r.Submit(context.Background(), SubmitRequest{Input: img, Preset: "mobile-prop",
-		Project: withProject(t, routing+"allow_paid_fallback = true\n")})
+		Project: withProject(t, routing)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -414,8 +435,8 @@ func TestASpendingLimitStopsAStageBilledByTheSecond(t *testing.T) {
 	cloud.with(func(e *engine) { e.slow = true })
 	r.providers.Add(cloud)
 	// A dollar a second, so a twentieth of a dollar goes in a moment.
-	project := withProject(t, "[routing.stages]\nshape = \"cloud\"\n[routing.budget_usd]\nper_job = 0.05\n"+rented+
-		"price_usd_per_second = 1.0\n")
+	withUser(t, rented+"price_usd_per_second = 1.0\n")
+	project := withProject(t, "[routing.stages]\nshape = \"cloud\"\n[routing.budget_usd]\nper_job = 0.05\n")
 	j, err := r.Submit(context.Background(), SubmitRequest{Input: img, Preset: "draft", Project: project})
 	if err != nil {
 		t.Fatal(err)
@@ -454,7 +475,8 @@ func TestAPaidStageDoesNotStartPastTheDailyLimit(t *testing.T) {
 	r.providers.Add(cloud)
 	// Nothing measured yet, so the job passes when it is queued; spending today does not.
 	_ = r.db.RecordCost(context.Background(), library.Cost{Job: "earlier", Stage: "shape", Provider: "cloud", Amount: 0.6, Currency: "USD"})
-	project := withProject(t, "[routing.stages]\nshape = \"cloud\"\n[routing.budget_usd]\nper_day = 0.5\n"+rented)
+	withUser(t, rented)
+	project := withProject(t, "[routing.stages]\nshape = \"cloud\"\n[routing.budget_usd]\nper_day = 0.5\n")
 	j, err := r.Submit(context.Background(), SubmitRequest{Input: img, Preset: "draft", Project: project})
 	if err != nil {
 		t.Fatal(err)

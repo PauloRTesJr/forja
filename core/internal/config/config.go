@@ -186,6 +186,9 @@ func Load(projectRoot string, overrides map[string]any) (*Loaded, error) {
 			return nil, err
 		}
 		files = append(files, layer.path)
+		if layer.name == "project" {
+			trustProject(m, merged, layer.path)
+		}
 		merge(merged, m, layer.name, "", sources)
 	}
 	merge(merged, envLayer(), "env", "", sources)
@@ -228,6 +231,56 @@ func readFile(path string) (map[string]any, error) {
 		}
 	}
 	return m, nil
+}
+
+// untrusted are the sections a project's forja.toml may not set: what Forja runs (the engine
+// command, Blender), where it keeps data, which providers exist and what they cost.
+var untrusted = []string{"engine", "blender", "general", "providers", "prices"}
+
+// trustProject keeps, of a project's forja.toml, only what a project is for (its name, export
+// folder and preset, routing by stage, model pins, preset overrides). A project file arrives
+// with a cloned repository or an unzipped pack, so it must not start programs or raise what
+// the user lets paid providers spend: a spending limit counts only when it is stricter than the
+// user's, and paid fallback can only be switched off. base is what the layers before it set.
+func trustProject(m, base map[string]any, path string) {
+	var dropped []string
+	for _, k := range untrusted {
+		if _, ok := m[k]; ok {
+			delete(m, k)
+			dropped = append(dropped, k)
+		}
+	}
+	routing, _ := m["routing"].(map[string]any)
+	baseRouting, _ := base["routing"].(map[string]any)
+	if v, ok := routing["allow_paid_fallback"].(bool); ok && v {
+		delete(routing, "allow_paid_fallback")
+		dropped = append(dropped, "routing.allow_paid_fallback")
+	}
+	budget, _ := routing["budget_usd"].(map[string]any)
+	baseBudget, _ := baseRouting["budget_usd"].(map[string]any)
+	for k, v := range budget {
+		limit, user := number(v), number(baseBudget[k])
+		// 0 means no limit, so a stricter limit is a positive one below the user's (or any,
+		// when the user has none).
+		if limit <= 0 || (user > 0 && limit > user) {
+			delete(budget, k)
+			dropped = append(dropped, "routing.budget_usd."+k)
+		}
+	}
+	if len(dropped) > 0 {
+		fmt.Fprintf(os.Stderr, "warning: %s: ignoring %s: only your own config.toml can set or loosen that\n",
+			path, strings.Join(dropped, ", "))
+	}
+}
+
+func number(v any) float64 {
+	switch n := v.(type) {
+	case int64:
+		return float64(n)
+	case float64:
+		return n
+	}
+	return 0
 }
 
 // envLayer maps FORJA_SECTION__KEY=value (double underscore between levels) into the tree.
