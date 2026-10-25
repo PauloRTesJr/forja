@@ -38,11 +38,8 @@ jobs:
           persist-credentials: false
       - uses: ./.github/actions/setup
       # Engine: ruff, format, mypy, pytest. Core: gofmt, vet, tests (-race where cgo works).
-      # App: eslint, tsc, vitest.
+      # App: eslint, tsc, vitest, and the electron-vite build (the only step that parses the CSS).
       - run: make check
-      - name: Build the app
-        working-directory: apps/desktop
-        run: pnpm build
 
   core-all:
     name: cross-compile the core

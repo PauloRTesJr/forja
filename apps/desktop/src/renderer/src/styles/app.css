@@ -3408,6 +3408,7 @@ button.view-slot:disabled {
 }
 .price-item .number .input {
   width: 130px;
+}
 /* Adding a cloud GPU or ComfyUI: a workflow per stage type, and what trying the settings found. */
 .workflow-picks {
   display: flex;
