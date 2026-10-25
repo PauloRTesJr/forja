@@ -1,0 +1,118 @@
+# The benchmark gate (spec, section 10): a release candidate fails when the default suite runs
+# more than 10% slower, or takes more than 10% more VRAM, than the last release on the same GPU.
+#
+# Self-hosted like gpu-nightly.yml, with the same guards: no pull_request trigger, and only where
+# the repository variable FORJA_GPU_RUNNER is "true". Each run uploads its results; release.yml
+# attaches a stable release's to the GitHub Release, which makes them the next baseline.
+# (The stub suite runs on pull requests as a hosted smoke test: ci.yml, bench-smoke.)
+name: Benchmark gate
+
+on:
+  push:
+    tags: ["v*-rc*"]
+  workflow_dispatch:
+    inputs:
+      baseline:
+        description: Release tag whose results to compare against (default the latest stable release)
+        required: false
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  gate:
+    if: >-
+      vars.FORJA_GPU_RUNNER == 'true' &&
+      github.event_name != 'pull_request' && github.event_name != 'pull_request_target'
+    runs-on: [self-hosted, linux, gpu]
+    timeout-minutes: 360
+    env:
+      FORJA_E2E_MODELS: real
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        with:
+          node: "false"
+      - run: make core
+
+      - name: Data folder
+        env:
+          DATA_DIR: ${{ vars.FORJA_GPU_DATA_DIR }}
+        run: |
+          data=${DATA_DIR:-$HOME/.cache/forja-ci}
+          mkdir -p "$data"
+          rm -rf "$data/store" "$data/logs" "$data"/library.db*
+          {
+            echo "FORJA_E2E_DATA=$data"
+            echo "FORJA_E2E_OUT=$RUNNER_TEMP/e2e"
+            echo "BENCH=$RUNNER_TEMP/bench"
+          } >>"$GITHUB_ENV"
+
+      - name: Install the models (idempotent; verifies pinned hashes)
+        env:
+          MODELS: ${{ vars.FORJA_GPU_MODELS || 'birefnet triposg hunyuan3d2-paint' }}
+        run: |
+          # shellcheck disable=SC2086 # one model id per word
+          bash scripts/e2e.sh forja models install $MODELS --accept-license
+          bash scripts/e2e.sh forja models ls
+
+      - name: Reference images
+        env:
+          REFS_DIR: ${{ vars.FORJA_GPU_REFS_DIR }}
+        run: |
+          # The suite reads bench/m0/refs, which git ignores and checkout empties: the CC0 set
+          # lives on the runner.
+          if [ -z "$REFS_DIR" ]; then
+            echo "::error::Set the repository variable FORJA_GPU_REFS_DIR to the runner's folder of reference images."
+            exit 1
+          fi
+          mkdir -p bench/m0/refs
+          cp -R "$REFS_DIR"/. bench/m0/refs/
+
+      - name: Run the default suite
+        run: bash scripts/e2e.sh forja bench --suite bench/suites/default.yaml --json --out "$BENCH/current"
+
+      - name: Fetch the baseline
+        id: baseline
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.baseline }}
+        run: |
+          tag=${TAG:-$(gh release list --repo "$GITHUB_REPOSITORY" --exclude-pre-releases --exclude-drafts \
+            --limit 1 --json tagName --jq '.[0].tagName // empty')}
+          if [ -z "$tag" ]; then
+            echo "::notice::No stable release yet: nothing to compare against; these results start the baseline."
+            exit 0
+          fi
+          mkdir -p "$BENCH/baseline"
+          if ! gh release download "$tag" --repo "$GITHUB_REPOSITORY" --pattern bench-results.tar.gz --dir "$BENCH"; then
+            echo "::warning::$tag has no bench-results.tar.gz: nothing to compare against."
+            exit 0
+          fi
+          tar -xzf "$BENCH/bench-results.tar.gz" -C "$BENCH/baseline"
+          echo "dir=$BENCH/baseline" >>"$GITHUB_OUTPUT"
+          echo "Comparing against $tag"
+
+      - name: Compare (fails on a regression over 10%)
+        if: steps.baseline.outputs.dir != ''
+        run: bash scripts/e2e.sh forja bench compare "$BENCH/baseline/bench.json" "$BENCH/current/bench.json" --threshold 10
+
+      - name: Pack the results
+        if: always()
+        run: |
+          [ -d "$BENCH/current" ] || exit 0
+          tar -czf "$RUNNER_TEMP/bench-results.tar.gz" -C "$BENCH/current" .
+      - if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          # release.yml looks this artifact up by name.
+          name: bench-results
+          path: ${{ runner.temp }}/bench-results.tar.gz
+          if-no-files-found: ignore
+          retention-days: 90

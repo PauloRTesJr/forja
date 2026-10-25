@@ -7,6 +7,7 @@ Toolchain checks matter only at install time: nothing compiles while models run.
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import sys
@@ -15,7 +16,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from forja_engine import families, toolchain
+from forja_engine import devices, families, toolchain
 from forja_engine.registry import Manifest
 
 GB = 1 << 30
@@ -112,14 +113,33 @@ def driver_version() -> str | None:
 
 
 def check_runs_here(m: Manifest, fam: families.Family | None, lane: str) -> Check | None:
-    if fam is None or lane in fam.lanes:
+    if fam is None or (lane in fam.lanes and m.runs_on_lane(lane)):
         return None
+    lanes = [x for x in fam.lanes if m.runs_on_lane(x)] or list(fam.lanes)
+    if devices.translated() and "mps" in lanes:
+        # An Intel build under Rosetta sees no Apple GPU, though the Mac has one.
+        return Check(
+            id=f"runs-here:{m.id}",
+            label=f"{m.name} on this computer",
+            ok=False,
+            found="an Intel build of the engine, running under Rosetta",
+            need="the Apple Silicon build",
+            why=f"{m.name} runs on the Apple GPU, which only an Apple Silicon build can use.",
+            fix=Fix(
+                label="Install the Apple Silicon build",
+                steps=(
+                    "Install Forja for Apple Silicon (the arm64 DMG) in place of this copy.",
+                    "If uv came from an Intel Homebrew (in /usr/local), install uv for Apple Silicon too.",
+                ),
+            ),
+            models=(m.id,),
+        )
     return Check(
         id=f"runs-here:{m.id}",
         label=f"{m.name} on this computer",
         ok=False,
         found=lane_label(lane),
-        need=" or ".join(lane_label(x) for x in fam.lanes),
+        need=" or ".join(lane_label(x) for x in lanes),
         why=f"{m.name} has no build for this computer's hardware.",
         fix=Fix(
             label="Run it on another computer",
@@ -317,6 +337,70 @@ def check_disk(models: list[Manifest], models_dir: Path) -> Check:
     )
 
 
+def check_blender() -> Check:
+    """Blender, for the built-in stages that run in it (quad remesh, Smart UV Project)."""
+    from forja_engine import blender
+
+    try:
+        found, ok = blender.find(), True
+        found_text = f"{found.version} at {found.path}"
+    except blender.BlenderError as e:
+        ok, found_text = False, "not found" if "was not found" in str(e) else str(e)
+    need = f"Blender {blender.MIN_VERSION[0]}.{blender.MIN_VERSION[1]} or newer"
+    url = "https://www.blender.org/download/"
+    if not ok and os.environ.get(blender.ENV, "").strip():
+        # A Blender named in the settings is the only one tried, so installing another won't help.
+        fix = Fix(
+            label="Fix Blender's path",
+            steps=(
+                "In Settings, under Blender, pick the Blender program, or clear the path to use the "
+                "installed one.",
+                "From the command line: forja config unset blender.path",
+            ),
+        )
+    elif sys.platform == "win32":
+        # Blender's installer is per machine, so Windows asks for permission.
+        fix = Fix(
+            label="Install Blender",
+            command=_winget("--id", "BlenderFoundation.Blender", "-e", "--silent"),
+            url=url,
+            steps=("Download Blender from blender.org and run its installer.",),
+            admin=True,
+        )
+    elif sys.platform == "darwin":
+        fix = Fix(
+            label="Get Blender",
+            url=url,
+            steps=("Download Blender for your Mac from blender.org and drag it to Applications.",),
+        )
+    else:
+        fix = Fix(
+            label="Get Blender",
+            url=url,
+            steps=("Run: sudo snap install blender --classic", "Or download it from blender.org."),
+        )
+    return Check(
+        id="blender",
+        label="Blender",
+        ok=ok,
+        found=found_text,
+        need=need,
+        why="Quad remesh and Smart UV Project run in Blender, in the background.",
+        fix=fix,
+    )
+
+
+def for_stages(stages: Iterable[str]) -> list[Check]:
+    """What this machine needs to run built-in stages of these types itself: today, Blender for
+    the stages backed by it. Stages that need nothing more give no checks."""
+    from forja_engine.adapters.builtin import BUILTINS
+
+    wanted = set(stages)
+    if any(getattr(cls, "blender", False) for task, cls in BUILTINS.items() if str(task) in wanted):
+        return [check_blender()]
+    return []
+
+
 def for_models(manifests: list[Manifest], models_dir: Path, lane: str | None = None) -> list[Check]:
     """Every check the given models need on this machine, failing ones first."""
     lane = lane or families.detect_lane()
@@ -325,7 +409,7 @@ def for_models(manifests: list[Manifest], models_dir: Path, lane: str | None = N
     fams: dict[str, families.Family] = {}
     for m in real:
         try:
-            fams[m.family] = families.load(m.family)
+            fams[m.family] = families.load(m.family, m.family_dir)
         except FileNotFoundError:
             continue
     here = []
@@ -341,7 +425,7 @@ def for_models(manifests: list[Manifest], models_dir: Path, lane: str | None = N
     if lane == "cuda":
         on_cuda = [m for m in here if m.id in cuda] or here
         out.append(check_driver(on_cuda, cuda or {"": "cu124"}))
-    builders = [m for m in here if m.id in cuda and fams[m.family].build]
+    builders = [m for m in here if m.id in cuda and fams[m.family].builds(lane)]
     if builders:
         want = max(toolchain.torch_cuda(cuda[m.id]) for m in builders)
         out.append(check_cuda(builders, want))

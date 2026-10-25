@@ -1,4 +1,4 @@
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import { app, BrowserWindow, clipboard, dialog, ipcMain, nativeImage, nativeTheme, shell, type NativeImage } from 'electron'
 import iconIco from '../../build/icon.ico?asset'
 import iconPng from '../../build/icon.png?asset'
@@ -65,6 +65,15 @@ ipcMain.handle('dialog:pickFolder', async () => {
   const res = await dialog.showOpenDialog(win!, { properties: ['openDirectory', 'createDirectory'] })
   return res.canceled ? null : res.filePaths[0]
 })
+ipcMain.handle('dialog:pickFile', async (_e, label: string, extensions: string[]) => {
+  const res = await dialog.showOpenDialog(win!, {
+    properties: ['openFile'],
+    filters: [
+      { name: String(label), extensions: (Array.isArray(extensions) ? extensions : []).map((x) => String(x).replace(/^\./, '')) },
+    ],
+  })
+  return res.canceled ? null : res.filePaths[0]
+})
 ipcMain.handle('dialog:saveFile', async (_e, name: string, ext: string, label: string) => {
   const extension = String(ext).replace(/^\./, '')
   const res = await dialog.showSaveDialog(win!, {
@@ -75,7 +84,6 @@ ipcMain.handle('dialog:saveFile', async (_e, name: string, ext: string, label: s
   return res.canceled || !res.filePath ? null : res.filePath
 })
 ipcMain.handle('shell:showItem', (_e, path: string) => shell.showItemInFolder(path))
-
 // The renderer never names a path to open: these ask the core where its files are.
 async function coreJSON<T>(method: string, path: string): Promise<T> {
   const res = await core.request(method, path, {})
@@ -93,6 +101,17 @@ ipcMain.handle('settings:openConfig', async () => {
 ipcMain.handle('settings:openData', async () => {
   const { data_dir } = await coreJSON<{ data_dir: string }>('POST', '/v1/settings/file')
   const err = await shell.openPath(data_dir)
+  if (err) throw new Error(err)
+})
+ipcMain.handle('bench:openReport', async (_e, id: string) => {
+  const { report } = await coreJSON<{ report?: string }>('GET', `/v1/bench/${encodeURIComponent(String(id))}`)
+  if (!report) throw new Error('this benchmark has no report yet')
+  // The core names the report after the result's id; the OS opens whatever it is given with
+  // the program its type has, so anything else is refused.
+  if (!/^[0-9A-HJKMNP-TV-Z]{26}$/.test(String(id)) || basename(report) !== `${String(id)}.html`) {
+    throw new Error('this benchmark has no report')
+  }
+  const err = await shell.openPath(report)
   if (err) throw new Error(err)
 })
 ipcMain.handle('clipboard:write', (_e, text: string) => clipboard.writeText(String(text)))

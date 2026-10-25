@@ -22,6 +22,21 @@ import (
 	"forja/internal/secrets"
 )
 
+// A stage that made a stand-in for what it was asked says so while the job is followed, and in jobs show.
+func TestAStagesNoteOnItsOutputIsPrinted(t *testing.T) {
+	h := newHarness(t)
+	h.eng.set(func(e *fakeEngine) { e.notes = map[string]string{"shape": "made a stand-in"} })
+	img := h.image("chest.png")
+	if out := h.ok("generate", img, "--preset", "draft"); !strings.Contains(out, "shape                note: made a stand-in") {
+		t.Fatalf("generate printed:\n%s", out)
+	}
+	var jobsList []*library.Job
+	h.okJSON(&jobsList, "jobs", "ls")
+	if out := h.ok("jobs", "show", jobsList[0].ID); !strings.Contains(out, "\nshape: made a stand-in\n") {
+		t.Fatalf("jobs show:\n%s", out)
+	}
+}
+
 func TestGenerateFollowsAJobToAnAssetTheLibraryCanSave(t *testing.T) {
 	h := newHarness(t)
 	img := h.image("chest.png")
@@ -74,6 +89,34 @@ func must[T any](v T, err error) T {
 		panic(err)
 	}
 	return v
+}
+
+func TestBlenderSwitchesSayWhyTheyCannotRunAndRefuseTheJob(t *testing.T) {
+	h := newHarness(t)
+	img := h.image("chest.png")
+	r := h.cli("", "generate", img, "--preset", "hero-character", "--dry-run")
+	for _, want := range []string{
+		"Quad remesh with Blender (remesh.enabled)",
+		"remesh cannot be turned on now: Blender 4.2 or newer was not found",
+		"uv cannot be turned on now: Blender 4.2 or newer was not found",
+		"see what it needs: forja models checks --stage mesh.remesh",
+	} {
+		if !strings.Contains(r.out, want) {
+			t.Fatalf("dry run lacks %q:\n%s", want, r.out)
+		}
+	}
+	var plan api.PresetView
+	h.okJSON(&plan, "presets", "show", "hero-character")
+	if plan.Unavailable["remesh"] == "" || plan.Unavailable["match"] != "" || !plan.Install["remesh"].Software {
+		t.Fatalf("unavailable %v, install %v", plan.Unavailable, plan.Install)
+	}
+	if r := h.cli("", "models", "checks", "--stage", "mesh.remesh"); r.code != 0 {
+		t.Fatalf("checks --stage: exit %d: %s", r.code, r.err)
+	}
+	r = h.cli("", "generate", img, "--preset", "hero-character", "--with", "remesh")
+	if r.code == 0 || !strings.Contains(r.err, "no provider can run mesh.remesh: Blender 4.2 or newer was not found") {
+		t.Fatalf("exit %d: %s", r.code, r.err)
+	}
 }
 
 func TestADryRunShowsThePlanAndQueuesNothing(t *testing.T) {

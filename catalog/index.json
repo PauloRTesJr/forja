@@ -1,0 +1,231 @@
+{
+  "version": 1,
+  "models": [
+    {
+      "id": "birefnet-lite",
+      "name": "BiRefNet lite",
+      "family": "birefnet",
+      "tasks": [
+        "background-removal"
+      ],
+      "license": {
+        "spdx": "MIT",
+        "commercial": true,
+        "restrictions": []
+      },
+      "adapter_version": "1",
+      "vram_gb": 0.8,
+      "disk_gb": 3.1,
+      "rank": 5,
+      "stub": false,
+      "manifest": "engine/src/forja_engine/manifests/birefnet-lite.yaml",
+      "sha256": "a2bb0cad6ea6db47ef3755eb9d407596708d10b731c8a2c4f17db905c1a67b52"
+    },
+    {
+      "id": "birefnet",
+      "name": "BiRefNet (general)",
+      "family": "birefnet",
+      "tasks": [
+        "background-removal"
+      ],
+      "license": {
+        "spdx": "MIT",
+        "commercial": true,
+        "restrictions": []
+      },
+      "adapter_version": "1",
+      "vram_gb": 8.0,
+      "disk_gb": 3.8,
+      "rank": 10,
+      "stub": false,
+      "manifest": "engine/src/forja_engine/manifests/birefnet.yaml",
+      "sha256": "8a51840872a72b525dbce951be0d1aae63f36275d6fea92fe6fa140fa1029382"
+    },
+    {
+      "id": "hunyuan3d2-mv",
+      "name": "Hunyuan3D-2mv (turbo)",
+      "family": "hunyuan3d2",
+      "tasks": [
+        "shape"
+      ],
+      "license": {
+        "spdx": "LicenseRef-Tencent-Hunyuan-3D-2.0-Community",
+        "commercial": true,
+        "restrictions": [
+          "not licensed in the EU, UK or South Korea",
+          "separate license above 1M monthly active users"
+        ]
+      },
+      "adapter_version": "1",
+      "vram_gb": 6.0,
+      "disk_gb": 5.0,
+      "rank": 5,
+      "stub": false,
+      "manifest": "engine/src/forja_engine/manifests/hunyuan3d2-mv.yaml",
+      "sha256": "761f2dd912e22a871409dc81cbdaae1697bc51ab78a72e586b27eb1510ec4e7c"
+    },
+    {
+      "id": "hunyuan3d2-paint",
+      "name": "Hunyuan3D-2 Paint (turbo)",
+      "family": "hunyuan3d2",
+      "tasks": [
+        "texture"
+      ],
+      "license": {
+        "spdx": "LicenseRef-Tencent-Hunyuan-3D-2.0-Community",
+        "commercial": true,
+        "restrictions": [
+          "not licensed in the EU, UK or South Korea",
+          "separate license above 1M monthly active users"
+        ]
+      },
+      "adapter_version": "2",
+      "vram_gb": 12.5,
+      "disk_gb": 23.1,
+      "rank": 10,
+      "stub": false,
+      "manifest": "engine/src/forja_engine/manifests/hunyuan3d2-paint.yaml",
+      "sha256": "21ff9fe4077f6fd937cb177e1f328051bfb4217f2361cb7c2aa869d806655e82"
+    },
+    {
+      "id": "skintokens",
+      "name": "SkinTokens (TokenRig)",
+      "family": "skintokens",
+      "tasks": [
+        "rig"
+      ],
+      "license": {
+        "spdx": "MIT",
+        "commercial": true,
+        "restrictions": []
+      },
+      "adapter_version": "1",
+      "vram_gb": 14.0,
+      "disk_gb": 8.1,
+      "rank": 10,
+      "stub": false,
+      "manifest": "engine/src/forja_engine/manifests/skintokens.yaml",
+      "sha256": "3ae969dd8634d2c70d5cb893f927aa0e938e1ccf21cb37535fe4efda52175987"
+    },
+    {
+      "id": "stub-background",
+      "name": "Stub background removal",
+      "family": "stub",
+      "tasks": [
+        "background-removal"
+      ],
+      "license": {
+        "spdx": "Apache-2.0",
+        "commercial": true,
+        "restrictions": []
+      },
+      "adapter_version": "1",
+      "vram_gb": 0.0,
+      "disk_gb": 0.0,
+      "rank": 0,
+      "stub": true,
+      "manifest": "engine/src/forja_engine/manifests/stub-background.yaml",
+      "sha256": "8f5342994b6495fd438146de6fba9ee2e811e4986adcdcd27b71d5b4009db985"
+    },
+    {
+      "id": "stub-paint",
+      "name": "Stub paint (front projection)",
+      "family": "stub",
+      "tasks": [
+        "texture"
+      ],
+      "license": {
+        "spdx": "Apache-2.0",
+        "commercial": true,
+        "restrictions": []
+      },
+      "adapter_version": "1",
+      "vram_gb": 0.0,
+      "disk_gb": 0.0,
+      "rank": 0,
+      "stub": true,
+      "manifest": "engine/src/forja_engine/manifests/stub-paint.yaml",
+      "sha256": "23771906f3ce931f6de452dba9790934809a3d58fd1a28b5975582b1a10456f5"
+    },
+    {
+      "id": "stub-rig",
+      "name": "Stub rig (template skeleton)",
+      "family": "stub",
+      "tasks": [
+        "rig"
+      ],
+      "license": {
+        "spdx": "Apache-2.0",
+        "commercial": true,
+        "restrictions": []
+      },
+      "adapter_version": "1",
+      "vram_gb": 0.0,
+      "disk_gb": 0.0,
+      "rank": 0,
+      "stub": true,
+      "manifest": "engine/src/forja_engine/manifests/stub-rig.yaml",
+      "sha256": "fc2faa1d5dc71427ce690d6760fa18efd73a6fc94c652bfc221fd8eb94064e90"
+    },
+    {
+      "id": "stub-shape",
+      "name": "Stub shape (silhouette inflation)",
+      "family": "stub",
+      "tasks": [
+        "shape"
+      ],
+      "license": {
+        "spdx": "Apache-2.0",
+        "commercial": true,
+        "restrictions": []
+      },
+      "adapter_version": "1",
+      "vram_gb": 0.0,
+      "disk_gb": 0.0,
+      "rank": 0,
+      "stub": true,
+      "manifest": "engine/src/forja_engine/manifests/stub-shape.yaml",
+      "sha256": "d7c1ba834735d035387c17850b30a8e64f8cd231b47f138a6fa8b551c2f52a6f"
+    },
+    {
+      "id": "triposg",
+      "name": "TripoSG",
+      "family": "triposg",
+      "tasks": [
+        "shape"
+      ],
+      "license": {
+        "spdx": "MIT",
+        "commercial": true,
+        "restrictions": []
+      },
+      "adapter_version": "1",
+      "vram_gb": 8.0,
+      "disk_gb": 12.5,
+      "rank": 10,
+      "stub": false,
+      "manifest": "engine/src/forja_engine/manifests/triposg.yaml",
+      "sha256": "2a50c2c67f64b86dcf8ed980d80da8ff8a6e8781a6d518b847321063f7cdfecc"
+    },
+    {
+      "id": "unirig",
+      "name": "UniRig",
+      "family": "unirig",
+      "tasks": [
+        "rig"
+      ],
+      "license": {
+        "spdx": "MIT",
+        "commercial": true,
+        "restrictions": []
+      },
+      "adapter_version": "1",
+      "vram_gb": 8.7,
+      "disk_gb": 10.7,
+      "rank": 5,
+      "stub": false,
+      "manifest": "engine/src/forja_engine/manifests/unirig.yaml",
+      "sha256": "72f4fdce46c985b4b20fe93cdcc138ead43a0e4c79a48d8640f397b68daca811"
+    }
+  ]
+}

@@ -30,13 +30,15 @@ type Config struct {
 	Models    Models                    `toml:"models" json:"models"`
 	Blender   Blender                   `toml:"blender" json:"blender"`
 	Presets   map[string]PresetOverride `toml:"presets" json:"presets"`
+	Bench     Bench                     `toml:"bench" json:"bench"`
+	// Prices is the price table, by entry id: a provider's time, or a hosted model by its id.
+	Prices map[string]Price `toml:"prices" json:"prices"`
 }
 
 type General struct {
-	Language   string `toml:"language" json:"language"`
-	DataDir    string `toml:"data_dir" json:"data_dir"`
-	ModelsDir  string `toml:"models_dir" json:"models_dir"`
-	CacheMaxGB int64  `toml:"cache_max_gb" json:"cache_max_gb"`
+	Language  string `toml:"language" json:"language"`
+	DataDir   string `toml:"data_dir" json:"data_dir"`
+	ModelsDir string `toml:"models_dir" json:"models_dir"`
 }
 
 type Engine struct {
@@ -81,6 +83,15 @@ type Provider struct {
 	Paid              bool    `toml:"paid" json:"paid"`
 	// Models are the hub models the user added (endpoint ids), for kind = "api" providers.
 	Models []string `toml:"models" json:"models,omitempty"`
+	// Price names the price table entry for the provider's time, when price_usd_per_second is unset.
+	Price string `toml:"price" json:"price,omitempty"`
+	// Volume and Region name a RunPod endpoint's network volume and its datacenter (EU-RO-1),
+	// whose S3 API moves artifacts by hash; the volume's S3 key is in the keychain.
+	Volume string `toml:"volume" json:"volume,omitempty"`
+	Region string `toml:"region" json:"region,omitempty"`
+	// Workflows maps stage types to ComfyUI workflow files (API format), relative to the config
+	// folder, for kind = "comfyui" providers.
+	Workflows map[string]string `toml:"workflows" json:"workflows,omitempty"`
 }
 
 type Project struct {
@@ -104,6 +115,15 @@ type Models struct {
 type Blender struct {
 	// Path is Blender's executable; empty means look for it where installers put it.
 	Path string `toml:"path" json:"path"`
+}
+
+// Bench sets what `forja bench compare` counts as a regression.
+type Bench struct {
+	// ThresholdPct is the growth in a stage's time or peak VRAM, in percent, that fails.
+	ThresholdPct float64 `toml:"threshold_pct" json:"threshold_pct"`
+	// Smaller changes are noise whatever their percent: a 20 ms stage that takes 30 ms once.
+	MinSeconds float64 `toml:"min_seconds" json:"min_seconds"`
+	MinVRAMMB  float64 `toml:"min_vram_mb" json:"min_vram_mb"`
 }
 
 // PresetOverride maps "stage.param" to a value, e.g. "lowpoly.target_tris" = 3000.
@@ -165,6 +185,9 @@ func Load(projectRoot string, overrides map[string]any) (*Loaded, error) {
 			return nil, err
 		}
 		files = append(files, layer.path)
+		if layer.name == "project" {
+			trustProject(m, merged, layer.path)
+		}
 		merge(merged, m, layer.name, "", sources)
 	}
 	merge(merged, envLayer(), "env", "", sources)
@@ -207,6 +230,56 @@ func readFile(path string) (map[string]any, error) {
 		}
 	}
 	return m, nil
+}
+
+// untrusted are the sections a project's forja.toml may not set: what Forja runs (the engine
+// command, Blender), where it keeps data, which providers exist and what they cost.
+var untrusted = []string{"engine", "blender", "general", "providers", "prices"}
+
+// trustProject keeps, of a project's forja.toml, only what a project is for (its name, export
+// folder and preset, routing by stage, model pins, preset overrides). A project file arrives
+// with a cloned repository or an unzipped pack, so it must not start programs or raise what
+// the user lets paid providers spend: a spending limit counts only when it is stricter than the
+// user's, and paid fallback can only be switched off. base is what the layers before it set.
+func trustProject(m, base map[string]any, path string) {
+	var dropped []string
+	for _, k := range untrusted {
+		if _, ok := m[k]; ok {
+			delete(m, k)
+			dropped = append(dropped, k)
+		}
+	}
+	routing, _ := m["routing"].(map[string]any)
+	baseRouting, _ := base["routing"].(map[string]any)
+	if v, ok := routing["allow_paid_fallback"].(bool); ok && v {
+		delete(routing, "allow_paid_fallback")
+		dropped = append(dropped, "routing.allow_paid_fallback")
+	}
+	budget, _ := routing["budget_usd"].(map[string]any)
+	baseBudget, _ := baseRouting["budget_usd"].(map[string]any)
+	for k, v := range budget {
+		limit, user := number(v), number(baseBudget[k])
+		// 0 means no limit, so a stricter limit is a positive one below the user's (or any,
+		// when the user has none).
+		if limit <= 0 || (user > 0 && limit > user) {
+			delete(budget, k)
+			dropped = append(dropped, "routing.budget_usd."+k)
+		}
+	}
+	if len(dropped) > 0 {
+		fmt.Fprintf(os.Stderr, "warning: %s: ignoring %s: only your own config.toml can set or loosen that\n",
+			path, strings.Join(dropped, ", "))
+	}
+}
+
+func number(v any) float64 {
+	switch n := v.(type) {
+	case int64:
+		return float64(n)
+	case float64:
+		return n
+	}
+	return 0
 }
 
 // envLayer maps FORJA_SECTION__KEY=value (double underscore between levels) into the tree.
@@ -284,7 +357,7 @@ func (c *Config) validate() error {
 		}
 		seen[p.ID] = true
 	}
-	return nil
+	return c.validatePrices()
 }
 
 // SortedSources lists "key = layer" lines for display.

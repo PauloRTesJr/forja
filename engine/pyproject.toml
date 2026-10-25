@@ -1,6 +1,6 @@
 [project]
 name = "forja-engine"
-version = "0.1.0"
+version = "0.2.0"
 description = "Forja inference engine: runs stage batches on local devices"
 license = "Apache-2.0"
 requires-python = ">=3.11"
@@ -20,6 +20,8 @@ dependencies = [
     "huggingface-hub>=0.27",
     "embreex>=4.4 ; (platform_machine == 'x86_64' and sys_platform == 'linux') or sys_platform == 'darwin' or sys_platform == 'win32'",
     "networkx>=3.4",
+    "forja-engine-sdk==0.2.0",
+    "packaging>=24",
 ]
 
 [project.scripts]
@@ -32,19 +34,25 @@ dev = [
     "httpx>=0.28",
     "ruff>=0.8",
     "mypy>=1.13",
+    "jsonschema>=4.23",
 ]
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
+# The SDK is its own distribution (engine/sdk), so adapters can depend on the contract alone.
+[tool.uv.sources]
+forja-engine-sdk = { path = "sdk", editable = true }
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/forja_engine"]
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = ["tests", "../templates/adapter/tests"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
+markers = ["mps: needs an Apple Silicon Mac; skipped elsewhere, selected by the Apple Silicon workflow"]
 
 [tool.ruff]
 line-length = 110

@@ -1,0 +1,5 @@
+# The RunPod worker SDK, on top of the engine image; compile with the engine lock as constraints:
+#   uv export --project engine --frozen --no-dev --no-hashes --no-emit-project > constraints.txt
+#   uv pip compile docker/runpod/requirements.in -c constraints.txt --generate-hashes \
+#     --python-platform x86_64-manylinux_2_28 --python-version 3.12 -o docker/runpod/requirements.txt
+runpod==1.12.0

@@ -6,6 +6,9 @@ A family folder (`engine/families/<name>/`) holds:
 - `requirements/<lane>.txt`: the family's dependencies for one torch lane.
 - `src/forja_<name>/`: the adapter package (Apache-2.0, ours).
 
+A family can also live outside the engine, as a model package: the same folder plus a
+`manifests/` folder, listed in `engine.manifest_dirs` (see registry.Registry.load).
+
 Upstream model code is downloaded at install time from a pinned commit and verified by
 sha256 (docs/decisions.md, decision 9); it never lives in this repository.
 """
@@ -51,21 +54,51 @@ class Family:
     upstream: Upstream | None = None
     # Installed with --no-build-isolation after the requirements, in order, because they
     # compile against the torch already in the environment. "{upstream}" expands to the
-    # extracted source folder.
-    build: tuple[str, ...] = ()
+    # extracted source folder. Per lane: a lane may install only the models that need no
+    # compiled extension (Hunyuan3D-2's shape model on an Apple GPU, without the rasterizer).
+    build_by_lane: dict[str, tuple[str, ...]] = field(default_factory=dict)
     env: dict[str, str] = field(default_factory=dict)
     # uv --torch-backend per lane (e.g. cuda: cu124), so torch comes from PyTorch's index
     # on every OS while everything else resolves from PyPI.
     torch_backend: dict[str, str] = field(default_factory=dict)
-    # Imports that prove the upstream code and its compiled extensions load.
-    smoke: str = ""
+    # Per lane: imports that prove the upstream code and its compiled extensions load.
+    smoke_by_lane: dict[str, str] = field(default_factory=dict)
 
     def requirements(self, lane: str) -> Path:
         return self.root / "requirements" / f"{lane}.txt"
 
+    def builds(self, lane: str, environment: dict[str, str] | None = None) -> tuple[str, ...]:
+        """The lane's build entries for this machine: an entry may end in an environment marker
+        ("flash-attn==2.7.4 ; sys_platform == 'linux'") when it exists for some OSes only.
+        `environment` overrides marker variables, as for another machine."""
+        from packaging.markers import Marker
 
-def load(name: str) -> Family:
-    root = families_dir() / name
+        out = []
+        for spec in self.build_by_lane.get(lane, ()):
+            _, sep, marker = spec.partition(";")
+            if not sep or Marker(marker.strip()).evaluate(environment):
+                out.append(spec)
+        return tuple(out)
+
+    def smoke(self, lane: str) -> str:
+        return self.smoke_by_lane.get(lane, "")
+
+
+def _per_lane(raw: Any, lanes: tuple[str, ...], source: Path, key: str) -> dict[str, Any]:
+    """A family.yaml value that is either the same on every lane or a mapping of lane to value."""
+    if not isinstance(raw, dict):
+        return dict.fromkeys(lanes, raw)
+    unknown = set(raw) - set(lanes)
+    if unknown:
+        raise ValueError(
+            f"{source}: {key} names lanes the family does not have: {', '.join(sorted(unknown))}"
+        )
+    return dict(raw)
+
+
+def load(name: str, root: Path | None = None) -> Family:
+    """The family `name`, from `root` when it is a model package, else from families_dir()."""
+    root = root or families_dir() / name
     spec_path = root / "family.yaml"
     if not spec_path.is_file():
         raise FileNotFoundError(f"no model family {name!r} at {root}")
@@ -83,10 +116,16 @@ def load(name: str) -> Family:
         upstream=Upstream(up["url"], up["sha256"], up["license"], tuple(up.get("pythonpath", ["."])))
         if up
         else None,
-        build=tuple(doc.get("build", [])),
+        build_by_lane={
+            lane: tuple(v or ())
+            for lane, v in _per_lane(doc.get("build", []), lanes, spec_path, "build").items()
+        },
         env={k: str(v) for k, v in (doc.get("env") or {}).items()},
         torch_backend={k: str(v) for k, v in (doc.get("torch_backend") or {}).items()},
-        smoke=str(doc.get("smoke", "")),
+        smoke_by_lane={
+            lane: str(v or "")
+            for lane, v in _per_lane(doc.get("smoke", ""), lanes, spec_path, "smoke").items()
+        },
     )
 
 

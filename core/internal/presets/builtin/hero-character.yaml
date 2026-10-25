@@ -1,14 +1,34 @@
 id: hero-character
 name: Hero character
-description: 30k triangles, 2K base color with baked normal and AO maps. Rigging and FBX arrive in M6.
+description: 30k triangles, 2K base color with baked normal and AO maps, two LODs, optionally rigged.
 stages:
   - { id: bg, use: background-removal, inputs: [input:image] }
   - { id: frame, use: framing, params: { size: 1024 } }
   - { id: shape, use: shape }
   - { id: cleanup, use: mesh.cleanup }
-  - { id: lowpoly, use: mesh.decimate, params: { target_tris: 30000 } }
-  # Painters unwrap UVs themselves, so there is no separate UV stage.
-  - { id: paint, use: texture, params: { resolution: 2048 }, inputs: [lowpoly, frame] }
+  - id: remesh
+    use: mesh.remesh
+    inputs: [cleanup]
+    optional:
+      label: Quad remesh with Blender
+      help: >-
+        Instead of simplifying the generated mesh, rebuilds it from evenly sized quads with
+        Blender's QuadriFlow, within the same triangle budget. Even topology deforms better
+        when rigged and is easier to edit. Needs Blender 4.2 or newer.
+      default: false
+      replaces: lowpoly
+  - { id: lowpoly, use: mesh.decimate, inputs: [cleanup], params: { target_tris: 30000 } }
+  # Painters unwrap UVs themselves unless this optional stage did.
+  - id: uv
+    use: mesh.uv.smart
+    inputs: [lowpoly]
+    optional:
+      label: Unwrap with Blender's Smart UV Project
+      help: >-
+        Cuts the UVs at sharp angles into fewer, straighter islands than the painter's own
+        unwrap, which makes the texture easier to edit by hand. Needs Blender 4.2 or newer.
+      default: false
+  - { id: paint, use: texture, params: { resolution: 2048 }, inputs: [uv, frame] }
   - id: match
     use: texture.match
     inputs: [paint, frame]
@@ -20,5 +40,15 @@ stages:
         asset it shows.
       default: false
   - { id: bake, use: bake, inputs: [match, cleanup] }
+  # Rigs the mesh that ships, before the LODs, so every level carries the same skin.
+  - id: rig
+    use: rig
+    inputs: [bake]
+    optional:
+      label: Rig the character
+      help: >-
+        Adds a skeleton and skin weights so the character can be posed and animated. A
+        humanoid gets the standard bone names game engines retarget animations to.
+      default: false
   - { id: lods, use: mesh.lods, params: { ratios: [0.5, 0.25] } }
   - { id: export, use: export, params: { format: glb, compression: meshopt } }

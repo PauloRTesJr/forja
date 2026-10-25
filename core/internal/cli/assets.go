@@ -37,9 +37,10 @@ func (a *app) assetsCmd() *cobra.Command {
 				return err
 			}
 			a.print(list, func() {
-				a.table("ID\tNAME\tPRESET\tTRIANGLES\tCREATED", func(row func(...any)) {
+				a.table("ID\tNAME\tPRESET\tTRIANGLES\tRIG\tCREATED", func(row func(...any)) {
 					for _, as := range list {
-						row(as.ID, as.Name, as.Preset, stat(as.Stats, "triangles"), as.CreatedAt.Local().Format(time.DateTime))
+						row(as.ID, as.Name, as.Preset, stat(as.Stats, "triangles"), stat(as.Stats, "skeleton"),
+							as.CreatedAt.Local().Format(time.DateTime))
 					}
 				})
 			})
@@ -68,6 +69,9 @@ func (a *app) assetsCmd() *cobra.Command {
 					if v := stat(as.Stats, k); v != "-" {
 						a.printf("  %-10s %s\n", k, v)
 					}
+				}
+				if rig := rigged(as.Stats); rig != "-" {
+					a.printf("  rigged     %s\n", rig)
 				}
 				if as.ExportPath != "" {
 					a.printf("  exported   %s\n", as.ExportPath)
@@ -311,6 +315,18 @@ func fileStem(name string) string {
 		return "asset"
 	}
 	return base
+}
+
+// rigged says how an asset is rigged, "humanoid, 22 bones", or "-" when it is not.
+func rigged(stats map[string]any) string {
+	bones := stat(stats, "bones")
+	if bones == "-" {
+		return "-"
+	}
+	if kind := stat(stats, "skeleton"); kind != "-" {
+		return kind + ", " + bones + " bones"
+	}
+	return bones + " bones"
 }
 
 // stat prints one of an asset's stats, or "-" when it has none.

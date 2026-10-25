@@ -3,7 +3,7 @@ import { useState, type CSSProperties } from 'react'
 import { api, cancelTask, runFix, taskDone, type Check, type Checks, type Fit, type InstallTask, type License } from '../lib/api'
 import { keys } from '../lib/events'
 import { bytes } from '../lib/format'
-import { fitText, licenseName } from '../lib/models'
+import { fitLabel, licenseName } from '../lib/models'
 import { useToast } from '../lib/toast'
 import { Alert, Chevron, Star } from './icons'
 
@@ -21,19 +21,21 @@ export function taskFor(list: InstallTask[] | undefined, kind: InstallTask['kind
  * System checks change outside the app (an installer finishes, a driver updates), so they are
  * read again when the window regains focus: the one exception to push-only data.
  */
-export function useChecks(models: string[], enabled = true) {
+export function useChecks(models: string[], enabled = true, stages: string[] = []) {
+  const query = new URLSearchParams({ models: models.join(',') })
+  if (stages.length > 0) query.set('stages', stages.join(','))
   return useQuery({
-    queryKey: keys.checks(models),
-    queryFn: () => api<Checks>('GET', `/v1/checks?models=${encodeURIComponent(models.join(','))}`),
-    enabled: enabled && models.length > 0,
+    queryKey: keys.checks(models, stages),
+    queryFn: () => api<Checks>('GET', `/v1/checks?${query}`),
+    enabled: enabled && (models.length > 0 || stages.length > 0),
     staleTime: 0,
     refetchOnWindowFocus: 'always',
   })
 }
 
-export function FitBadge({ fit }: { fit?: Fit }) {
+export function FitBadge({ fit, on }: { fit?: Fit; on?: string | null }) {
   if (!fit) return null
-  return <span className={`chip fit-${fit}`}>{fitText[fit]}</span>
+  return <span className={`chip fit-${fit}`}>{fitLabel(fit, on)}</span>
 }
 
 export function LicenseLine({ license }: { license: License }) {

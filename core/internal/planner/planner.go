@@ -1,9 +1,9 @@
-// Package planner turns a preset and an input into stages with cache keys.
+// Package planner turns a preset and an input into stages with keys.
 //
-// A stage's key covers everything that determines its output: stage type, model, params,
-// seed, what the routed provider runs for it (adapter version, weights revision, upstream
-// source) and the keys (or content hashes) of its inputs. Keys chain through upstream keys,
-// so the whole plan is keyed before anything runs and cache hits are known up front.
+// A stage's key covers the work it does: stage type, model, params, seed and the keys (or
+// content hashes) of its inputs. Two stages of one job with the same key do the same work, so
+// the job runs it once: the background removal it ran while looking for a sheet of views
+// serves its own stages. Nothing is reused from one job to the next (docs/decisions.md, 37).
 package planner
 
 import (
@@ -15,20 +15,6 @@ import (
 
 	"forja/internal/presets"
 )
-
-// keyVersion invalidates every cached stage when the key recipe changes.
-const keyVersion = 2
-
-// Fingerprint is what a provider runs for one stage. A new adapter version, new weights or new
-// upstream code changes the key, so outputs cached by the old ones are never served again.
-type Fingerprint struct {
-	Adapter  string `json:"adapter"`
-	Weights  string `json:"weights,omitempty"`
-	Upstream string `json:"upstream,omitempty"`
-}
-
-// Fingerprints says what will run each stage; the job runner asks the provider it routed to.
-type Fingerprints func(presets.Stage) (Fingerprint, error)
 
 type Stage struct {
 	presets.Stage
@@ -57,7 +43,7 @@ func (p *Plan) Index(id string) int {
 
 // Build keys every stage of preset. inputs holds the content hash of each job input the stages
 // read: presets.InputImage, and presets.InputView of each other view.
-func Build(preset *presets.Preset, inputs map[string]string, seed int, fingerprints Fingerprints) (*Plan, error) {
+func Build(preset *presets.Preset, inputs map[string]string, seed int) (*Plan, error) {
 	plan := &Plan{Preset: preset.ID, Input: inputs[presets.InputImage], Inputs: map[string]string{}, Seed: seed}
 	keys := make(map[string]string, len(inputs)+len(preset.Stages))
 	for name, ref := range inputs {
@@ -72,11 +58,7 @@ func Build(preset *presets.Preset, inputs map[string]string, seed int, fingerpri
 			}
 			inputs[i] = k
 		}
-		fp, err := fingerprints(s)
-		if err != nil {
-			return nil, fmt.Errorf("stage %s: %w", s.ID, err)
-		}
-		key, err := stageKey(s, seed, fp, inputs)
+		key, err := stageKey(s, seed, inputs)
 		if err != nil {
 			return nil, err
 		}
@@ -86,19 +68,16 @@ func Build(preset *presets.Preset, inputs map[string]string, seed int, fingerpri
 	return plan, nil
 }
 
-func stageKey(s presets.Stage, seed int, fp Fingerprint, inputs []string) (string, error) {
+func stageKey(s presets.Stage, seed int, inputs []string) (string, error) {
 	// encoding/json sorts map keys, so params serialize canonically.
 	raw, err := json.Marshal(struct {
-		V      int            `json:"v"`
 		Use    string         `json:"use"`
 		Model  string         `json:"model"`
 		Params map[string]any `json:"params"`
 		Seed   int            `json:"seed"`
-		Runs   Fingerprint    `json:"runs"`
 		Inputs []string       `json:"inputs"`
-		// Left out when empty, so stages that read one view keep the keys they had.
-		Views []string `json:"views,omitempty"`
-	}{keyVersion, s.Use, s.Model, s.Params, seed, fp, inputs, s.Views})
+		Views  []string       `json:"views,omitempty"`
+	}{s.Use, s.Model, s.Params, seed, inputs, s.Views})
 	if err != nil {
 		return "", fmt.Errorf("stage %s: params are not serializable: %w", s.ID, err)
 	}

@@ -18,13 +18,14 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
 from forja_engine import __version__, checks, families
-from forja_engine.adapters.builtin import BUILTINS
+from forja_engine.adapters.builtin import offered
 from forja_engine.api.version import API_VERSION
 from forja_engine.devices import detect
 from forja_engine.install import STEPS, Installer, InstallError, Reporter, _run
 from forja_engine.registry import Manifest, ManifestError, Registry
 from forja_engine.runs import RunManager, RunRequest
 from forja_engine.scheduler import Scheduler
+from forja_engine.sdk import StageType
 from forja_engine.store import ArtifactStore
 from forja_engine.tasks import TaskManager, TaskReporter
 from forja_engine.vram import DoesNotFit, FitMode
@@ -119,7 +120,9 @@ def create_app(cfg: EngineConfig) -> FastAPI:
         if cfg.token is None:
             return
         header = request.headers.get("authorization", "")
-        if not hmac.compare_digest(header, f"Bearer {cfg.token}"):
+        # As bytes: compare_digest refuses str with non-ASCII, which a stray BOM in a pasted
+        # token is, and the caller would get a 500 instead of a 401.
+        if not hmac.compare_digest(header.encode(), f"Bearer {cfg.token}".encode()):
             raise HTTPException(401, "missing or wrong bearer token")
 
     @app.exception_handler(HTTPException)
@@ -142,14 +145,17 @@ def create_app(cfg: EngineConfig) -> FastAPI:
 
     @app.get("/v1/info", dependencies=guarded)
     async def info() -> dict[str, Any]:
+        # Finding Blender may start it once to ask its version; keep that off the event loop.
+        stages, unavailable = await asyncio.to_thread(offered)
         return {
             "version": __version__,
             "api_version": API_VERSION,
             "system": detect(cfg.store_root).to_json(),
             "fit_mode": cfg.fit_mode,
-            # Built-in stage versions; the core puts them in the cache key (model versions are
-            # in /v1/models).
-            "stages": {str(task): cls.version for task, cls in BUILTINS.items()},
+            # Built-in stage versions (model versions are in /v1/models). Stages this engine
+            # cannot run here are left out, with the reason in "unavailable" (API 1.7).
+            "stages": stages,
+            "unavailable": unavailable,
             "lanes": {
                 dev: {
                     "budget_bytes": lane.vram.budget,
@@ -215,10 +221,20 @@ def create_app(cfg: EngineConfig) -> FastAPI:
     def checks_for(ms: list[Manifest]) -> list[checks.Check]:
         return checks.for_models(ms, cfg.models(), families.detect_lane())
 
+    def checks_for_stages(stages: list[str]) -> list[checks.Check]:
+        return checks.for_stages(stages)
+
     @app.get("/v1/checks", dependencies=guarded)
-    async def checks_get(models: str = "") -> dict[str, Any]:
-        ids = [m for m in models.split(",") if m] or [m.id for m in refresh().models.values() if not m.stub]
-        found = await asyncio.to_thread(checks_for, manifests(ids))
+    async def checks_get(models: str = "", stages: str = "") -> dict[str, Any]:
+        """What these models need, and what this machine needs to run these stage types itself
+        (API 1.7: stages, such as mesh.remesh needing Blender). No models and no stages means
+        every model."""
+        wanted = [s for s in stages.split(",") if s]
+        ids = [m for m in models.split(",") if m]
+        if not ids and not wanted:
+            ids = [m.id for m in refresh().models.values() if not m.stub]
+        found = await asyncio.to_thread(checks_for, manifests(ids)) if ids else []
+        found += await asyncio.to_thread(checks_for_stages, wanted)
         return {
             "lane": families.detect_lane(),
             "ok": all(c.ok for c in found),
@@ -228,7 +244,12 @@ def create_app(cfg: EngineConfig) -> FastAPI:
     @app.post("/v1/checks/{check_id}/fix", dependencies=[*guarded, Depends(local_caller)], status_code=202)
     async def check_fix(check_id: str) -> dict[str, Any]:
         known = [m for m in refresh().models.values() if not m.stub]
-        check = next((c for c in await asyncio.to_thread(checks_for, known) if c.id == check_id), None)
+        every_stage = [str(t) for t in StageType]
+
+        def all_checks() -> list[checks.Check]:
+            return checks_for(known) + checks_for_stages(every_stage)
+
+        check = next((c for c in await asyncio.to_thread(all_checks) if c.id == check_id), None)
         if check is None:
             raise HTTPException(404, f"no check {check_id}")
         if check.ok:
@@ -248,7 +269,7 @@ def create_app(cfg: EngineConfig) -> FastAPI:
                 raise
             r.step("run", "done")
             r.step("verify", "running")
-            again = next((c for c in checks_for(known) if c.id == check_id), None)
+            again = next((c for c in all_checks() if c.id == check_id), None)
             if again is not None and not again.ok:
                 r.step("verify", "failed")
                 raise InstallError(

@@ -85,7 +85,9 @@ func (a *app) root() *cobra.Command {
 	root.PersistentFlags().StringVar(&a.address, "socket", os.Getenv("FORJA_SOCKET"), "core socket or pipe (default: $FORJA_SOCKET, else per-user)")
 	root.AddCommand(a.daemonCmd(), a.setupCmd(), a.generateCmd(), a.jobsCmd(), a.assetsCmd(), a.modelsCmd(),
 		a.installsCmd(), a.presetsCmd(), a.hubsCmd(), a.spendCmd(), a.providersCmd(), a.shareCmd(), a.configCmd(),
-		a.engineCmd(), a.cacheCmd(), a.secretCmd(), a.infoCmd(), a.diagnosticsCmd(), a.eventsCmd(), a.socketCmd())
+		a.engineCmd(), a.secretCmd(), a.infoCmd(), a.diagnosticsCmd(), a.eventsCmd(), a.socketCmd(),
+		a.pricesCmd())
+	root.AddCommand(a.benchCmd())
 	return root
 }
 
@@ -228,12 +230,15 @@ func (a *app) readSecret(what string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	s := strings.TrimSpace(string(raw))
+	s := strings.TrimSpace(withoutBOM(string(raw)))
 	if s == "" {
 		return "", fmt.Errorf("no %s on stdin", what)
 	}
 	return s, nil
 }
+
+// withoutBOM drops the byte-order mark PowerShell puts before what it pipes to a program.
+func withoutBOM(s string) string { return strings.TrimPrefix(s, "\ufeff") }
 
 func signalContext() (context.Context, context.CancelFunc) {
 	return signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

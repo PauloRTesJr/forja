@@ -1,0 +1,28 @@
+# A model is data: what it is, what it needs, where its weights come from, what its license
+# allows. The schema is catalog/schema/manifest.schema.json in Forja's repository.
+id: example-extrude
+name: Example extrude (template)
+family: example
+adapter: forja_example:ExampleExtrude
+# Mirrors ExampleExtrude.version: bump both when the output changes for the same inputs.
+adapter_version: "1"
+tasks: [shape]
+description: Extrudes the cut-out's silhouette into a flat slab; the starting point for a new adapter.
+# Measured on Windows: the environment, mostly forja-engine's own dependencies (255 MB).
+disk_gb: 0.3
+# Every manifest carries license metadata; CI rejects one without it.
+license: { spdx: Apache-2.0, commercial: true, url: "https://www.apache.org/licenses/LICENSE-2.0" }
+# Peak VRAM at default params, from the publisher; the engine replaces it with measured peaks.
+vram_gb: 0
+requirements:
+  cpu: { status: supported }
+# A real model pins its weights to a commit and lists each file's sha256:
+# weights:
+#   hub: huggingface
+#   repo: <org>/<repo>
+#   revision: <40-character commit sha>
+#   files:
+#     - { path: <file>.safetensors, sha256: <sha256>, bytes: <size> }
+params:
+  resolution: { type: integer, default: 64, minimum: 16, maximum: 256, description: Grid cells across the image }
+  depth: { type: number, default: 0.2, minimum: 0.01, maximum: 1.0, description: Thickness as a fraction of the width }

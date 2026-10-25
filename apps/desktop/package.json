@@ -1,9 +1,10 @@
 {
   "name": "forja-desktop",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "Forja desktop app",
   "license": "Apache-2.0",
+  "homepage": "https://github.com/PauloRTesJr/forja",
   "main": "out/main/index.js",
   "type": "module",
   "packageManager": "pnpm@10.34.7",
@@ -14,7 +15,8 @@
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "lint": "eslint .",
     "test": "vitest run",
-    "dist": "electron-vite build && electron-builder"
+    "dist": "electron-vite build && electron-builder",
+    "dist:mac": "electron-vite build && node scripts/dist-mac.mjs"
   },
   "dependencies": {
     "@fontsource-variable/cinzel": "^5.3.0",

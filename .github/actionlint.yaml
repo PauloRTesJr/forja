@@ -1,0 +1,4 @@
+# Labels of the maintainer's self-hosted runners, so actionlint accepts them in runs-on.
+self-hosted-runner:
+  labels:
+    - gpu

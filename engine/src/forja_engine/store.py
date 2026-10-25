@@ -3,7 +3,7 @@
 Layout is shared with the Go core (`core/internal/store`): `<root>/objects/<2 hex>/<62 hex>`.
 When the core and the engine run on one machine they point at the same root, so artifacts
 move between them by path, with zero copies. A file's modification time is when it was last
-stored or asked for: the core evicts the least recently used (core/internal/cache).
+stored or asked for: the core's sweeps (core/internal/sweep) leave recent files alone.
 """
 
 from __future__ import annotations

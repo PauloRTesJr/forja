@@ -41,7 +41,6 @@ var settingKinds = map[string]string{
 	"project.default_preset":       "string",
 	"models.stubs":                 "bool",
 	"blender.path":                 "string",
-	"general.cache_max_gb":         "int",
 }
 
 type SettingView struct {
@@ -160,7 +159,8 @@ func (s *Server) settingsPatch(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		changes[k] = val
-		engine = engine || strings.HasPrefix(k, "engine.")
+		// The local engine reads blender.path when it starts, for the stages Blender does.
+		engine = engine || strings.HasPrefix(k, "engine.") || k == "blender.path"
 	}
 	if dir, ok := changes["project.export_dir"].(string); ok {
 		if dir == "" || filepath.IsAbs(dir) || slices.Contains(strings.Split(filepath.ToSlash(dir), "/"), "..") {
@@ -208,9 +208,6 @@ func (s *Server) settingsPatch(w http.ResponseWriter, r *http.Request) {
 	}
 	if engine && s.Engine != nil {
 		view.Engine = s.applyEngineSettings()
-	}
-	if _, ok := changes["general.cache_max_gb"]; ok {
-		s.Cache.Nudge() // a lower limit trims now
 	}
 	s.Hub.Publish(EvSettingsChanged, map[string]string{"project": body.Project})
 	writeJSON(w, 200, view)

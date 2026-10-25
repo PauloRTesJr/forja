@@ -1,7 +1,7 @@
 """Runs: a stage graph handed over by the core, executed once, then forgotten.
 
-The engine does not memoize. The core sends only stages it has no cached output for and
-passes earlier outputs in as `blake3:` refs.
+The engine does not memoize. The core sends the stages a job has yet to run and passes
+earlier outputs in as `blake3:` refs.
 """
 
 from __future__ import annotations
@@ -19,6 +19,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
+from forja_engine.ops import mesh as mesh_ops
 from forja_engine.registry import Registry
 from forja_engine.scheduler import BATCH, INTERACTIVE, Scheduler
 from forja_engine.sdk import VIEWS, ArtifactKind, StageContext, StageInput, StageType
@@ -56,6 +57,9 @@ class RunRequest(BaseModel):
     priority: Literal["interactive", "batch"] = "batch"
     seed: int = 42
     stages: list[StageSpec] = Field(min_length=1)
+    # A benchmark's run: each stage also reports metrics (API 1.7). Measuring outputs takes time
+    # a normal run does not spend, so it is asked for, never always on.
+    measure: bool = False
 
     @model_validator(mode="after")
     def _check_graph(self) -> RunRequest:
@@ -90,6 +94,7 @@ class StageState:
     step: int = 0
     total: int = 0
     peak_vram_bytes: int | None = None
+    metrics: dict[str, Any] | None = None
 
 
 @dataclass
@@ -142,6 +147,7 @@ class Run:
                     "step": st.step,
                     "total": st.total,
                     "peak_vram_bytes": st.peak_vram_bytes,
+                    "metrics": st.metrics,
                 }
                 for sid, st in self.stages.items()
             },
@@ -251,14 +257,18 @@ class RunManager:
         await run.emit("stage.started", stage=spec.id, model=spec.model, device=device)
         priority = INTERACTIVE if run.req.priority == "interactive" else BATCH
         try:
-            result = await self.scheduler.submit(f"{run.id}/{spec.id}", ctx, manifest, priority, on_progress)
+            result = await self.scheduler.submit(
+                f"{run.id}/{spec.id}", ctx, manifest, priority, on_progress, measure=run.req.measure
+            )
             for out in result["outputs"]:
                 ref = self.store.put_file(Path(out["path"]))
-                entry = {"hash": ref, "kind": out["kind"], "preview": out["preview"]}
+                entry = {"hash": ref, "kind": out["kind"], "preview": out["preview"], "note": out["note"]}
                 state.outputs.append(entry)
                 await run.emit("artifact.ready", stage=spec.id, **entry)
             state.seconds = result["seconds"]
             state.peak_vram_bytes = result.get("peak_vram_bytes")
+            if run.req.measure:
+                state.metrics = await self._metrics(result, state.outputs, device)
             state.status = Status.SUCCEEDED
             await run.emit(
                 "stage.finished",
@@ -277,6 +287,31 @@ class RunManager:
             raise
         finally:
             shutil.rmtree(out_dir, ignore_errors=True)
+
+    async def _metrics(
+        self, result: dict[str, Any], outputs: list[dict[str, Any]], device: str
+    ) -> dict[str, Any]:
+        """A measured stage's metrics: what the scheduler sampled, and its meshes' stats."""
+        loop = asyncio.get_running_loop()
+        started = time.perf_counter()
+        stats = []
+        for out in outputs:
+            if out["kind"] != ArtifactKind.MESH_GLB:
+                continue
+            path = str(self.store.path(out["hash"]))
+            found = await loop.run_in_executor(self.scheduler.pool, mesh_ops.file_stats, path)
+            if found is not None:
+                stats.append({"hash": out["hash"], **found})
+        return {
+            "device": device,
+            # Built-in stages load no model, so they have no load time.
+            "load_seconds": result.get("load_seconds"),
+            "peak_ram_bytes": result.get("peak_ram_bytes"),
+            "gpu_util": result.get("gpu_util"),
+            "outputs": stats,
+            # The run spent this measuring outputs: no part of the stage, and not of a normal run.
+            "measure_seconds": round(time.perf_counter() - started, 4),
+        }
 
 
 def _defaults(schema: dict[str, Any]) -> dict[str, Any]:

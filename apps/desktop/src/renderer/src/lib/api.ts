@@ -33,6 +33,8 @@ export interface Output {
   hash: string
   kind: string
   preview?: boolean
+  /** What the stage said about this output, such as a stand-in it made when it could not do what it was asked. */
+  note?: string
 }
 
 export interface Stage {
@@ -40,14 +42,27 @@ export interface Stage {
   use: string
   model?: string
   status: Status
-  key: string
-  cached: boolean
   provider?: string
   outputs: Output[]
   seconds: number
   step: number
   total: number
   error?: string
+  /** What the provider last said while it runs, such as a place in a hosted model's queue. */
+  note?: string
+  /** The providers it left after failing there, oldest first. */
+  fallbacks?: Fallback[]
+  /** Where it runs, for people: "This computer", "Studio PC", "fal.ai". */
+  provider_label?: string
+}
+
+/** A stage moving to another provider after it could not be reached or ran out of memory. */
+export interface Fallback {
+  from: string
+  to: string
+  reason: string
+  from_label?: string
+  to_label?: string
 }
 
 export interface Job {
@@ -81,6 +96,20 @@ export interface Asset {
   project?: string
   export_path?: string
   created_at: string
+}
+
+export interface Rig {
+  bones: number
+  /** Humanoid when the bones carry the standard humanoid names game engines retarget by. */
+  skeleton?: 'humanoid' | 'generic'
+}
+
+/** An asset's skeleton, from the stats the core read from its GLB; undefined when it has none. */
+export function rigOf(asset: { stats?: Asset['stats'] }): Rig | undefined {
+  const bones = asset.stats?.bones
+  if (typeof bones !== 'number' || bones <= 0) return undefined
+  const skeleton = asset.stats?.skeleton
+  return { bones, skeleton: skeleton === 'humanoid' || skeleton === 'generic' ? skeleton : undefined }
 }
 
 /** A format the library exports to, and whether this computer can write it now. */
@@ -124,29 +153,175 @@ export const openInBlender = (id: string): Promise<Blender> => api('POST', `/v1/
 /** Removes an asset, and the job that made it, from the library; exported files stay. */
 export const deleteAsset = (id: string): Promise<void> => api('DELETE', `/v1/assets/${id}`)
 
-/** How the object store's bytes divide: what the library keeps, and the trimmable cache. */
-export interface CacheUsage {
-  objects: number
-  bytes: number
-  /** Assets, their images and unfinished jobs: never trimmed. */
-  library_bytes: number
-  /** Stage outputs a new job can reuse, trimmed least recently used first. */
-  cache_bytes: number
-  /** general.cache_max_gb in bytes; 0 means no limit. */
-  limit_bytes: number
+/** Median, 90th percentile and maximum of `n` values. */
+export interface Spread {
+  n: number
+  median: number
+  p90: number
+  max: number
 }
 
-export const fetchCache = (): Promise<CacheUsage> => api('GET', '/v1/cache')
-/** Removes every reusable stage output now; refused while jobs run. */
-export const clearCache = (): Promise<{ freed: { objects: number; bytes: number; entries: number }; usage: CacheUsage }> =>
-  api('DELETE', '/v1/cache')
+export interface BenchPreset {
+  preset: string
+  images: number
+  failed: number
+  /** Image to GLB, succeeded samples only. */
+  seconds: Spread
+  budget_seconds?: number
+  over_budget: number
+}
+
+export interface BenchStage {
+  preset: string
+  stage: string
+  use: string
+  model?: string
+  seconds: Spread
+  load_seconds: Spread
+  peak_vram_bytes: number | null
+  peak_ram_bytes: number | null
+  /** Mean percent of time the GPU ran kernels. */
+  gpu_util: number | null
+  triangles: number | null
+  /** Share (0..1) of samples whose mesh was watertight. */
+  watertight: number | null
+  uv_coverage: number | null
+}
+
+/** One reference image through one preset, measured. */
+export interface BenchSample {
+  image: string
+  category?: string
+  preset: string
+  repeat: number
+  job?: string
+  input?: string
+  status: Status
+  error?: string
+  wall_seconds: number
+  stage_seconds: number
+  load_seconds: number
+  core_overhead_seconds: number
+}
+
+export interface BenchDevice {
+  id: string
+  provider: string
+  gpu?: string
+  cpu?: string
+  vram_bytes?: number
+}
+
+export interface BenchBuild {
+  version: string
+  commit?: string
+  modified?: boolean
+  engine?: string
+}
+
+export interface BenchSuite {
+  name: string
+  version: number
+  path: string
+}
+
+export interface BenchOptions {
+  presets: string[]
+  cold: boolean
+  batch: boolean
+  repeat: number
+}
+
+export type BenchStatus = 'running' | 'succeeded' | 'failed' | 'cancelled'
+
+/** A run of a benchmark suite: kept by the core, pushed while it runs. */
+export interface BenchResult {
+  id: string
+  label?: string
+  status: BenchStatus
+  error?: string
+  /** While running: loading the models with an unmeasured image, or measuring. */
+  phase?: 'warm-up' | 'measuring'
+  /** The job loading the models during the warm-up. */
+  warm_up?: string
+  suite: BenchSuite
+  options: BenchOptions
+  forja: BenchBuild
+  device: BenchDevice
+  started_at: string
+  finished_at?: string
+  total: number
+  skipped: { path: string; reason: string }[]
+  jobs: BenchSample[]
+  summary?: {
+    presets: BenchPreset[]
+    stages: BenchStage[]
+    core_overhead: Spread
+    core_overhead_budget_ms?: number
+    devices: { device: string; busy_seconds: number; busy: number; gpu_util: number | null }[]
+    wall_seconds: number
+  }
+  report?: string
+}
+
+/** A kept result as the list shows it. */
+export interface BenchEntry {
+  id: string
+  label?: string
+  status: BenchStatus
+  suite: BenchSuite
+  options: BenchOptions
+  forja: BenchBuild
+  device: BenchDevice
+  started_at: string
+  samples: number
+  failed: number
+  presets: BenchPreset[]
+  core_overhead: Spread
+}
+
+export interface BenchList {
+  running: BenchResult | null
+  results: BenchEntry[]
+}
+
+export interface BenchDelta {
+  preset?: string
+  stage?: string
+  metric: 'seconds' | 'peak_vram_bytes' | 'core_overhead' | 'failed'
+  baseline: number
+  current: number
+  /** Change in percent of the baseline; null when the baseline is zero. */
+  pct: number | null
+  regression: boolean
+}
+
+export interface BenchComparison {
+  baseline: { id: string; forja: BenchBuild; started_at: string }
+  current: { id: string; forja: BenchBuild; started_at: string }
+  thresholds: { pct: number; min_seconds: number; min_vram_mb: number }
+  deltas: BenchDelta[]
+  regressions: number
+  warnings: string[]
+}
+
+export const fetchBenchList = (): Promise<BenchList> => api('GET', '/v1/bench')
+export const fetchBench = (id: string): Promise<BenchResult> => api('GET', `/v1/bench/${id}`)
+/** Runs a suite file in the background; bench.updated events follow it. */
+export const startBench = (body: { suite: string; cold?: boolean; batch?: boolean }): Promise<BenchResult> =>
+  api('POST', '/v1/bench', body)
+export const cancelBench = (id: string): Promise<void> => api('DELETE', `/v1/bench/${id}`)
+/** Compares two kept results with the thresholds in the config. */
+export const compareBench = (baseline: string, current: string): Promise<BenchComparison> =>
+  api('POST', '/v1/bench/compare', { baseline, current })
 
 export interface PresetStage {
   id: string
   use: string
   model?: string
   params?: Record<string, unknown>
-  optional?: { label: string; help?: string; default: boolean }
+  /** `replaces`: the stage it stands in for while on (a quad remesh in place of decimation). */
+  optional?: { label: string; help?: string; default: boolean; replaces?: string }
 }
 
 /** Where one stage of a preset would run right now, and with which model. */
@@ -156,7 +331,11 @@ export interface Pick {
   model?: string
   model_name?: string
   provider?: string
+  /** Where it would run, for people: "This computer", "Studio PC", "fal.ai". */
+  provider_label?: string
   missing?: boolean
+  /** Why no provider can run this built-in step (Blender was not found). */
+  problem?: string
   /** Done by the model of the stage named in `by` (a hosted model that returns a textured mesh). */
   skipped?: boolean
   by?: string
@@ -178,6 +357,17 @@ export interface Preset {
   plan: Pick[]
   ready: boolean
   error?: string
+  /** Why an optional step that is off could not run if switched on, by stage id. */
+  unavailable?: Record<string, string>
+  /** What this computer can install so those steps run, by stage id. */
+  install?: Record<string, StageInstall>
+}
+
+/** A model to install for a blocked step, or other software its checks name (Blender). */
+export interface StageInstall {
+  use: string
+  model?: string
+  software?: boolean
 }
 
 export interface License {
@@ -314,6 +504,10 @@ export interface ProviderRow {
   /** Where its key lives and how it ends; never the key itself. */
   key?: { stored: boolean; hint?: string; store: string }
   editable: boolean
+  /** Rented GPUs: who rents it (runpod, modal), a RunPod endpoint, what a GPU second costs. */
+  vendor?: string
+  endpoint_id?: string
+  price_usd_per_second?: number
 }
 
 export interface ShareView {
@@ -456,3 +650,112 @@ export const removeHubModel = (provider: string, model: string): Promise<void> =
   api('DELETE', `/v1/providers/${provider}/models?model=${encodeURIComponent(model)}`)
 export const connectHub = (vendor: string, token: string): Promise<{ id: string; label: string }> =>
   api('POST', '/v1/providers', { kind: 'api', vendor, token })
+
+/** A job as Generate would submit it, to estimate before queueing. */
+export interface EstimateBody {
+  preset: string
+  project?: string
+  /** The other views it brings: left, back, right. */
+  views?: View[]
+  overrides?: Record<string, unknown>
+  /** How many images would be queued this way. */
+  images?: number
+}
+
+/** One stage of an estimate: where it runs, how long it took there before, what it costs. */
+export interface StageEstimate extends Pick {
+  seconds?: number
+  /** Where the time comes from: earlier runs on this provider, or on others. */
+  measured?: 'here' | 'elsewhere'
+  cost_usd?: number
+  /** False for a paid stage without a usable price. */
+  priced: boolean
+}
+
+/** What one image would take and cost, before it is queued, against the spending limits. */
+export interface Estimate {
+  preset: string
+  images: number
+  stages: StageEstimate[]
+  /** Per image; unmeasured names the stages without a time, unpriced the paid ones without a price. */
+  seconds: number
+  cost_usd: number
+  unmeasured: string[]
+  unpriced: string[]
+  paid: boolean
+  spend: { limits: { per_job: number; per_day: number; per_month: number }; today: number; month: number; queued: number }
+  /** Why the job would be refused now: no model for a stage, a spending limit. */
+  problem?: string
+}
+
+export const fetchEstimate = (body: EstimateBody): Promise<Estimate> => api('POST', '/v1/estimate', body)
+
+export type PriceUnit = 'second' | 'hour' | 'generation'
+
+/** One entry of the price table, or a hosted model's own price that no entry replaces. */
+export interface PriceRow {
+  id: string
+  label?: string
+  usd: number
+  /** A unit of the table, or the vendor's own unit for a hosted model priced another way. */
+  per: string
+  /** The layer that set it (default, user, project…), or "vendor" for a hosted model's own price. */
+  source: string
+  default?: { usd: number; per: PriceUnit; label?: string }
+  vendor?: Price
+  /** What it prices, for people. */
+  for: string[]
+  model?: string
+  provider?: string
+}
+
+export interface Prices {
+  prices: PriceRow[]
+  units: PriceUnit[]
+  file: string
+}
+
+// A hosted model's id keeps its slashes in the address.
+const pricePath = (id: string): string => `/v1/prices/${id.split('/').map(encodeURIComponent).join('/')}`
+
+export const fetchPrices = (): Promise<Prices> => api('GET', '/v1/prices')
+export const setPrice = (id: string, price: { usd: number; per: PriceUnit; label?: string }): Promise<Prices> =>
+  api('PUT', pricePath(id), price)
+/** Removes the user's entry: a built-in one goes back to its default, a hosted model to its provider's price. */
+export const removePrice = (id: string): Promise<Prices> => api('DELETE', pricePath(id))
+/** A kind of provider the core can add, field by field (GET /v1/provider-kinds). */
+export interface ProviderKind {
+  kind: string
+  vendor?: string
+  label: string
+  description: string
+  pairing: boolean
+  paid: boolean
+  key_url?: string
+  fields: ProviderField[]
+}
+
+export interface ProviderField {
+  key: string
+  label: string
+  type: 'text' | 'url' | 'secret' | 'number' | 'workflows'
+  placeholder?: string
+  help?: string
+  optional?: boolean
+  unit?: string
+}
+
+/** What trying a provider's settings found. */
+export interface ProbeView {
+  url: string
+  version: string
+  gpu?: string
+  fingerprint?: string
+  latency_ms: number
+  detail?: string
+}
+
+export const providerKinds = (): Promise<ProviderKind[]> => api('GET', '/v1/provider-kinds')
+export const testProvider = (body: Record<string, unknown>): Promise<ProbeView> => api('POST', '/v1/providers/test', body)
+export const addCloudProvider = (body: Record<string, unknown>): Promise<{ id: string; label: string; probe?: ProbeView }> =>
+  api('POST', '/v1/providers', body)

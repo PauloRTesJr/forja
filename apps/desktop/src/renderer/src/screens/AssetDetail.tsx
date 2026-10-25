@@ -5,10 +5,11 @@ import { Empty } from '../components/Empty'
 import { ExportMenu } from '../components/ExportMenu'
 import { ArrowLeft, Cube, Folder, Grip, Trash } from '../components/icons'
 import { SectionHead } from '../components/ScreenHead'
-import { api, ApiError, artifactURL, deleteAsset, openInBlender, type Asset, type Job } from '../lib/api'
+import { api, ApiError, artifactURL, deleteAsset, openInBlender, rigOf, type Asset, type Job, type Rig } from '../lib/api'
 import { dragOut, readyDrag } from '../lib/drag'
+import { describeNotes } from '../lib/estimate'
 import { keys } from '../lib/events'
-import { count, relative, seconds, stageLabel } from '../lib/format'
+import { count, relative, seconds, skeletonName, stageLabel } from '../lib/format'
 import { transition, useNavigate } from '../lib/nav'
 import { useToast } from '../lib/toast'
 import type { MeshStats } from '../viewer/scene'
@@ -26,6 +27,8 @@ export function AssetDetail({ id }: { id: string }) {
   const [confirming, setConfirming] = useState(false)
   const toast = useToast()
   const a = asset.data
+  // The viewer reads the file it shows; the core's stats stand in until it has.
+  const rig: Rig | undefined = stats ? (stats.bones > 0 ? { bones: stats.bones, skeleton: stats.skeleton } : undefined) : a && rigOf(a)
   const back = (): void => transition(() => navigate({ screen: 'library' }))
   useEffect(() => {
     if (a) readyDrag(a)
@@ -63,7 +66,14 @@ export function AssetDetail({ id }: { id: string }) {
             <ArrowLeft />
             Library
           </button>
-          <h1>{a?.name ?? ' '}</h1>
+          <div className="row">
+            <h1>{a?.name ?? ' '}</h1>
+            {rig && (
+              <span className="tag gold rig-tag" title={`${rig.bones} bones${rig.skeleton === 'humanoid' ? ', named for humanoid retargeting' : ''}`}>
+                Rigged
+              </span>
+            )}
+          </div>
         </div>
         <div className="row head-actions">
           {a?.export_path && (
@@ -117,6 +127,7 @@ export function AssetDetail({ id }: { id: string }) {
                 ['Textures', stats.textures.join(', ') || 'none'],
                 ['Size (m)', stats.size.map((v) => v.toFixed(2)).join(' × ')],
                 ['Materials', String(stats.materials)],
+                ...(rig ? [['Bones', count(rig.bones)], ['Skeleton', skeletonName(rig)]] : []),
               ].map(([k, v], i) => (
                 <div className={`stat ${k === 'Textures' || k === 'Size (m)' ? 'wide' : ''}`} key={k} style={{ '--i': i } as React.CSSProperties}>
                   <b>{v}</b>
@@ -158,13 +169,16 @@ export function AssetDetail({ id }: { id: string }) {
                     <tr key={s.id} style={{ animationDelay: `${i * 25}ms` }}>
                       <td>{stageLabel(s.use)}</td>
                       <td className="muted">{s.model ?? 'built-in'}</td>
-                      <td style={{ textAlign: 'right' }} className={s.cached ? 'muted' : ''}>
-                        {s.cached ? 'cached' : seconds(s.seconds)}
-                      </td>
+                      <td style={{ textAlign: 'right' }}>{seconds(s.seconds)}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
+              {describeNotes(job.data.stages).map((note) => (
+                <p key={note} className="job-fallback asset-note">
+                  {note}
+                </p>
+              ))}
             </section>
           )}
         </aside>

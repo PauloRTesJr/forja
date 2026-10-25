@@ -17,6 +17,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"path"
@@ -77,6 +78,22 @@ const (
 	pageSize = 10
 	stale    = 10 * time.Minute
 	maxMesh  = 2 << 30
+	// callTimeout bounds one request to fal's API or queue; a submission carries its images inline.
+	callTimeout = 2 * time.Minute
+	// downloadTimeout bounds one download of a result file.
+	downloadTimeout = 10 * time.Minute
+	// failures is how many transient errors in a row one request survives.
+	failures = 5
+)
+
+// Waits that tests shorten: the first pause before a retry (it doubles), the longest pause
+// between polls, how long the status stream may stay silent before polling takes over, and
+// how long one generation may take, queue included, before it is cancelled.
+var (
+	retryBase  = time.Second
+	pollMax    = 8 * time.Second
+	streamIdle = 45 * time.Second
+	maxWait    = 30 * time.Minute
 )
 
 type Provider struct {
@@ -141,6 +158,8 @@ func (p *Provider) request(ctx context.Context, method, rawURL string, body any,
 		}
 		r = bytes.NewReader(raw)
 	}
+	ctx, cancel := context.WithTimeout(ctx, callTimeout)
+	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, method, rawURL, r)
 	if err != nil {
 		return err
@@ -156,17 +175,83 @@ func (p *Provider) request(ctx context.Context, method, rawURL string, body any,
 		return fmt.Errorf("cannot reach fal.ai: %w", err)
 	}
 	defer resp.Body.Close()
-	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 32<<20))
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, 32<<20))
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
-		return errors.New("fal.ai refused the API key")
+		return &httpError{resp.StatusCode, "fal.ai refused the API key"}
 	}
 	if resp.StatusCode >= 400 {
-		return fmt.Errorf("fal.ai answered %s: %s", resp.Status, problemOf(raw))
+		return &httpError{resp.StatusCode, fmt.Sprintf("fal.ai answered %s: %s", resp.Status, problemOf(raw))}
+	}
+	if err != nil {
+		return fmt.Errorf("reading fal.ai's answer: %w", err)
 	}
 	if out != nil {
 		return json.Unmarshal(raw, out)
 	}
 	return nil
+}
+
+// httpError is fal.ai answering with an error status.
+type httpError struct {
+	Status int
+	Msg    string
+}
+
+func (e *httpError) Error() string { return e.Msg }
+
+// StatusCode tells the job runner fal.ai answered: only a 5xx or no answer at all reads as
+// fal.ai down, which may move a stage to another provider.
+func (e *httpError) StatusCode() int { return e.Status }
+
+// permanent marks an error that trying again cannot fix, such as a file that is not a GLB.
+type permanent struct{ error }
+
+func (e permanent) Unwrap() error { return e.error }
+
+// transient reports an error worth trying again: no answer, a rate limit or a server error.
+// A timeout of one request is transient; the end of ctx is not.
+func transient(ctx context.Context, err error) bool {
+	if err == nil || ctx.Err() != nil {
+		return false
+	}
+	var pe permanent
+	if errors.As(err, &pe) {
+		return false
+	}
+	var he *httpError
+	if errors.As(err, &he) {
+		return he.Status == http.StatusTooManyRequests || he.Status >= 500
+	}
+	return !errors.Is(err, context.Canceled)
+}
+
+// unsent reports a submission fal.ai certainly did not take: refused for load, or never sent.
+// Any other failure may have queued a generation that is billed, so it is not tried again.
+func unsent(err error) bool {
+	var he *httpError
+	if errors.As(err, &he) {
+		return he.Status == http.StatusTooManyRequests || he.Status == http.StatusServiceUnavailable
+	}
+	var op *net.OpError
+	return errors.As(err, &op) && op.Op == "dial"
+}
+
+// again runs fn until it succeeds, fails for good, or fails `failures` times in a row, waiting
+// longer after each failure.
+func again(ctx context.Context, retryable func(error) bool, fn func() error) error {
+	delay := retryBase
+	for n := 1; ; n++ {
+		err := fn()
+		if err == nil || n >= failures || !retryable(err) || ctx.Err() != nil {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(delay):
+		}
+		delay = min(delay*2, pollMax)
+	}
 }
 
 // problemOf pulls a readable message out of fal's error bodies.
@@ -379,7 +464,7 @@ func (e *entry) model() engineapi.Model {
 		Params: map[string]any{}, Requires: map[string]any{},
 		Status: "ready", Device: &hosted, RunsOn: &hosted, Fit: "hosted", Rank: rank, Recommended: recommended,
 		Price: e.Price, Thumbnail: e.Thumbnail, AdapterVersion: "1",
-		// The endpoint id names the model version, so it keys cached results like a weight revision.
+		// The endpoint id names the model version, as a weight revision does.
 		Weights:       engineapi.Weights{Repo: "fal.ai", Revision: e.Endpoint},
 		ViewsRequired: e.ViewsRequired,
 	}
@@ -594,7 +679,11 @@ func (p *Provider) runStage(ctx context.Context, runID string, seed int, s engin
 		ResponseURL string `json:"response_url"`
 		CancelURL   string `json:"cancel_url"`
 	}
-	if err := p.call(ctx, http.MethodPost, p.Queue+"/"+e.Endpoint, body, &sub); err != nil {
+	submit := func() error { return p.call(ctx, http.MethodPost, p.Queue+"/"+e.Endpoint, body, &sub) }
+	if err := again(ctx, unsent, submit); err != nil {
+		return "", err
+	}
+	if err := p.ours(sub.StatusURL, sub.ResponseURL, sub.CancelURL); err != nil {
 		return "", err
 	}
 	p.mu.Lock()
@@ -605,14 +694,23 @@ func (p *Provider) runStage(ctx context.Context, runID string, seed int, s engin
 		delete(p.cancels, runID)
 		p.mu.Unlock()
 	}()
-	if err := p.wait(ctx, sub.StatusURL, s.ID, events); err != nil {
-		if ctx.Err() != nil {
+	g := &progress{events: events, stage: s.ID}
+	if err := p.wait(ctx, sub.StatusURL, g); err != nil {
+		if !g.done {
+			// It may still be queued or running, whatever stopped Forja following it.
 			p.cancel(sub.CancelURL)
+		}
+		// fal bills a request once its model takes it, and cancels only one still in its queue.
+		if g.started {
+			billed(events, s.ID)
 		}
 		return "", err
 	}
+	// From here the generation is paid for, whatever becomes of its result.
+	billed(events, s.ID)
 	var result map[string]any
-	if err := p.call(ctx, http.MethodGet, sub.ResponseURL, nil, &result); err != nil {
+	fetch := func() error { return p.call(ctx, http.MethodGet, sub.ResponseURL, nil, &result) }
+	if err := again(ctx, func(err error) bool { return transient(ctx, err) }, fetch); err != nil {
 		return "", err
 	}
 	fileURL, _ := dig(result, append(strings.Split(e.Output, "."), "url")...).(string)
@@ -621,6 +719,36 @@ func (p *Provider) runStage(ctx context.Context, runID string, seed int, s engin
 	}
 	return p.fetchMesh(ctx, fileURL, e.Name)
 }
+
+// billed tells the job runner that fal.ai charged for a stage, even one that then failed or was
+// cancelled. It is sent whatever the context: the runner reads every event until Run returns.
+func billed(events chan<- engineapi.Event, stage string) {
+	select {
+	case events <- engineapi.Event{Type: "stage.billed", Data: map[string]any{"stage": stage}}:
+	case <-time.After(10 * time.Second):
+	}
+}
+
+// ours checks that the addresses fal.ai answered a submission with are on its queue's host:
+// they get the API key.
+func (p *Provider) ours(status, response, cancel string) error {
+	base, err := url.Parse(p.Queue)
+	if err != nil {
+		return err
+	}
+	for i, raw := range []string{status, response, cancel} {
+		if raw == "" && i == 2 {
+			continue // without one the request cannot be cancelled, which only costs money
+		}
+		u, err := url.Parse(raw)
+		if err != nil || raw == "" || u.Scheme != base.Scheme || u.Host != base.Host || u.User != nil {
+			return fmt.Errorf("fal.ai answered the submission with an unexpected address %q", raw)
+		}
+	}
+	return nil
+}
+
+var errTooLong = errors.New("fal.ai did not finish the generation in time")
 
 type queueStatus struct {
 	Status        string `json:"status"`
@@ -631,24 +759,66 @@ type queueStatus struct {
 	} `json:"logs"`
 }
 
-// wait follows a request until it completes: fal streams its status, and polling takes over
-// if the stream drops.
-func (p *Provider) wait(ctx context.Context, statusURL, stage string, events chan<- engineapi.Event) error {
-	done, err := p.stream(ctx, statusURL, stage, events)
-	if done || ctx.Err() != nil {
+// progress turns a request's status into what the job shows, once per change.
+type progress struct {
+	events        chan<- engineapi.Event
+	stage         string
+	last          string
+	started, done bool
+}
+
+func (g *progress) saw(ctx context.Context, st queueStatus) {
+	msg := ""
+	switch st.Status {
+	case "IN_QUEUE":
+		msg = "Waiting in fal.ai's queue"
+		if st.QueuePosition != nil {
+			msg = fmt.Sprintf("Waiting in fal.ai's queue, position %d", *st.QueuePosition+1)
+		}
+	case "IN_PROGRESS", "COMPLETED":
+		g.started, g.done = true, st.Status == "COMPLETED"
+		msg = "Running on fal.ai"
+	}
+	if msg != "" && msg != g.last {
+		g.last = msg
+		emit(ctx, g.events, "stage.log", map[string]any{"stage": g.stage, "message": msg})
+	}
+}
+
+// wait follows a request until it completes. fal streams its status; polling takes over when
+// the stream drops or goes quiet, and rides out a few failed polls in a row. g says what fal
+// showed of it: whether the model began on it (fal bills it from then, even when it is
+// cancelled) and whether fal finished it, well or not.
+func (p *Provider) wait(ctx context.Context, statusURL string, g *progress) error {
+	ctx, cancel := context.WithTimeoutCause(ctx, maxWait, errTooLong)
+	defer cancel()
+	if done, err := p.stream(ctx, statusURL, g); done {
 		return err
 	}
-	for delay := time.Second; ; delay = min(delay*2, 8*time.Second) {
-		var st queueStatus
-		if err := p.call(ctx, http.MethodGet, statusURL+"?logs=1", nil, &st); err != nil {
-			return err
+	misses := 0
+	for delay := retryBase; ; delay = min(delay*2, pollMax) {
+		if ctx.Err() != nil {
+			return context.Cause(ctx)
 		}
-		if st.Status == "COMPLETED" {
-			return completed(st)
+		var st queueStatus
+		err := p.call(ctx, http.MethodGet, statusURL+"?logs=1", nil, &st)
+		switch {
+		case err == nil:
+			misses = 0
+			g.saw(ctx, st)
+			if st.Status == "COMPLETED" {
+				return completed(st)
+			}
+		case ctx.Err() != nil:
+			return context.Cause(ctx)
+		case transient(ctx, err) && misses+1 < failures:
+			misses++
+		default:
+			return err
 		}
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return context.Cause(ctx)
 		case <-time.After(delay):
 		}
 	}
@@ -661,12 +831,18 @@ func completed(st queueStatus) error {
 	return nil
 }
 
-func (p *Provider) stream(ctx context.Context, statusURL, stage string, events chan<- engineapi.Event) (bool, error) {
+// stream reads the status stream until the request completes (done), the stream ends, or it
+// stays silent for streamIdle: a connection that hangs would otherwise hold the job forever.
+func (p *Provider) stream(ctx context.Context, statusURL string, g *progress) (bool, error) {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, statusURL+"/stream?logs=1", nil)
 	if err != nil {
 		return false, err
 	}
 	req.Header.Set("Authorization", "Key "+p.key)
+	idle := time.AfterFunc(streamIdle, cancel)
+	defer idle.Stop()
 	resp, err := p.http.Do(req)
 	if err != nil {
 		return false, err
@@ -678,6 +854,7 @@ func (p *Provider) stream(ctx context.Context, statusURL, stage string, events c
 	sc := bufio.NewScanner(resp.Body)
 	sc.Buffer(make([]byte, 64*1024), 4<<20)
 	for sc.Scan() {
+		idle.Reset(streamIdle)
 		line, ok := strings.CutPrefix(sc.Text(), "data:")
 		if !ok {
 			continue
@@ -686,11 +863,9 @@ func (p *Provider) stream(ctx context.Context, statusURL, stage string, events c
 		if json.Unmarshal([]byte(strings.TrimSpace(line)), &st) != nil {
 			continue
 		}
+		g.saw(ctx, st)
 		if st.Status == "COMPLETED" {
 			return true, completed(st)
-		}
-		if st.Status == "IN_QUEUE" && st.QueuePosition != nil {
-			emit(ctx, events, "stage.log", map[string]any{"stage": stage, "message": fmt.Sprintf("in fal.ai's queue, position %d", *st.QueuePosition)})
 		}
 	}
 	return false, sc.Err()
@@ -745,11 +920,24 @@ func sniff(raw []byte) (kind, mime string) {
 	return "", ""
 }
 
-// fetchMesh downloads a result file into the store. It is a public link: the key stays home.
+// fetchMesh downloads a result file into the store, trying again when the transfer fails: the
+// generation is paid for by now. It is a public link, so the key stays home.
 func (p *Provider) fetchMesh(ctx context.Context, fileURL, model string) (string, error) {
+	var ref string
+	err := again(ctx, func(err error) bool { return transient(ctx, err) }, func() error {
+		var err error
+		ref, err = p.download(ctx, fileURL, model)
+		return err
+	})
+	return ref, err
+}
+
+func (p *Provider) download(ctx context.Context, fileURL, model string) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, downloadTimeout)
+	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fileURL, nil)
 	if err != nil {
-		return "", err
+		return "", permanent{err}
 	}
 	resp, err := p.http.Do(req)
 	if err != nil {
@@ -757,14 +945,39 @@ func (p *Provider) fetchMesh(ctx context.Context, fileURL, model string) (string
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 400 {
-		return "", fmt.Errorf("downloading the mesh from %s: %s", model, resp.Status)
+		return "", &httpError{resp.StatusCode, fmt.Sprintf("downloading the mesh from %s: %s", model, resp.Status)}
 	}
 	head := make([]byte, 4)
-	n, _ := io.ReadFull(resp.Body, head)
-	if string(head[:n]) != "glTF" {
-		return "", fmt.Errorf("%s returned a file that is not a GLB", model)
+	n, err := io.ReadFull(resp.Body, head)
+	if err != nil && n < len(head) && !errors.Is(err, io.ErrUnexpectedEOF) && !errors.Is(err, io.EOF) {
+		return "", fmt.Errorf("downloading the mesh from %s: %w", model, err)
 	}
-	return p.st.Put(io.LimitReader(io.MultiReader(bytes.NewReader(head[:n]), resp.Body), maxMesh))
+	if string(head[:n]) != "glTF" {
+		return "", permanent{fmt.Errorf("%s returned a file that is not a GLB", model)}
+	}
+	return p.st.Put(&capped{r: io.MultiReader(bytes.NewReader(head[:n]), resp.Body), left: maxMesh, model: model})
+}
+
+// capped fails a download that grows past maxMesh, rather than storing a cut-off mesh.
+type capped struct {
+	r     io.Reader
+	left  int64
+	model string
+}
+
+func (c *capped) Read(b []byte) (int, error) {
+	if c.left <= 0 {
+		if n, err := c.r.Read(make([]byte, 1)); n == 0 && err != nil {
+			return 0, err
+		}
+		return 0, permanent{fmt.Errorf("%s returned a mesh over %d GB", c.model, maxMesh>>30)}
+	}
+	if int64(len(b)) > c.left {
+		b = b[:c.left]
+	}
+	n, err := c.r.Read(b)
+	c.left -= int64(n)
+	return n, err
 }
 
 func randomID() string {

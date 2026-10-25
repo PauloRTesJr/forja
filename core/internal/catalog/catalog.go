@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"reflect"
 	"sync"
 	"time"
@@ -18,11 +19,13 @@ import (
 // Entry is one provider's answer.
 type Entry struct {
 	Stages map[string]string `json:"stages"`
-	Models []engineapi.Model `json:"models"`
-	System map[string]any    `json:"system,omitempty"`
-	At     time.Time         `json:"at"`
-	// Live marks answers given in this session. Only those may key the stage cache
-	// (docs/decisions.md, decision 11); remembered ones only describe what is installed.
+	// Unavailable is why the provider runs no built-in of a stage type it knows.
+	Unavailable map[string]string `json:"unavailable,omitempty"`
+	Models      []engineapi.Model `json:"models"`
+	System      map[string]any    `json:"system,omitempty"`
+	At          time.Time         `json:"at"`
+	// Live marks answers given in this session; remembered ones only describe what is
+	// installed until the provider answers again.
 	Live bool `json:"-"`
 }
 
@@ -91,7 +94,8 @@ func (c *Catalog) Ask(ctx context.Context, id string) (*Entry, error) {
 	if err != nil {
 		return nil, fmt.Errorf("provider %s did not list its models: %w", id, err)
 	}
-	e := &Entry{Stages: info.Stages, Models: models, System: info.System, At: time.Now(), Live: true}
+	e := &Entry{Stages: info.Stages, Unavailable: info.Unavailable, Models: models, System: info.System,
+		At: time.Now(), Live: true}
 	c.mu.Lock()
 	prev := c.last[id]
 	c.last[id] = e
@@ -99,7 +103,9 @@ func (c *Catalog) Ask(ctx context.Context, id string) (*Entry, error) {
 	if raw, err := json.Marshal(e); err == nil {
 		_ = c.store.SaveCatalog(context.WithoutCancel(ctx), id, raw)
 	}
-	if prev == nil || !reflect.DeepEqual(prev.Models, e.Models) {
+	// The built-ins it runs count too: installing Blender makes its stages runnable there.
+	if prev == nil || !reflect.DeepEqual(prev.Models, e.Models) || !maps.Equal(prev.Stages, e.Stages) ||
+		!maps.Equal(prev.Unavailable, e.Unavailable) {
 		c.changed(id)
 	}
 	return e, nil
@@ -119,14 +125,6 @@ func (c *Catalog) Get(ctx context.Context, id string) (*Entry, error) {
 		return last, nil
 	}
 	return e, err
-}
-
-// Live returns this session's last answer, for keying stages while the provider is down.
-func (c *Catalog) Live(id string) (*Entry, bool) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	e, ok := c.last[id]
-	return e, ok && e.Live
 }
 
 // Last returns the remembered answer, from this session or an earlier one.

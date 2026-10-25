@@ -28,6 +28,7 @@ type Provider struct {
 	id       string
 	kind     provider.Kind
 	paid     bool
+	price    float64
 	shared   bool
 	endpoint Endpoint
 	store    *store.Store
@@ -123,8 +124,17 @@ func (p *Provider) Info(ctx context.Context) (*engineapi.Info, error) {
 func (p *Provider) Models(ctx context.Context) ([]engineapi.Model, error) {
 	var models []engineapi.Model
 	_, err := p.do(ctx, http.MethodGet, "/v1/models", nil, &models)
+	if p.price > 0 {
+		for i := range models {
+			models[i].Price = &engineapi.Price{Amount: p.price, Unit: "second", Currency: "USD"}
+		}
+	}
 	return models, err
 }
+
+// Price sets what the engine's machine costs per second (a rented pod, a Modal GPU), which its
+// models then carry.
+func (p *Provider) Price(usdPerSecond float64) { p.price = usdPerSecond }
 
 func (p *Provider) HasArtifact(ctx context.Context, ref string) (bool, error) {
 	resp, err := p.do(ctx, http.MethodHead, "/v1/artifacts/"+ref, nil, nil)
@@ -185,26 +195,45 @@ func (p *Provider) Run(ctx context.Context, req engineapi.RunRequest, events cha
 	}
 	cursor := 0
 	for attempt := 0; ; attempt++ {
+		before, opened := cursor, time.Now()
 		done, err := p.stream(ctx, run.ID, &cursor, events)
 		if done {
 			break
 		}
+		if errors.Is(err, io.ErrUnexpectedEOF) && (cursor > before || time.Since(opened) > 5*time.Second) {
+			// A gateway that closes long requests (Modal) ends streams that worked; resume.
+			attempt = 0
+		}
 		if ctx.Err() != nil {
-			cancelCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			_ = p.Cancel(cancelCtx, run.ID)
-			cancel()
+			p.abandon(run.ID)
 			return nil, ctx.Err()
 		}
 		if attempt >= 5 {
+			// Unwatched, the run would go on, and a paid gateway or pod bills it.
+			p.abandon(run.ID)
 			return nil, fmt.Errorf("event stream for run %s kept failing: %w", run.ID, err)
 		}
-		time.Sleep(time.Duration(attempt+1) * 200 * time.Millisecond) // reconnect, resuming at cursor
+		select { // reconnect, resuming at cursor
+		case <-ctx.Done():
+		case <-time.After(time.Duration(attempt+1) * reconnect):
+		}
 	}
 	var final engineapi.Run
 	if _, err := p.do(ctx, http.MethodGet, "/v1/runs/"+run.ID, nil, &final); err != nil {
 		return nil, err
 	}
 	return &final, nil
+}
+
+// reconnect is the pause before the first reconnect of a run's event stream; it grows by as
+// much each time. Tests shorten it.
+var reconnect = 200 * time.Millisecond
+
+// abandon cancels a run the core stops following, whatever became of the caller's context.
+func (p *Provider) abandon(runID string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_ = p.Cancel(ctx, runID)
 }
 
 // stream reads SSE until run.finished (done=true) or the connection drops.
@@ -259,9 +288,13 @@ func (p *Provider) Cancel(ctx context.Context, runID string) error {
 
 var _ provider.Provider = (*Provider)(nil)
 
-func (p *Provider) Checks(ctx context.Context, models []string) (*engineapi.Checks, error) {
+func (p *Provider) Checks(ctx context.Context, models, stages []string) (*engineapi.Checks, error) {
+	q := url.Values{"models": {strings.Join(models, ",")}}
+	if len(stages) > 0 {
+		q.Set("stages", strings.Join(stages, ","))
+	}
 	var out engineapi.Checks
-	_, err := p.do(ctx, http.MethodGet, "/v1/checks?models="+url.QueryEscape(strings.Join(models, ",")), nil, &out)
+	_, err := p.do(ctx, http.MethodGet, "/v1/checks?"+q.Encode(), nil, &out)
 	return &out, err
 }
 

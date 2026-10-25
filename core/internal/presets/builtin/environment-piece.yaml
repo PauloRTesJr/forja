@@ -6,9 +6,31 @@ stages:
   - { id: frame, use: framing, params: { size: 1024 } }
   - { id: shape, use: shape }
   - { id: cleanup, use: mesh.cleanup }
-  - { id: lowpoly, use: mesh.decimate, params: { target_tris: 15000 } }
-  # Painters unwrap UVs themselves, so there is no separate UV stage.
-  - { id: paint, use: texture, params: { resolution: 2048 }, inputs: [lowpoly, frame] }
+  - id: remesh
+    use: mesh.remesh
+    inputs: [cleanup]
+    params: { preserve_sharp: true }
+    optional:
+      label: Quad remesh with Blender
+      help: >-
+        Instead of simplifying the generated mesh, rebuilds it from evenly sized quads with
+        Blender's QuadriFlow, within the same triangle budget, keeping sharp edges. Even
+        topology is easier to edit. Needs Blender 4.2 or newer.
+      default: false
+      replaces: lowpoly
+  - { id: lowpoly, use: mesh.decimate, inputs: [cleanup], params: { target_tris: 15000 } }
+  # Painters unwrap UVs themselves unless this optional stage did.
+  - id: uv
+    use: mesh.uv.smart
+    inputs: [lowpoly]
+    optional:
+      label: Unwrap with Blender's Smart UV Project
+      help: >-
+        Cuts the UVs at sharp angles into fewer, straighter islands than the painter's own
+        unwrap, which suits hard-surface pieces and makes the texture easier to edit by hand.
+        Needs Blender 4.2 or newer.
+      default: false
+  - { id: paint, use: texture, params: { resolution: 2048 }, inputs: [uv, frame] }
   - id: match
     use: texture.match
     inputs: [paint, frame]

@@ -1,0 +1,118 @@
+name: Apple Silicon
+
+# MPS smoke tests on the maintainer's Mac, registered as a self-hosted runner, run by hand before a
+# release (spec section 15). Only people with write access can dispatch a workflow, so code from a
+# fork never reaches the runner, and a fork's own copy of this workflow skips its job.
+on:
+  workflow_dispatch:
+    inputs:
+      real_model:
+        description: Also generate a shape with Hunyuan3D-2mv on the Apple GPU, if the runner has it installed
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: apple-silicon
+  cancel-in-progress: false
+
+jobs:
+  mps:
+    if: github.event_name == 'workflow_dispatch' && !github.event.repository.fork
+    runs-on: [self-hosted, macOS, ARM64]
+    timeout-minutes: 90
+    env:
+      UV_FROZEN: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: core/go.mod
+          cache: false
+
+      - name: Engine tests on the Apple GPU
+        working-directory: engine
+        run: |
+          uv sync
+          # The mps tests skip anywhere but a native arm64 Python; here a skip would hide a failure.
+          uv run python -c 'import platform, sys; assert sys.platform == "darwin" and platform.machine() == "arm64", platform.machine()'
+          test "$(uv run forja-engine lane)" = mps
+          uv run pytest -q -m mps
+          uv run pytest -q
+
+      - name: Build the core
+        run: make core
+
+      - name: Stub job end to end
+        run: |
+          world="$RUNNER_TEMP/forja-stub"
+          rm -rf "$world" && mkdir -p "$world/data" "$world/config"
+          cat > "$world/config/config.toml" <<EOF
+          [models]
+          stubs = true
+
+          [engine]
+          command = ["uv", "run", "--quiet", "--project", "$GITHUB_WORKSPACE/engine", "forja-engine"]
+          EOF
+          export FORJA_SOCKET="$world/core.sock" FORJA_DATA_DIR="$world/data" FORJA_CONFIG_DIR="$world/config"
+          core/bin/forja generate engine/tests/fixtures/chest.png --preset draft
+
+      # The real model lives in the runner's own Forja data folder (FORJA_CI_DATA_DIR in the
+      # runner's .env, else ~/forja-ci), where the maintainer installed it once, accepting its
+      # license there: FORJA_DATA_DIR=~/forja-ci forja models install hunyuan3d2-mv
+      - name: Find Hunyuan3D-2mv
+        id: mv
+        if: inputs.real_model
+        run: |
+          world="$RUNNER_TEMP/forja-real"
+          rm -rf "$world" && mkdir -p "$world/config"
+          cat > "$world/config/config.toml" <<EOF
+          [models]
+          stubs = true
+
+          [models.stages]
+          shape = "hunyuan3d2-mv"
+
+          [engine]
+          command = ["uv", "run", "--quiet", "--project", "$GITHUB_WORKSPACE/engine", "forja-engine"]
+          EOF
+          {
+            echo "FORJA_SOCKET=$world/core.sock"
+            echo "FORJA_CONFIG_DIR=$world/config"
+            echo "FORJA_DATA_DIR=${FORJA_CI_DATA_DIR:-$HOME/forja-ci}"
+          } >> "$GITHUB_ENV"
+          export FORJA_SOCKET="$world/core.sock" FORJA_CONFIG_DIR="$world/config"
+          export FORJA_DATA_DIR="${FORJA_CI_DATA_DIR:-$HOME/forja-ci}"
+          mkdir -p "$FORJA_DATA_DIR"
+          core/bin/forja models ls --json > "$world/models.json"
+          uv run --no-project python -I - "$world/models.json" <<'EOF' >> "$GITHUB_OUTPUT"
+          import json, sys
+
+          mv = next((m for m in json.load(open(sys.argv[1])) if m["id"] == "hunyuan3d2-mv"), {})
+          if mv.get("status") not in ("ready", "loaded"):
+              print("::notice::Hunyuan3D-2mv is not installed on this runner: no real model run", file=sys.stderr)
+              print("ready=false")
+          else:
+              assert mv.get("device") == "mps", f"Hunyuan3D-2mv would run on {mv.get('device')}, not the Apple GPU"
+              print("ready=true")
+          EOF
+
+      - name: Shape with Hunyuan3D-2mv on the Apple GPU
+        if: steps.mv.outputs.ready == 'true'
+        run: |
+          core/bin/forja generate engine/tests/fixtures/chest.png --preset draft \
+            --json > "$RUNNER_TEMP/forja-real/jobs.json"
+          uv run --no-project python -I - "$RUNNER_TEMP/forja-real/jobs.json" <<'EOF'
+          import json, sys
+
+          (job,) = json.load(open(sys.argv[1]))
+          shape = next(s for s in job["stages"] if s["use"] == "shape")
+          assert job["status"] == "succeeded", job.get("error")
+          assert shape["model"] == "hunyuan3d2-mv", shape
+          print(f"Hunyuan3D-2mv made the shape on the Apple GPU in {shape['seconds']:.1f} s")
+          EOF

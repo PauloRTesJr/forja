@@ -1,0 +1,3 @@
+# Nothing GPU-specific: the example runs on the CPU on every machine. A torch family lists
+# torch here, built for the lane by family.yaml's torch_backend.
+-r cpu.txt

@@ -4,8 +4,7 @@ package config
 func Defaults() map[string]any {
 	return map[string]any{
 		"general": map[string]any{
-			"language":     "en",
-			"cache_max_gb": int64(50),
+			"language": "en",
 		},
 		"engine": map[string]any{
 			"idle_unload_minutes": int64(15),
@@ -33,6 +32,18 @@ func Defaults() map[string]any {
 		"project": map[string]any{
 			"export_dir":     "Assets/Generated",
 			"default_preset": "mobile-prop",
+		},
+		// A release fails on more than 10% regression in time or VRAM (spec, section 10).
+		"bench": map[string]any{
+			"threshold_pct": 10.0,
+			"min_seconds":   0.05,
+			"min_vram_mb":   64.0,
+		},
+		// What paid providers charge, for estimates and spending limits (spec section 8). Hosted
+		// models report their own price; an entry named after a model id replaces it.
+		"prices": map[string]any{
+			"runpod-serverless-4090": map[string]any{"label": "RunPod serverless, RTX 4090 24 GB (flex worker)", "usd": 0.00031, "per": "second"},
+			"runpod-pod-4090":        map[string]any{"label": "RunPod pod, RTX 4090 on demand", "usd": 0.34, "per": "hour"},
 		},
 	}
 }

@@ -68,10 +68,16 @@ func (a *app) modelsCmd() *cobra.Command {
 	cmd.AddCommand(rm)
 
 	var checksProvider string
+	var checksStages []string
 	checks := calls(&cobra.Command{
 		Use: "checks [model]...", Short: "Show what this computer needs before models install",
+		Long: "Shows what the named models need on this computer, every model when none is named.\n" +
+			"--stage asks what running a stage type here needs, such as Blender for mesh.remesh.",
 		RunE: func(_ *cobra.Command, args []string) error {
 			q := url.Values{"models": {strings.Join(args, ",")}}
+			if len(checksStages) > 0 {
+				q.Set("stages", strings.Join(checksStages, ","))
+			}
 			if checksProvider != "" {
 				q.Set("provider", checksProvider)
 			}
@@ -107,6 +113,7 @@ func (a *app) modelsCmd() *cobra.Command {
 		},
 	}, "GET /v1/checks")
 	checks.Flags().StringVar(&checksProvider, "provider", "", "provider to check (default: this computer)")
+	checks.Flags().StringSliceVar(&checksStages, "stage", nil, "stage types to run here, such as mesh.remesh")
 	cmd.AddCommand(checks)
 
 	var fixProvider string

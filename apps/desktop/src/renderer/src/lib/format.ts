@@ -37,10 +37,13 @@ const stageLabels: Record<string, string> = {
   shape: 'Shape',
   'mesh.cleanup': 'Cleanup',
   'mesh.decimate': 'Low-poly',
+  'mesh.remesh': 'Quad remesh',
   'mesh.uv': 'UV unwrap',
+  'mesh.uv.smart': 'Smart UV unwrap',
   texture: 'Texture',
   'texture.match': 'Texture match',
   bake: 'Bake',
+  rig: 'Rig',
   'mesh.lods': 'LODs',
   export: 'Export',
 }
@@ -57,7 +60,10 @@ export function stageName(s: { id: string; use: string }): string {
 
 /** A stage type as a noun in a sentence: "a background removal model". */
 export const taskNoun = (use: string): string =>
-  use === 'background-removal' ? 'background removal' : stageLabel(use).toLowerCase()
+  use === 'background-removal' ? 'background removal' : use === 'rig' ? 'rigging' : stageLabel(use).toLowerCase()
+
+/** A rig's skeleton as the asset page names it. */
+export const skeletonName = (rig: { skeleton?: string }): string => (rig.skeleton === 'humanoid' ? 'Humanoid' : 'Generic')
 
 /** "a", "a and b", "a, b and c". */
 export function listOf(items: string[]): string {

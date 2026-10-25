@@ -1,0 +1,50 @@
+# Optional: the fast checks CI runs, before each commit (`make hooks` installs them). Each hook runs
+# only when files it covers are staged; `make check` stays the full gate. All hooks are local, so
+# nothing is fetched from another repository.
+repos:
+  - repo: local
+    hooks:
+      - id: engine-ruff
+        name: engine ruff (lint, format)
+        language: system
+        entry: bash -c 'cd engine && uv run --quiet ruff check . && uv run --quiet ruff format --check .'
+        files: ^engine/.*\.py$
+        pass_filenames: false
+      - id: scripts-ruff
+        name: scripts ruff (lint, format)
+        language: system
+        entry: >-
+          bash -c 'cd engine && uv run --quiet ruff check --config pyproject.toml ../scripts &&
+          uv run --quiet ruff format --config pyproject.toml --check ../scripts'
+        files: ^scripts/.*\.py$
+        pass_filenames: false
+      - id: manifest-licenses
+        name: model manifests declare their licenses
+        language: system
+        entry: bash -c 'cd engine && uv run --quiet pytest -q tests/test_manifest_licenses.py'
+        files: ^engine/(src/forja_engine/manifests/|families/[^/]+/family\.yaml$)
+        pass_filenames: false
+      - id: core-gofmt-vet
+        name: core gofmt, go vet
+        language: system
+        entry: bash -c 'cd core && test -z "$(gofmt -l .)" && go vet ./...'
+        files: ^core/.*\.go$
+        pass_filenames: false
+      - id: desktop-lint
+        name: desktop eslint, tsc
+        language: system
+        entry: bash -c 'cd apps/desktop && pnpm lint && pnpm typecheck'
+        files: ^apps/desktop/.*\.(ts|tsx|js|mjs|cjs)$
+        pass_filenames: false
+      - id: one-version
+        name: app, core and engine carry VERSION
+        language: system
+        entry: uv run --quiet --no-project python scripts/version.py --check
+        files: ^(VERSION|apps/desktop/package\.json|engine/pyproject\.toml|engine/families/[^/]+/pyproject\.toml|engine/src/forja_engine/__init__\.py|engine/sdk/pyproject\.toml|engine/sdk/src/forja_sdk/__init__\.py)$
+        pass_filenames: false
+      - id: actionlint
+        name: actionlint (workflows)
+        language: system
+        entry: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+        files: ^\.github/(workflows|actions)/
+        pass_filenames: false

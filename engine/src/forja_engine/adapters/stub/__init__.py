@@ -13,6 +13,7 @@ from PIL import Image
 
 from forja_engine.ops import image as img_ops
 from forja_engine.ops import mesh as mesh_ops
+from forja_engine.ops import rig as rig_ops
 from forja_engine.sdk import (
     Adapter,
     ArtifactKind,
@@ -120,6 +121,30 @@ def _inflate(mask: NDArray[np.bool_], cell_h: NDArray[np.float64]) -> trimesh.Tr
     mesh = trimesh.Trimesh(verts, faces, process=True)  # merges front/back at the zero-height rim
     mesh.remove_unreferenced_vertices()
     return mesh
+
+
+class StubRig(Adapter):
+    """Fits a fixed skeleton to the mesh's bounds and weights it by distance to the bones.
+
+    A standing character gets the humanoid template under humanoid names; anything else a
+    chain up its tallest axis.
+    """
+
+    def capabilities(self) -> Capabilities:
+        return Capabilities(tasks=(StageType.RIG,), devices=(Device.CPU,), vram_bytes=512 * MB)
+
+    def run(self, ctx: StageContext) -> list[StageOutput]:
+        mesh = mesh_ops.load(ctx.input(ArtifactKind.MESH_GLB).path)
+        want = str(ctx.params.get("profile", "auto"))
+        humanoid = want == "humanoid" or (want == "auto" and rig_ops.looks_humanoid(mesh))
+        skeleton = rig_ops.template(mesh) if humanoid else rig_ops.chain(mesh)
+        ctx.progress(1, 2)
+        ctx.check_cancel()
+        weights = rig_ops.distance_weights(np.asarray(mesh.vertices, dtype=np.float64), skeleton)
+        bone_map = {n: n for n in skeleton.names} if humanoid else {}
+        glb, profile = rig_ops.save(mesh, skeleton, weights, bone_map, "stub-rig", ctx.out_dir)
+        ctx.progress(2, 2)
+        return [StageOutput(glb, ArtifactKind.MESH_GLB), StageOutput(profile, ArtifactKind.JSON)]
 
 
 class StubPaint(Adapter):

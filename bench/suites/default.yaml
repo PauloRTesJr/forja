@@ -1,0 +1,18 @@
+# The reference benchmark (spec, section 10): the M0 reference images through the presets the
+# budgets name, with the models pinned in bench/m0/forja.toml (docs/decisions.md, decision 12).
+# Results compare only within one version: bump it whenever the images or presets change.
+schema: 1
+name: default
+version: 1
+description: The reference images of the M0 spike through Draft and Mobile prop, real models.
+presets: [draft, mobile-prop]
+project: ../m0
+# Seconds from image to GLB, models warm, on the reference machine (spec, section 10).
+budgets:
+  draft: 10
+  mobile-prop: 90
+core_overhead_ms: 200
+images:
+  # Every image in bench/m0/refs (its README says what the 20 must cover). Once they are
+  # assembled, list them here one by one, with a category each, so the suite stays fixed.
+  - dir: ../m0/refs

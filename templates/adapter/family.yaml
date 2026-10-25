@@ -1,0 +1,17 @@
+# Example model family: runs on the CPU with nothing beyond numpy and Pillow.
+# Every name here is the family's: its environment is <data>/envs/<name>.
+name: example
+python: "3.11"
+# The torch lanes this family installs on. The engine picks the machine's lane; a lane
+# missing here makes install refuse, with advice to route the model to another computer.
+lanes: [cuda, rocm, mps, cpu]
+# A real family pins the upstream code it runs. Install downloads it, checks the sha256,
+# and puts it on the environment's import path; it is never committed to Forja.
+# upstream:
+#   url: https://codeload.github.com/<org>/<repo>/tar.gz/<40-character commit sha>
+#   sha256: <sha256 of that tarball>
+#   license: <SPDX id of the upstream code>
+#   pythonpath: ["."]
+# torch_backend: { cuda: cu124 }   # torch from PyTorch's index for that CUDA build
+# build: ["<package>==<version>"]  # compiled against the installed torch, in order
+# smoke: "import <upstream module>"  # proves the upstream code and its extensions load

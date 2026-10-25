@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -43,6 +44,12 @@ type fakeProvider struct {
 	// hold, when set, keeps runs that build a shape going until it is closed; held counts them.
 	hold chan struct{}
 	held int
+	// pngs makes the images it prepares start like PNG files, for a hosted model that checks.
+	pngs bool
+	// unavailable are the built-ins it says it cannot run here, with why.
+	unavailable map[string]string
+	// notes are what a stage type says about its first output, such as a stand-in it made.
+	notes map[string]string
 }
 
 var cpu = "cpu"
@@ -67,7 +74,7 @@ func (f *fakeProvider) Info(context.Context) (*engineapi.Info, error) {
 	for k, v := range f.stages {
 		stages[k] = v
 	}
-	return &engineapi.Info{Stages: stages}, nil
+	return &engineapi.Info{Stages: stages, Unavailable: f.unavailable}, nil
 }
 
 func (f *fakeProvider) Models(context.Context) ([]engineapi.Model, error) {
@@ -136,6 +143,9 @@ func (f *fakeProvider) Run(_ context.Context, req engineapi.RunRequest, evs chan
 			inputs = append(inputs, in)
 		}
 		blob := s.ID + s.Model + strings.Join(inputs, ",") + strings.Join(s.Views, ",") + fmtParams(s.Params)
+		if f.pngs && (s.Use == "background-removal" || s.Use == "framing") {
+			blob = "\x89PNG" + blob
+		}
 		outs := []engineapi.Output{{Kind: "mesh/glb"}}
 		switch s.Use {
 		case "views.detect":
@@ -158,6 +168,9 @@ func (f *fakeProvider) Run(_ context.Context, req engineapi.RunRequest, evs chan
 		if outs[0].Hash == "" {
 			outs[0].Hash = ref
 		}
+		f.mu.Lock()
+		outs[0].Note = f.notes[s.Use]
+		f.mu.Unlock()
 		produced[s.ID] = outs[0].Hash
 		secs := 0.01
 		evs <- engineapi.Event{Type: "stage.started", Data: map[string]any{"stage": s.ID}}
@@ -234,30 +247,43 @@ func wait(t *testing.T, r *Runner, id string) *library.Job {
 	return nil
 }
 
-func TestTextureRerunHitsTheShapeCache(t *testing.T) {
+// Nothing carries over from one job to the next: the same image again runs every stage again.
+func TestTheSameJobAgainRunsEveryStage(t *testing.T) {
 	r, fp, _, _, img := setup(t)
 	ctx := context.Background()
-	j1, err := r.Submit(ctx, SubmitRequest{Input: img, Preset: "mobile-prop", Name: "chest.png"})
+	var ran []string
+	for range 2 {
+		n := fp.count()
+		j, err := r.Submit(ctx, SubmitRequest{Input: img, Preset: "mobile-prop", Name: "chest.png"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := wait(t, r, j.ID); got.Status != library.Succeeded || got.AssetID == "" {
+			t.Fatalf("job: %s %s", got.Status, got.Error)
+		}
+		ran = append(ran, fp.runsSince(n))
+	}
+	if ran[0] != "bg,sheet|frame,shape,cleanup,lowpoly,paint,bake,lods,export" || ran[1] != ran[0] {
+		t.Fatalf("the provider ran %q", ran)
+	}
+}
+
+// A stage that made a stand-in says so on its output, and the job keeps that note.
+func TestAnOutputsNoteStaysWithIt(t *testing.T) {
+	r, fp, _, _, img := setup(t)
+	fp.set(func(f *fakeProvider) { f.notes = map[string]string{"mesh.decimate": "simplified instead"} })
+	j, err := r.Submit(context.Background(), SubmitRequest{Input: img, Preset: "mobile-prop"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := wait(t, r, j1.ID); got.Status != library.Succeeded || got.AssetID == "" {
-		t.Fatalf("job 1: %s %s", got.Status, got.Error)
-	}
-	j2, _ := r.Submit(ctx, SubmitRequest{Input: img, Preset: "mobile-prop",
-		Overrides: map[string]any{"paint.resolution": 2048}})
-	got := wait(t, r, j2.ID)
-	cached := 0
-	for _, s := range got.Stages {
-		if s.Cached {
-			cached++
+	for _, s := range wait(t, r, j.ID).Stages {
+		want := []string(nil)
+		if s.Use == "mesh.decimate" {
+			want = []string{"simplified instead"}
 		}
-	}
-	if cached != 5 {
-		t.Fatalf("expected the 5 pre-texture stages cached, got %d", cached)
-	}
-	if last := fp.runs[len(fp.runs)-1]; strings.Join(last, ",") != "paint,bake,lods,export" {
-		t.Fatalf("second run executed %v", last)
+		if !slices.Equal(s.OutputNotes(), want) {
+			t.Fatalf("stage %s: notes %q", s.ID, s.OutputNotes())
+		}
 	}
 }
 
@@ -306,63 +332,6 @@ func (f *fakeProvider) executed(before int) string {
 		return ""
 	}
 	return strings.Join(f.runs[len(f.runs)-1], ",")
-}
-
-func TestNewVersionsOnTheProviderRecomputeFromTheStageThatChanged(t *testing.T) {
-	r, fp, _, _, img := setup(t)
-	ctx := context.Background()
-	submit := func() *library.Job {
-		t.Helper()
-		j, err := r.Submit(ctx, SubmitRequest{Input: img, Preset: "mobile-prop"})
-		if err != nil {
-			t.Fatal(err)
-		}
-		got := wait(t, r, j.ID)
-		if got.Status != library.Succeeded {
-			t.Fatalf("%s: %s", got.Status, got.Error)
-		}
-		return got
-	}
-	first := submit()
-	fp.set(func(f *fakeProvider) { f.stages["bake"] = "2" })
-	n := fp.count()
-	submit()
-	if got := fp.executed(n); got != "bake,lods,export" {
-		t.Fatalf("after a new bake version the provider ran %q", got)
-	}
-	fp.set(func(f *fakeProvider) { f.shape.Weights.Revision = "next" })
-	n = fp.count()
-	submit()
-	if got := fp.executed(n); got != "shape,cleanup,lowpoly,paint,bake,lods,export" {
-		t.Fatalf("after new shape weights the provider ran %q", got)
-	}
-	if first.Stages[0].Key == "" {
-		t.Fatal("keys are not recorded on the job")
-	}
-}
-
-func TestAnUnreachableProviderKeysWithItsLastAnswer(t *testing.T) {
-	r, fp, _, _, img := setup(t)
-	ctx := context.Background()
-	fp.set(func(f *fakeProvider) { f.down = true })
-	if _, err := r.Submit(ctx, SubmitRequest{Input: img, Preset: "mobile-prop"}); err == nil ||
-		!strings.Contains(err.Error(), "did not say what it runs") {
-		t.Fatalf("with no answer ever: %v", err)
-	}
-	fp.set(func(f *fakeProvider) { f.down = false })
-	j, _ := r.Submit(ctx, SubmitRequest{Input: img, Preset: "mobile-prop"})
-	if got := wait(t, r, j.ID); got.Status != library.Succeeded {
-		t.Fatalf("first answered job: %s %s", got.Status, got.Error)
-	}
-	fp.set(func(f *fakeProvider) { f.down = true })
-	n := fp.count()
-	j, _ = r.Submit(ctx, SubmitRequest{Input: img, Preset: "mobile-prop"})
-	if got := wait(t, r, j.ID); got.Status != library.Succeeded {
-		t.Fatalf("fully cached job while the provider is down: %s %s", got.Status, got.Error)
-	}
-	if got := fp.executed(n); got != "" {
-		t.Fatalf("a fully cached job ran %q", got)
-	}
 }
 
 // stageModels maps stage id to the model a submitted job uses.
@@ -463,8 +432,62 @@ func TestOptionalStagesRunOnlyWhenSwitchedOn(t *testing.T) {
 	if got := wait(t, r, j.ID); got.Status != library.Succeeded {
 		t.Fatalf("%s: %s", got.Status, got.Error)
 	}
-	if got := fp.executed(n); got != "match,bake,lods,export" {
+	if got := fp.executed(n); got != "frame,shape,cleanup,lowpoly,paint,match,bake,lods,export" {
 		t.Fatalf("switching match on ran %q", got)
+	}
+}
+
+// blenderBox fakes another computer's engine, one that has Blender.
+type blenderBox struct{ *fakeProvider }
+
+func (b *blenderBox) ID() string          { return "box" }
+func (b *blenderBox) Kind() provider.Kind { return provider.KindEngine }
+func (b *blenderBox) Info(context.Context) (*engineapi.Info, error) {
+	return &engineapi.Info{Stages: map[string]string{"mesh.remesh": "1+blender-5.2.1", "mesh.uv.smart": "1+blender-5.2.1"}}, nil
+}
+func (b *blenderBox) Models(context.Context) ([]engineapi.Model, error) { return nil, nil }
+
+func TestBlenderStagesRunWhereBlenderIsAndAreRefusedWhereNoneIs(t *testing.T) {
+	r, fp, _, _, img := setup(t)
+	ctx := context.Background()
+	why := "Blender 4.2 or newer was not found on the computer that runs the engine"
+	fp.set(func(f *fakeProvider) {
+		f.unavailable = map[string]string{"mesh.remesh": why, "mesh.uv.smart": why}
+	})
+	on := map[string]any{"remesh.enabled": true, "uv.enabled": true}
+	_, err := r.Submit(ctx, SubmitRequest{Input: img, Preset: "environment-piece", Overrides: on})
+	if err == nil || !strings.Contains(err.Error(), "no provider can run mesh.remesh: "+why) {
+		t.Fatalf("got %v", err)
+	}
+	all, _ := r.Presets("")
+	off, err := r.Unavailable(ctx, "", all["environment-piece"])
+	if err != nil || off["remesh"].Reason != why || off["uv"].Reason != why || !off["remesh"].Software {
+		t.Fatalf("unavailable %v, %v", off, err)
+	}
+	if _, ok := off["match"]; ok {
+		t.Fatalf("match runs anywhere, yet: %v", off["match"])
+	}
+
+	r.providers.Add(&blenderBox{fp})
+	project := t.TempDir()
+	os.WriteFile(filepath.Join(project, "forja.toml"), []byte("[routing]\npriority = [\"local\", \"box\"]\n"), 0o644)
+	j, err := r.Submit(ctx, SubmitRequest{Input: img, Preset: "environment-piece", Project: project, Overrides: on})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := stageIDs(j); got != "bg,frame,shape,cleanup,remesh,uv,paint,bake,lods,export" {
+		t.Fatalf("stages %s", got)
+	}
+	for _, s := range j.Stages {
+		if want := map[bool]string{true: "box", false: LocalProvider}[s.Use == "mesh.remesh" || s.Use == "mesh.uv.smart"]; s.Provider != want {
+			t.Fatalf("stage %s runs on %q, want %q", s.ID, s.Provider, want)
+		}
+	}
+	if got := wait(t, r, j.ID); got.Status != library.Succeeded {
+		t.Fatalf("%s: %s", got.Status, got.Error)
+	}
+	if got := fp.spec("remesh").Params["target_tris"]; fmt.Sprint(got) != "15000" {
+		t.Fatalf("remesh budget %v, want the decimation's 15000", got)
 	}
 }
 
@@ -547,7 +570,7 @@ func TestSpendingLimitsRefuseJobsThatWouldPassThem(t *testing.T) {
 	limit := func(budget string) {
 		os.WriteFile(filepath.Join(project, "forja.toml"), []byte(pins+"[routing.budget_usd]\n"+budget+"\n"), 0o644)
 	}
-	// Each seed is a new shape, so each job pays; a cached one would cost nothing.
+	// Each job runs its hosted shape stage, so each job pays.
 	submit := func(seed int) error {
 		j, err := r.Submit(context.Background(), SubmitRequest{Input: img, Preset: "draft", Project: project, Seed: &seed})
 		if err == nil {
@@ -570,8 +593,8 @@ func TestSpendingLimitsRefuseJobsThatWouldPassThem(t *testing.T) {
 	}
 }
 
-func TestEvictionWaitsForRunningJobsAndHearsWhenTheLastEnds(t *testing.T) {
-	r, fp, _, st, img := setup(t)
+func TestSweepsWaitForRunningJobsAndHearWhenTheLastEnds(t *testing.T) {
+	r, fp, _, _, img := setup(t)
 	idle := make(chan struct{}, 4)
 	r.OnIdle = func() { idle <- struct{}{} }
 	hold := make(chan struct{})
@@ -592,7 +615,7 @@ func TestEvictionWaitsForRunningJobsAndHearsWhenTheLastEnds(t *testing.T) {
 			t.Fatal("the job never reached its shape")
 		}
 	}
-	if r.WhenIdle(func() { t.Error("eviction ran while a job built its shape") }) {
+	if r.WhenIdle(func() { t.Error("a sweep ran while a job built its shape") }) {
 		t.Fatal("WhenIdle ran during a job")
 	}
 	close(hold)
@@ -608,22 +631,61 @@ func TestEvictionWaitsForRunningJobsAndHearsWhenTheLastEnds(t *testing.T) {
 	if !r.WhenIdle(func() { ran = true }) || !ran {
 		t.Fatal("WhenIdle did not run once the job ended")
 	}
+}
 
-	// A cache hit marks what it reuses as just used, so eviction keeps it longest.
-	var shape string
-	for _, s := range wait(t, r, j1.ID).Stages {
-		if s.Use == "shape" {
-			shape = s.Outputs[0].Hash
+// runsSince lists the provider's runs after the first before, "|" between runs.
+func (f *fakeProvider) runsSince(before int) string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var runs []string
+	for _, ids := range f.runs[before:] {
+		runs = append(runs, strings.Join(ids, ","))
+	}
+	return strings.Join(runs, "|")
+}
+
+func TestASampleMeasuresEveryStage(t *testing.T) {
+	r, fp, _, _, img := setup(t)
+	ctx := context.Background()
+	measure := func() Sample {
+		t.Helper()
+		job, done, err := r.Measure(ctx, SubmitRequest{Input: img, Preset: "draft", Sheet: library.SheetKeep})
+		if err != nil {
+			t.Fatal(err)
+		}
+		select {
+		case s := <-done:
+			if s.Job.ID != job.ID || s.Job.Status != library.Succeeded {
+				t.Fatalf("sample %s: %s %s", s.Job.ID, s.Job.Status, s.Job.Error)
+			}
+			return s
+		case <-time.After(5 * time.Second):
+			t.Fatal("the sample never ended")
+		}
+		return Sample{}
+	}
+	before := fp.count()
+	s := measure()
+	// Background removal ran once, while looking for a sheet of views, and was reused after.
+	if got := fp.runsSince(before); got != "bg,sheet|frame,shape,cleanup,export" {
+		t.Fatalf("the sample ran %s", got)
+	}
+	if s.Job.AssetID != "" || s.Engine <= 0 || s.Overhead() <= 0 || s.Overhead() >= s.Wall {
+		t.Fatalf("sample %+v, overhead %s", s, s.Overhead())
+	}
+
+	for deadline := time.Now().Add(5 * time.Second); !r.WhenIdle(func() {}); time.Sleep(5 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatal("the runner never went idle")
 		}
 	}
-	p, _ := st.Path(shape)
-	old := time.Now().Add(-48 * time.Hour)
-	if err := os.Chtimes(p, old, old); err != nil {
-		t.Fatal(err)
+	release := r.Hold()
+	if r.WhenIdle(func() {}) {
+		t.Fatal("a sweep ran while a benchmark held the runner")
 	}
-	j2, _ := r.Submit(ctx, SubmitRequest{Input: img, Preset: "mobile-prop", Overrides: map[string]any{"paint.resolution": 2048}})
-	wait(t, r, j2.ID)
-	if info, _ := os.Stat(p); time.Since(info.ModTime()) > time.Minute {
-		t.Fatalf("the reused shape still looks used at %s", info.ModTime())
+	release()
+	release()
+	if !r.WhenIdle(func() {}) {
+		t.Fatal("sweeps stayed away after the benchmark let go")
 	}
 }

@@ -1,6 +1,9 @@
 # TripoSG image-to-shape (MIT), VAST-AI-Research.
 name: triposg
 python: "3.11"
+# No mps lane: triposg/inference_utils.py imports diso's DiffDMC at module level for mesh
+# extraction, and diso 0.1.4 is CUDA only (its bindings include the .cu kernels unconditionally
+# and assert CUDA tensors). The pinned commit is upstream's latest.
 lanes: [cuda]
 torch_backend: { cuda: cu124 }
 upstream:

@@ -150,9 +150,6 @@ func (a *app) showJob(j *library.Job) {
 	a.table("STAGE\tUSE\tMODEL\tPROVIDER\tSTATUS\tSECONDS\tOUTPUT", func(row func(...any)) {
 		for _, s := range j.Stages {
 			status := string(s.Status)
-			if s.Cached {
-				status += " (cached)"
-			}
 			if s.Status == library.Running && s.Total > 0 {
 				status += fmt.Sprintf(" %d/%d", s.Step, s.Total)
 			}
@@ -167,6 +164,12 @@ func (a *app) showJob(j *library.Job) {
 		}
 	})
 	for _, s := range j.Stages {
+		for _, f := range s.Fallbacks {
+			a.printf("%s moved from %s to %s: it %s\n", s.ID, f.From, f.To, f.Reason)
+		}
+		for _, note := range s.OutputNotes() {
+			a.printf("%s: %s\n", s.ID, note)
+		}
 		if s.Error != "" {
 			a.printf("%s failed: %s\n", s.ID, s.Error)
 		}

@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useId, useRef, useState, type CSSProperties, type ReactNode } from 'react'
+import { Benchmark } from '../components/Benchmark'
 import { CheckList, FitBadge, LicenseLine, TaskProgress, taskFor, useChecks, useInstalls } from '../components/Install'
 import { Alert, More, PauseMoon, Sparkle } from '../components/icons'
 import { ScreenHead, SectionHead } from '../components/ScreenHead'
@@ -23,7 +24,7 @@ import { cost, isHosted, isInstalled, licenseFact, limits, runsOn, type Fact } f
 import { useToast } from '../lib/toast'
 
 const UNUSABLE = 'unusable'
-const ORDER = ['background-removal', 'shape', 'texture']
+const ORDER = ['background-removal', 'shape', 'texture', 'rig']
 
 function groupsOf(models: Model[]): [string, Model[]][] {
   const by = new Map<string, Model[]>()
@@ -124,6 +125,7 @@ export function Models() {
           </div>
         )
       )}
+      <Benchmark />
       {installing && <InstallDialog model={installing} onClose={() => setInstalling(undefined)} />}
       {connecting && <ConnectHub onClose={() => setConnecting(false)} />}
       {browsing && hub && <Catalog provider={hub.id} label={hub.label} onClose={() => setBrowsing(false)} />}
@@ -307,7 +309,7 @@ function InstallDialog({ model: m, onClose }: { model: Model; onClose: () => voi
       <div className="dialog" role="dialog" aria-modal aria-label={`Install ${m.name}`} tabIndex={-1} ref={ref} onClick={(e) => e.stopPropagation()}>
         <h2>Install {m.name}</h2>
         <p className="muted">
-          {m.description} About {m.disk_gb?.toFixed(1) ?? '?'} GB on disk. <FitBadge fit={m.fit} />
+          {m.description} About {m.disk_gb?.toFixed(1) ?? '?'} GB on disk. <FitBadge fit={m.fit} on={m.runs_on} />
         </p>
         {!started && (
           <>

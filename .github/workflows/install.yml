@@ -1,0 +1,99 @@
+# Fresh engine bootstraps, weekly and on demand (spec, section 15: Install), the way a user's
+# first install runs: the forja CLI asks the engine to build a model family's environment with
+# uv, fetch its pinned weights and smoke-test it, then generates with it.
+#
+# cpu: hosted runners, the CPU lane (BiRefNet lite, the one family with one), on all three OS.
+# cuda: the maintainer's GPU runner, every CUDA family built from nothing (compiled extensions
+# included) without weights, which gpu-nightly.yml keeps. Same guards as gpu-nightly.yml.
+name: Install
+
+on:
+  schedule:
+    - cron: "41 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+
+jobs:
+  cpu:
+    name: CPU lane (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        with:
+          node: "false"
+      - run: make core
+      - name: Environment
+        run: |
+          echo "FORJA_E2E_OUT=$RUNNER_TEMP/e2e" >>"$GITHUB_ENV"
+          # The stubs stand in for the GPU-only stages; the project pins the model under test.
+          mkdir -p "$RUNNER_TEMP/project"
+          printf '[models.stages]\nbackground-removal = "birefnet-lite"\n' >"$RUNNER_TEMP/project/forja.toml"
+      - name: Checks
+        run: bash scripts/e2e.sh forja models checks birefnet-lite
+      - name: Install
+        run: |
+          bash scripts/e2e.sh forja models install birefnet-lite --lane cpu
+          # Also refreshes the core's remembered model list, which a one-shot install command can
+          # end before updating; generate reads that list without starting the engine.
+          bash scripts/e2e.sh forja models ls
+      - name: Generate with it
+        working-directory: ${{ runner.temp }}/project
+        run: bash "$GITHUB_WORKSPACE/scripts/e2e.sh" generate
+      - if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: install-cpu-${{ matrix.os }}
+          path: |
+            ${{ runner.temp }}/e2e/glb
+            ${{ runner.temp }}/e2e/*.json
+            ${{ runner.temp }}/e2e/data/logs
+          if-no-files-found: ignore
+          retention-days: 14
+
+  cuda:
+    name: CUDA lane
+    if: >-
+      vars.FORJA_GPU_RUNNER == 'true' &&
+      github.event_name != 'pull_request' && github.event_name != 'pull_request_target'
+    runs-on: [self-hosted, linux, gpu]
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        with:
+          node: "false"
+      - run: make core
+      - name: Install every CUDA family from nothing
+        env:
+          FORJA_E2E_OUT: ${{ runner.temp }}/e2e
+          FORJA_E2E_MODELS: real
+          MODELS: ${{ vars.FORJA_GPU_MODELS || 'birefnet triposg hunyuan3d2-paint' }}
+        run: |
+          # shellcheck disable=SC2086 # one model id per word
+          bash scripts/e2e.sh forja models install $MODELS --lane cuda --no-weights --accept-license
+      - if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: install-cuda
+          path: ${{ runner.temp }}/e2e/data/logs
+          if-no-files-found: ignore
+          retention-days: 14

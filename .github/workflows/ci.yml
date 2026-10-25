@@ -1,0 +1,143 @@
+# Every push to main and every pull request, on GitHub-hosted runners (spec, section 15).
+# GPU work runs elsewhere: gpu-nightly.yml and bench-gate.yml, on the maintainer's own runner.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  # electron-builder fetches its own Electron when packaging; nothing here runs the binary.
+  ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+
+jobs:
+  check:
+    name: check (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+      # Engine: ruff, format, mypy, pytest. Core: gofmt, vet, tests (-race where cgo works).
+      # App: eslint, tsc, vitest, and the electron-vite build (the only step that parses the CSS).
+      - run: make check
+
+  core-all:
+    name: cross-compile the core
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        with:
+          python: "false"
+          node: "false"
+      - run: make core-all
+      - run: ls -l core/bin
+
+  compliance:
+    name: versions, licenses, workflows
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+      - name: App, core and engine carry one version
+        run: uv run --no-project python scripts/version.py --check
+      - name: Lint the scripts
+        working-directory: engine
+        run: |
+          uv run ruff check --config pyproject.toml ../scripts
+          uv run ruff format --config pyproject.toml --check ../scripts
+          uv run mypy ../scripts
+      - name: No strong copyleft in what ships
+        run: make licenses
+      - name: Workflows
+        run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+
+  # The whole pipeline with the deterministic stub models: the forja CLI starts a core, the core
+  # starts this checkout's engine, and the chest fixture becomes a GLB.
+  integration:
+    name: integration (${{ matrix.os }})
+    if: github.event_name != 'push'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        with:
+          node: "false"
+      - run: make integration
+        env:
+          FORJA_E2E_OUT: ${{ runner.temp }}/e2e
+      - if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: integration-${{ matrix.os }}
+          path: |
+            ${{ runner.temp }}/e2e/glb
+            ${{ runner.temp }}/e2e/*.json
+            ${{ runner.temp }}/e2e/data/logs
+          if-no-files-found: ignore
+          retention-days: 7
+
+  # The stub suite as a smoke test: it must run to the end, but its timings gate nothing
+  # (hosted runners are too noisy; bench-gate.yml compares real ones).
+  bench-smoke:
+    name: bench smoke (stub suite)
+    if: github.event_name != 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        with:
+          node: "false"
+      - run: make core
+      - name: Run bench/suites/ci.yaml
+        env:
+          FORJA_E2E_OUT: ${{ runner.temp }}/e2e
+        run: |
+          if [ ! -f bench/suites/ci.yaml ]; then
+            echo "::warning::bench/suites/ci.yaml is missing: nothing to smoke-test"
+            exit 0
+          fi
+          bash scripts/e2e.sh forja bench --suite bench/suites/ci.yaml --json --out "$RUNNER_TEMP/bench"
+      - if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: bench-smoke
+          path: ${{ runner.temp }}/bench
+          if-no-files-found: ignore
+          retention-days: 14

@@ -45,7 +45,9 @@ type Provider interface {
 // Installer is implemented by providers that manage models on their own machine (engines).
 // Callers type-assert for it; a managed API has nothing to install.
 type Installer interface {
-	Checks(ctx context.Context, models []string) (*engineapi.Checks, error)
+	// Checks says what the models need on the provider's machine, and what it needs to run
+	// built-in stages of the given types itself (Blender for quad remesh).
+	Checks(ctx context.Context, models, stages []string) (*engineapi.Checks, error)
 	Fix(ctx context.Context, check string) (*engineapi.Task, error)
 	Install(ctx context.Context, model string, req engineapi.InstallRequest) (*engineapi.Task, error)
 	Remove(ctx context.Context, model string) (*engineapi.Task, error)
@@ -105,4 +107,11 @@ type Hub interface {
 	// Thumbnail fetches a catalog picture with its media type; it refuses URLs off the hub's
 	// own image hosts.
 	Thumbnail(ctx context.Context, url string) (io.ReadCloser, string, error)
+}
+
+// Sleeper is implemented by providers that bill for waking up (serverless endpoints). While one
+// is asleep, the catalog describes it from its last answer instead of asking, which would
+// start a worker; keying a job still asks.
+type Sleeper interface {
+	Asleep() bool
 }

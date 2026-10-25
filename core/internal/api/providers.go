@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"math/big"
 	"net"
 	"net/http"
@@ -21,6 +22,7 @@ import (
 	"forja/internal/jobs"
 	"forja/internal/provider"
 	"forja/internal/provider/engine"
+	"forja/internal/provider/runpod"
 	"forja/internal/providers"
 	"forja/internal/secrets"
 	"forja/internal/tlscert"
@@ -49,6 +51,10 @@ type ProviderRow struct {
 	Key         *KeyView `json:"key,omitempty"`
 	// Editable is false for providers set in a system or project file, which the app leaves alone.
 	Editable bool `json:"editable"`
+	// Vendor, EndpointID and the price per second describe rented GPUs (RunPod, Modal).
+	Vendor            string  `json:"vendor,omitempty"`
+	EndpointID        string  `json:"endpoint_id,omitempty"`
+	PriceUSDPerSecond float64 `json:"price_usd_per_second,omitempty"`
 }
 
 func (s *Server) providers(w http.ResponseWriter, r *http.Request) {
@@ -68,7 +74,8 @@ func (s *Server) providers(w http.ResponseWriter, r *http.Request) {
 	for i, p := range all {
 		pc := byID[p.ID()]
 		row := ProviderRow{ID: p.ID(), Label: pc.Label, Kind: string(p.Kind()), URL: pc.URL, Paid: p.Paid(),
-			Fingerprint: tlscert.Short(pc.Fingerprint), Editable: p.ID() != jobs.LocalProvider && (src == "" || src == "user")}
+			Fingerprint: tlscert.Short(pc.Fingerprint), Editable: p.ID() != jobs.LocalProvider && (src == "" || src == "user"),
+			Vendor: pc.Vendor, EndpointID: pc.EndpointID, PriceUSDPerSecond: pc.PriceUSDPerSecond}
 		if row.Label == "" {
 			row.Label = p.ID()
 		}
@@ -110,6 +117,8 @@ type ProbeView struct {
 	GPU         string `json:"gpu,omitempty"`
 	Fingerprint string `json:"fingerprint,omitempty"`
 	Latency     int64  `json:"latency_ms"`
+	// Detail is what a cloud provider said of itself, such as its workers.
+	Detail string `json:"detail,omitempty"`
 }
 
 func gpuName(system map[string]any) string {
@@ -132,11 +141,17 @@ func probeOf(u string, p *engine.Probe) ProbeView {
 // providerTest tries an address and token before anything is saved.
 func (s *Server) providerTest(w http.ResponseWriter, r *http.Request) {
 	var body struct {
+		Kind  string `json:"kind"`
 		URL   string `json:"url"`
 		Token string `json:"token"`
 	}
-	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&body); err != nil {
+	raw, _ := io.ReadAll(io.LimitReader(r.Body, 1<<16))
+	if err := json.Unmarshal(raw, &body); err != nil {
 		problem(w, 400, "invalid JSON: "+err.Error())
+		return
+	}
+	if cloudKind(body.Kind) {
+		s.cloudTest(w, r, raw)
 		return
 	}
 	u, err := engine.NormalizeURL(body.URL)
@@ -182,13 +197,24 @@ func (s *Server) providerAdd(w http.ResponseWriter, r *http.Request) {
 		URL    string `json:"url"`
 		Token  string `json:"token"`
 		Code   string `json:"code"`
+		// A rented pod (vendor runpod) is paid by the hour.
+		PricePerHour float64 `json:"price_usd_per_hour"`
 	}
-	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&body); err != nil {
+	raw, _ := io.ReadAll(io.LimitReader(r.Body, 1<<16))
+	if err := json.Unmarshal(raw, &body); err != nil {
 		problem(w, 400, "invalid JSON: "+err.Error())
 		return
 	}
 	if body.Kind == string(provider.KindAPI) {
 		s.hubAdd(w, r, body.Vendor, strings.TrimSpace(body.Token))
+		return
+	}
+	if cloudKind(body.Kind) {
+		s.cloudAdd(w, r, raw)
+		return
+	}
+	if body.PricePerHour < 0 || (body.Vendor != "" && body.Vendor != runpod.Vendor) {
+		problem(w, 422, "a price cannot be negative, and the only engine vendor is runpod")
 		return
 	}
 	u, err := engine.NormalizeURL(body.URL)
@@ -230,7 +256,13 @@ func (s *Server) providerAdd(w http.ResponseWriter, r *http.Request) {
 	}
 	id := s.newProviderID(label)
 	pc := config.Provider{ID: id, Label: label, Kind: string(provider.KindEngine), URL: u,
-		Secret: providers.SecretName(id), Fingerprint: fingerprint}
+		Secret: providers.SecretName(id), Fingerprint: fingerprint,
+		Vendor: body.Vendor, Paid: body.Vendor != "", PriceUSDPerSecond: math.Round(body.PricePerHour/3600*1e10) / 1e10}
+	if pc.Vendor == runpod.Vendor && pc.PriceUSDPerSecond == 0 {
+		// No rate given: the price table's pod entry, which the user can edit, so a rented pod
+		// never counts as free against the spending limits.
+		pc.Price = "runpod-pod-4090"
+	}
 	if err := secrets.Set(pc.Secret, token); err != nil {
 		problem(w, 500, "could not store the token in "+secrets.Store()+": "+err.Error())
 		return
@@ -324,9 +356,7 @@ func (s *Server) providerRemove(w http.ResponseWriter, r *http.Request) {
 		problem(w, 422, err.Error())
 		return
 	}
-	if pc.Secret != "" {
-		_ = secrets.Delete(pc.Secret)
-	}
+	s.forgetSecrets(pc)
 	s.Providers.Remove(id)
 	s.Catalog.Forget(id)
 	s.Hub.Publish(EvProvidersChanged, map[string]string{"provider": id})
@@ -348,7 +378,9 @@ func (s *Server) providerToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	token := strings.TrimSpace(body.Token)
-	if _, err := engine.Test(r.Context(), pc.URL, token, pc.Fingerprint); err != nil {
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+	if err := s.testKey(ctx, pc, token); err != nil {
 		problem(w, 422, err.Error())
 		return
 	}

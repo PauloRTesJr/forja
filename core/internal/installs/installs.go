@@ -114,7 +114,14 @@ func (t *Tracker) follow(inst provider.Installer, providerID, taskID string) {
 		errc <- inst.FollowTask(context.Background(), taskID, states)
 		close(states)
 	}()
+	refreshed := false
 	for s := range states {
+		// A client that sees the task end may submit a job at once, so the catalog must
+		// already list the model as ready when the final state is published.
+		if s.Done() && !refreshed {
+			t.finished(providerID)
+			refreshed = true
+		}
 		t.update(providerID, s)
 	}
 	if err := <-errc; err != nil {
@@ -132,7 +139,9 @@ func (t *Tracker) follow(inst provider.Installer, providerID, taskID string) {
 			t.update(providerID, snap)
 		}
 	}
-	t.finished(providerID)
+	if !refreshed {
+		t.finished(providerID)
+	}
 }
 
 // finished refreshes what the provider runs, which publishes models.changed when it differs.

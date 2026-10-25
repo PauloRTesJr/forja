@@ -1,5 +1,5 @@
-// Package jobs owns a job from submission to export: plan, cache lookups, routing,
-// provider runs, cache records and the finished asset.
+// Package jobs owns a job from submission to export: plan, routing, provider runs and the
+// finished asset. Every job runs every one of its stages (docs/decisions.md, 37).
 package jobs
 
 import (
@@ -86,7 +86,7 @@ type Runner struct {
 	// Bounds the jobs looking for a sheet of views, which runs before a job takes a slot.
 	looking chan struct{}
 
-	// catalog is what each provider runs: it keys stages and picks models.
+	// catalog is what each provider runs: it picks models.
 	catalog *catalog.Catalog
 
 	mu     sync.Mutex
@@ -94,17 +94,72 @@ type Runner struct {
 	// claimed are waiting jobs being answered or cancelled, so only one of those happens.
 	claimed map[string]bool
 
-	// gate keeps eviction away from running jobs: each run holds it shared, and WhenIdle
-	// takes it only when no run does.
+	// gate keeps sweeps of the store away from running jobs: each run holds it shared, and
+	// WhenIdle takes it only when no run does.
 	gate sync.RWMutex
 	// OnIdle, when set, is called after the last running job ends.
 	OnIdle func()
+
+	// meters are the paid batches running now, with what they owe so far (under mu).
+	meters map[*meter]bool
 }
 
 type active struct {
 	cancel context.CancelFunc
 	job    *library.Job
 	mu     sync.Mutex
+	// measured is set for a benchmark's sample (Measure).
+	measured *measured
+	// picks are where each stage runs now, owed what its paid stages are expected to cost
+	// until they are billed, and avoid the providers stages failed on. Under mu.
+	picks map[string]Pick
+	owed  map[string]float64
+	avoid failed
+	// ran are the outputs of the stages this run of the job ran, by key, so it does the same
+	// work once: the background removal it ran while looking for a sheet of views serves its
+	// own stages. Only the job's run goroutine touches it.
+	ran map[string][]library.Output
+}
+
+// measured is what a benchmark's sample keeps beside its job. Only the job's own run
+// goroutine touches it.
+type measured struct {
+	start   time.Time
+	metrics map[string]*engineapi.StageMetrics
+	// engine is the time spent inside provider runs; queued the wait for a slot.
+	engine, queued time.Duration
+	stats          map[string]any
+	done           chan Sample
+}
+
+// Sample is a benchmark's job once it ended, with where its time went.
+type Sample struct {
+	Job *library.Job
+	// Wall runs from submit to the end; Engine is the time inside provider runs; Queued the
+	// wait for a slot.
+	Wall, Engine, Queued time.Duration
+	// Metrics are what the engine measured, by stage id; a provider that cannot measure
+	// leaves a stage out.
+	Metrics map[string]*engineapi.StageMetrics
+	// Stats are the final GLB's, as an asset would carry them; nil when it made none.
+	Stats map[string]any
+}
+
+// Overhead is the core's own share of the job: planning, moving artifacts,
+// reading the result and saving state, everything but inference and waiting for a slot.
+func (s Sample) Overhead() time.Duration { return s.Wall - s.Engine - s.Queued }
+
+func (a *active) waited(d time.Duration) {
+	if a.measured != nil {
+		a.measured.queued += d
+	}
+}
+
+// set takes on how a job runs now.
+func (a *active) set(prep *prepared) {
+	a.mu.Lock()
+	a.picks, a.owed = prep.picks, prep.owed
+	a.mu.Unlock()
 }
 
 func NewRunner(db *library.DB, st *store.Store, hub *events.Hub, providers *provider.Registry, cat *catalog.Catalog,
@@ -113,7 +168,7 @@ func NewRunner(db *library.DB, st *store.Store, hub *events.Hub, providers *prov
 	return &Runner{
 		db: db, store: st, hub: hub, providers: providers, catalog: cat, config: cfg, log: log, version: version,
 		slots: make(chan struct{}, maxInFlight), looking: make(chan struct{}, max(1, maxInFlight/4)),
-		active: map[string]*active{}, claimed: map[string]bool{},
+		active: map[string]*active{}, claimed: map[string]bool{}, meters: map[*meter]bool{},
 	}
 }
 
@@ -121,7 +176,7 @@ func NewRunner(db *library.DB, st *store.Store, hub *events.Hub, providers *prov
 func (r *Runner) Config(project string) (*config.Loaded, error) { return r.config(project) }
 
 // WhenIdle runs fn only while no job runs, holding off jobs that start meanwhile, and says
-// whether it ran. Eviction uses it so it never removes what a running job reads.
+// whether it ran. Sweeps of the store use it so they never remove what a running job reads.
 func (r *Runner) WhenIdle(fn func()) bool {
 	if !r.gate.TryLock() {
 		return false
@@ -148,6 +203,34 @@ func (r *Runner) Presets(project string) (map[string]*presets.Preset, error) {
 
 // Submit validates, plans and persists a job, then runs it in the background.
 func (r *Runner) Submit(ctx context.Context, req SubmitRequest) (*library.Job, error) {
+	a, err := r.submit(ctx, req, nil)
+	if err != nil {
+		return nil, err
+	}
+	return snapshot(a), nil
+}
+
+// Measure runs a job as a benchmark's sample. The engine measures each stage, and no asset
+// is made.
+// The channel receives the sample once the job ends.
+func (r *Runner) Measure(ctx context.Context, req SubmitRequest) (*library.Job, <-chan Sample, error) {
+	m := &measured{start: time.Now(), metrics: map[string]*engineapi.StageMetrics{}, done: make(chan Sample, 1)}
+	a, err := r.submit(ctx, req, m)
+	if err != nil {
+		return nil, nil, err
+	}
+	return snapshot(a), m.done, nil
+}
+
+// Hold keeps sweeps of the store away until release, as a running job does: between a
+// benchmark's samples, none may wait for a sweep to finish.
+func (r *Runner) Hold() (release func()) {
+	r.gate.RLock()
+	var once sync.Once
+	return func() { once.Do(r.ended) }
+}
+
+func (r *Runner) submit(ctx context.Context, req SubmitRequest, m *measured) (*active, error) {
 	project := req.Project
 	if project != "" {
 		project, _ = filepath.Abs(project)
@@ -203,7 +286,7 @@ func (r *Runner) Submit(ctx context.Context, req SubmitRequest) (*library.Job, e
 	if len(views) == 0 {
 		job.Sheet = &library.Sheet{Mode: mode}
 	}
-	prep, err := r.prepare(ctx, cfg, job)
+	prep, err := r.prepare(ctx, cfg, job, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -211,15 +294,16 @@ func (r *Runner) Submit(ctx context.Context, req SubmitRequest) (*library.Job, e
 	if err := r.db.SaveJob(ctx, job); err != nil {
 		return nil, err
 	}
-	a := r.start(job, prep, cfg)
+	a := r.start(job, prep, cfg, m)
 	r.hub.Publish(EvJobCreated, snapshot(a))
-	return snapshot(a), nil
+	return a, nil
 }
 
 // start makes a job active and runs it in the background.
-func (r *Runner) start(job *library.Job, prep *prepared, cfg *config.Loaded) *active {
+func (r *Runner) start(job *library.Job, prep *prepared, cfg *config.Loaded, m *measured) *active {
 	runCtx, cancel := context.WithCancel(context.Background())
-	a := &active{cancel: cancel, job: job}
+	a := &active{cancel: cancel, job: job, measured: m, avoid: failed{}, ran: map[string][]library.Output{}}
+	a.set(prep)
 	r.mu.Lock()
 	r.active[job.ID] = a
 	r.mu.Unlock()
@@ -257,11 +341,16 @@ func (r *Runner) putViews(views map[string]string) (map[string]string, error) {
 type prepared struct {
 	preset *presets.Preset
 	routes map[string]string
+	// picks are the stages' picks by stage id, and owed what each paid one is expected to cost.
+	picks map[string]Pick
+	owed  map[string]float64
 }
 
 // prepare resolves a job's preset against what the providers run now. A job whose views
-// change (cut out of a sheet) is prepared again, since its views can change the models picked.
-func (r *Runner) prepare(ctx context.Context, cfg *config.Loaded, job *library.Job) (*prepared, error) {
+// change (cut out of a sheet) is prepared again, since its views can change the models picked,
+// and so is one whose stage fails over to another provider. avoid holds the providers its
+// stages failed on.
+func (r *Runner) prepare(ctx context.Context, cfg *config.Loaded, job *library.Job, avoid failed) (*prepared, error) {
 	all, err := r.Presets(job.Project)
 	if err != nil {
 		return nil, err
@@ -284,7 +373,7 @@ func (r *Runner) prepare(ctx context.Context, cfg *config.Loaded, job *library.J
 		return nil, err
 	}
 	views := ordered(job.SideViews())
-	picks, preset, err := r.resolve(ctx, cfg, withOverrides.Active(), views)
+	picks, preset, err := r.resolve(ctx, cfg, withOverrides.Active(), views, avoid)
 	if err != nil {
 		return nil, err
 	}
@@ -297,7 +386,7 @@ func (r *Runner) prepare(ctx context.Context, cfg *config.Loaded, job *library.J
 				p.ModelName, strings.Join(p.NeedsViews, " and "), p.Use)
 		}
 	}
-	if err := r.withinBudget(ctx, cfg, picks); err != nil {
+	if err := r.withinBudget(ctx, cfg, picks, job.ID); err != nil {
 		return nil, err
 	}
 	byStage := map[string]Pick{}
@@ -317,11 +406,22 @@ func (r *Runner) prepare(ctx context.Context, cfg *config.Loaded, job *library.J
 			for _, v := range views {
 				if orig, ok := strings.CutSuffix(s.ID, "-"+v); ok && routes[s.ID] == "" {
 					routes[s.ID] = routes[orig]
+					copied := byStage[orig]
+					copied.Stage = s.ID
+					byStage[s.ID] = copied
 				}
 			}
 		}
 	}
-	return &prepared{preset: preset, routes: routes}, nil
+	prep := &prepared{preset: preset, routes: routes, picks: map[string]Pick{}, owed: map[string]float64{}}
+	for _, s := range preset.Stages {
+		p := byStage[s.ID]
+		prep.picks[s.ID] = p
+		if c := r.chargeOf(ctx, cfg, p); c.USD() > 0 {
+			prep.owed[s.ID] = c.USD()
+		}
+	}
+	return prep, nil
 }
 
 // setStages lists the stages a job will run, all queued.
@@ -330,7 +430,7 @@ func (r *Runner) setStages(ctx context.Context, j *library.Job, prep *prepared) 
 	for _, s := range prep.preset.Stages {
 		j.Stages = append(j.Stages, library.Stage{
 			ID: s.ID, Use: s.Use, Model: s.Model, Status: library.Queued, Provider: prep.routes[s.ID],
-			Outputs: []library.Output{},
+			ProviderLabel: prep.picks[s.ID].ProviderLabel, Outputs: []library.Output{},
 		})
 		j.EstimateSec += r.db.EstimateSeconds(ctx, s.Use, s.Model, prep.routes[s.ID])
 	}
@@ -356,82 +456,6 @@ func inputs(j *library.Job) map[string]string {
 		}
 	}
 	return in
-}
-
-// fingerprints asks each provider the job routes to what it runs, once per job: keys depend on
-// it, so a new adapter or new weights on that provider never reuse outputs cached before.
-func (r *Runner) fingerprints(ctx context.Context, routes map[string]string) planner.Fingerprints {
-	asked := map[string]*catalog.Entry{}
-	return func(s presets.Stage) (planner.Fingerprint, error) {
-		id := routes[s.ID]
-		got, ok := asked[id]
-		if !ok {
-			var err error
-			if got, err = r.askRuns(ctx, id); err != nil {
-				return planner.Fingerprint{}, err
-			}
-			asked[id] = got
-		}
-		if s.Model == "" {
-			return planner.Fingerprint{Adapter: got.Stages[s.Use]}, nil
-		}
-		m, ok := got.Model(s.Model)
-		if !ok {
-			return planner.Fingerprint{}, fmt.Errorf("provider %s has no model %q", id, s.Model)
-		}
-		return planner.Fingerprint{Adapter: m.AdapterVersion, Weights: m.Weights.Revision, Upstream: m.Upstream}, nil
-	}
-}
-
-// askRuns asks a provider what it runs. One that cannot answer now (a LAN box that is off) is
-// keyed by its last answer in this session, so a job whose stages are all cached still finishes.
-func (r *Runner) askRuns(ctx context.Context, id string) (*catalog.Entry, error) {
-	e, err := r.catalog.Ask(ctx, id)
-	if err == nil {
-		return e, nil
-	}
-	if last, ok := r.catalog.Live(id); ok && ctx.Err() == nil {
-		r.log.Warn("keying stages with the provider's last answer", "provider", id, "err", err)
-		return last, nil
-	}
-	return nil, err
-}
-
-// candidates lists the providers a stage may run on, in order: explicit, then project
-// routing, then the priority list.
-func (r *Runner) candidates(cfg *config.Loaded, s presets.Stage) ([]string, error) {
-	want := s.Provider
-	if want == "auto" {
-		want = ""
-	}
-	if want == "" {
-		want = cfg.Routing.Stages[s.Use]
-	}
-	offline := func(p provider.Provider) bool {
-		return cfg.Routing.Policy != "offline-only" || p.Kind() == provider.KindLocal || p.Kind() == provider.KindEngine
-	}
-	if want != "" {
-		p, ok := r.providers.Get(want)
-		if !ok {
-			return nil, fmt.Errorf("stage %s routes to provider %q, which is not configured", s.ID, want)
-		}
-		if !offline(p) {
-			return nil, fmt.Errorf("stage %s: policy offline-only forbids provider %q", s.ID, want)
-		}
-		return []string{want}, nil
-	}
-	var ids []string
-	for _, id := range cfg.Routing.Priority {
-		p, ok := r.providers.Get(id)
-		if !ok || (p.Paid() && !cfg.Routing.AllowPaidFallback) || !offline(p) {
-			continue
-		}
-		ids = append(ids, id)
-	}
-	if len(ids) == 0 {
-		ids = []string{LocalProvider}
-	}
-	return ids, nil
 }
 
 func (r *Runner) Cancel(id string) bool {
@@ -510,7 +534,7 @@ func (r *Runner) AnswerSheet(ctx context.Context, id string, ans SheetAnswer) (*
 	if err != nil {
 		return nil, err
 	}
-	prep, err := r.prepare(ctx, cfg, job)
+	prep, err := r.prepare(ctx, cfg, job, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -519,7 +543,7 @@ func (r *Runner) AnswerSheet(ctx context.Context, id string, ans SheetAnswer) (*
 	if err := r.db.SaveJob(ctx, job); err != nil {
 		return nil, err
 	}
-	a := r.start(job, prep, cfg)
+	a := r.start(job, prep, cfg, nil)
 	r.hub.Publish(EvJobUpdated, snapshot(a))
 	return snapshot(a), nil
 }
@@ -584,6 +608,9 @@ func (r *Runner) run(ctx context.Context, a *active, prep *prepared, cfg *config
 	r.gate.RLock()
 	defer r.ended()
 	defer r.leave(a)
+	if a.measured != nil {
+		defer r.sample(a)
+	}
 	plan, err := r.runJob(ctx, a, prep, cfg)
 	switch {
 	case errors.Is(err, errWaiting):
@@ -592,6 +619,15 @@ func (r *Runner) run(ctx context.Context, a *active, prep *prepared, cfg *config
 		r.finish(a, library.Cancelled, "cancelled")
 	case err != nil:
 		r.finish(a, library.Failed, err.Error())
+	case a.measured != nil:
+		// A sample makes no asset, but reads the stats one would carry, as making it would.
+		job := snapshot(a)
+		if outs := job.Stages[len(job.Stages)-1].Outputs; len(outs) > 0 {
+			if path, err := r.store.Path(outs[0].Hash); err == nil {
+				a.measured.stats = AssetStats(path, r.log)
+			}
+		}
+		r.finish(a, library.Succeeded, "")
 	default:
 		if err := r.createAsset(context.Background(), a, plan, cfg); err != nil {
 			r.finish(a, library.Failed, "export: "+err.Error())
@@ -601,11 +637,18 @@ func (r *Runner) run(ctx context.Context, a *active, prep *prepared, cfg *config
 	}
 }
 
+// sample hands a benchmark's job, ended, to whoever measures it.
+func (r *Runner) sample(a *active) {
+	m := a.measured
+	m.done <- Sample{Job: snapshot(a), Wall: time.Since(m.start), Engine: m.engine, Queued: m.queued,
+		Metrics: m.metrics, Stats: m.stats}
+}
+
 // runJob looks for a sheet of views first when the job asks for that, then takes a job slot,
 // cuts the views out once they are chosen, and runs the plan.
 func (r *Runner) runJob(ctx context.Context, a *active, prep *prepared, cfg *config.Loaded) (*planner.Plan, error) {
 	if sh := snapshot(a).Sheet; sh != nil && !sh.Checked {
-		if err := r.look(ctx, a, prep); err != nil {
+		if err := r.withFallback(ctx, a, cfg, &prep, func(p *prepared) error { return r.look(ctx, a, p) }); err != nil {
 			return nil, err
 		}
 		sh := snapshot(a).Sheet
@@ -619,32 +662,62 @@ func (r *Runner) runJob(ctx context.Context, a *active, prep *prepared, cfg *con
 	}
 	defer release()
 	if job := snapshot(a); job.Sheet != nil && job.Sheet.Answer == library.SheetSplit && job.Views["front"] == "" {
-		if err := r.split(ctx, a, prep); err != nil {
+		if err := r.withFallback(ctx, a, cfg, &prep, func(p *prepared) error { return r.split(ctx, a, p) }); err != nil {
 			return nil, err
 		}
 		var err error
-		if prep, err = r.prepare(ctx, cfg, snapshot(a)); err != nil {
+		if prep, err = r.prepare(ctx, cfg, snapshot(a), a.avoid); err != nil {
 			return nil, err
 		}
-		r.update(a, func(j *library.Job) { r.setStages(ctx, j, prep) })
+		r.update(a, func(j *library.Job) {
+			before := slices.Clone(j.Stages)
+			r.setStages(ctx, j, prep)
+			for _, o := range before {
+				if s := stage(j, o.ID); s != nil {
+					s.Fallbacks = o.Fallbacks
+				}
+			}
+		})
+		a.set(prep)
 		r.hub.Publish(EvJobUpdated, snapshot(a))
 	}
-	// Keyed here, not at submit: asking a provider what it runs may start the local engine.
-	job := snapshot(a)
-	plan, err := r.plan(ctx, prep.preset, prep.routes, job)
-	if err != nil {
-		return nil, err
-	}
-	_, err = r.execute(ctx, a, plan)
+	var plan *planner.Plan
+	err = r.withFallback(ctx, a, cfg, &prep, func(p *prepared) error {
+		var err error
+		if plan, err = r.plan(a, p.preset, p.routes); err != nil {
+			return err
+		}
+		_, err = r.execute(ctx, a, plan)
+		return err
+	})
 	return plan, err
+}
+
+// withFallback runs step with how the job runs now. When a provider is down or runs out of
+// memory, the stages it failed go to the next place that can run them and step runs again,
+// until it succeeds or no provider can take over.
+func (r *Runner) withFallback(ctx context.Context, a *active, cfg *config.Loaded, prep **prepared, step func(*prepared) error) error {
+	for {
+		err := step(*prep)
+		if err == nil {
+			return nil
+		}
+		next, ok := r.fallback(ctx, a, cfg, *prep, err)
+		if !ok {
+			return err
+		}
+		*prep = next
+	}
 }
 
 // look looks for a sheet of views under its own limit, not a job slot: the app asks about a
 // sheet while the user is still on the screen they dropped it on, so finding one must not wait
 // for other jobs to finish whole runs.
 func (r *Runner) look(ctx context.Context, a *active, prep *prepared) error {
+	waiting := time.Now()
 	select {
 	case r.looking <- struct{}{}:
+		a.waited(time.Since(waiting))
 		defer func() { <-r.looking }()
 	case <-ctx.Done():
 		return ctx.Err()
@@ -658,6 +731,8 @@ func (r *Runner) look(ctx context.Context, a *active, prep *prepared) error {
 // slot waits for one of the job slots, which bound the jobs in flight; a job shows as queued
 // only while it waits for one.
 func (r *Runner) slot(ctx context.Context, a *active) (func(), error) {
+	waiting := time.Now()
+	defer func() { a.waited(time.Since(waiting)) }()
 	select {
 	case r.slots <- struct{}{}:
 	default:
@@ -680,8 +755,9 @@ func (r *Runner) setStatus(a *active, s library.Status) {
 	r.hub.Publish(EvJobUpdated, snapshot(a))
 }
 
-func (r *Runner) plan(ctx context.Context, preset *presets.Preset, routes map[string]string, job *library.Job) (*planner.Plan, error) {
-	plan, err := planner.Build(preset, inputs(job), job.Seed, r.fingerprints(ctx, routes))
+func (r *Runner) plan(a *active, preset *presets.Preset, routes map[string]string) (*planner.Plan, error) {
+	job := snapshot(a)
+	plan, err := planner.Build(preset, inputs(job), job.Seed)
 	if err != nil {
 		return nil, err
 	}
@@ -711,7 +787,7 @@ func (r *Runner) sheetStage(ctx context.Context, prep *prepared) (presets.Stage,
 }
 
 // inspect looks for several views of one subject in the job's image. It runs the job's own
-// background removal (so the job then finds it cached) and views.detect on the cut-out.
+// background removal (which its stages then reuse) and views.detect on the cut-out.
 func (r *Runner) inspect(ctx context.Context, a *active, prep *prepared) error {
 	bg, ok := r.sheetStage(ctx, prep)
 	if !ok {
@@ -720,7 +796,7 @@ func (r *Runner) inspect(ctx context.Context, a *active, prep *prepared) error {
 	}
 	detect := presets.Stage{ID: "sheet", Use: "views.detect", Inputs: []string{bg.ID}}
 	routes := map[string]string{bg.ID: prep.routes[bg.ID], detect.ID: prep.routes[bg.ID]}
-	plan, err := r.plan(ctx, &presets.Preset{ID: prep.preset.ID, Stages: []presets.Stage{bg, detect}}, routes, snapshot(a))
+	plan, err := r.plan(a, &presets.Preset{ID: prep.preset.ID, Stages: []presets.Stage{bg, detect}}, routes)
 	if err != nil {
 		return err
 	}
@@ -776,21 +852,27 @@ func (r *Runner) split(ctx context.Context, a *active, prep *prepared) error {
 	if !ok {
 		return fmt.Errorf("provider %s cannot cut views out of a sheet; update its engine", prep.routes[prep.preset.Stages[0].ID])
 	}
-	chosen := snapshot(a).Sheet.Chosen
+	sheet := snapshot(a).Sheet
+	chosen := sheet.Chosen
 	wanted := make([]map[string]any, len(chosen))
 	for i, p := range chosen {
 		wanted[i] = map[string]any{"view": p.View, "box": p.Box[:]}
 	}
-	// The sheet's cut-out, cached while looking for the views. Under another id it leaves the
-	// job's own background removal alone: that one will read the front once it is cut out.
+	// The sheet's cut-out, as when looking for the views. Under another id it leaves the job's
+	// own background removal alone: that one will read the front once it is cut out.
 	where := prep.routes[bg.ID]
 	bg.ID = "sheet-bg"
 	cut := presets.Stage{ID: "split", Use: "views.split", Inputs: []string{presets.InputImage, bg.ID},
 		Params: map[string]any{"views": wanted}}
 	routes := map[string]string{bg.ID: where, cut.ID: where}
-	plan, err := r.plan(ctx, &presets.Preset{ID: prep.preset.ID, Stages: []presets.Stage{bg, cut}}, routes, snapshot(a))
+	plan, err := r.plan(a, &presets.Preset{ID: prep.preset.ID, Stages: []presets.Stage{bg, cut}}, routes)
 	if err != nil {
 		return err
+	}
+	// A job that waited for the user's answer is in a new run, which ran nothing yet; the
+	// cut-out it made while looking is on the job, and the library kept it while it waited.
+	if sheet.Cutout != "" && r.store.Has(sheet.Cutout) {
+		a.ran[plan.Stages[0].Key] = []library.Output{{Hash: sheet.Cutout, Kind: "image/png"}}
 	}
 	outs, err := r.execute(ctx, a, plan)
 	if err != nil {
@@ -807,7 +889,7 @@ func (r *Runner) split(ctx context.Context, a *active, prep *prepared) error {
 	return nil
 }
 
-// ended lets eviction in once the last running job is gone.
+// ended lets sweeps in once the last running job is gone.
 func (r *Runner) ended() {
 	r.gate.RUnlock()
 	if r.OnIdle != nil && !r.Busy() {
@@ -864,9 +946,9 @@ func stage(j *library.Job, id string) *library.Stage {
 	return nil
 }
 
-// execute resolves cache hits, then runs the remaining stages in batches of consecutive
-// stages that share a provider, so intermediates stay on that provider. It returns every
-// stage's outputs.
+// execute takes the stages this run of the job already ran, then runs the rest in batches of
+// consecutive stages that share a provider, so intermediates stay on that provider. It returns
+// every stage's outputs.
 func (r *Runner) execute(ctx context.Context, a *active, plan *planner.Plan) (map[string][]library.Output, error) {
 	outputs := map[string]string{} // input name or stage id -> primary output ref
 	for name, ref := range plan.Inputs {
@@ -875,35 +957,15 @@ func (r *Runner) execute(ctx context.Context, a *active, plan *planner.Plan) (ma
 	all := map[string][]library.Output{}
 	var pending []int
 	for i, s := range plan.Stages {
-		outs, hit, err := r.db.CacheGet(ctx, s.Key)
-		if err != nil {
-			return nil, err
-		}
-		if hit && len(outs) > 0 && r.store.Has(outs[0].Hash) {
-			for _, o := range outs {
-				r.store.Touch(o.Hash) // used now: eviction removes the least recently used
-			}
+		if outs, ok := a.ran[s.Key]; ok && r.store.Has(outs[0].Hash) {
 			outputs[s.ID], all[s.ID] = outs[0].Hash, outs
 			r.update(a, func(j *library.Job) {
-				st := stage(j, s.ID)
-				if st == nil {
-					return
+				if st := stage(j, s.ID); st != nil {
+					st.Status, st.Outputs = library.Succeeded, outs
 				}
-				// Run earlier in this job (while looking for a sheet), not cached before it.
-				ranHere := st.Status == library.Succeeded && st.Key == s.Key
-				st.Status, st.Key, st.Outputs = library.Succeeded, s.Key, outs
-				st.Cached = st.Cached || !ranHere
 			})
 			continue
 		}
-		if hit {
-			_ = r.db.CacheForget(ctx, s.Key)
-		}
-		r.update(a, func(j *library.Job) {
-			if st := stage(j, s.ID); st != nil {
-				st.Key = s.Key
-			}
-		})
 		pending = append(pending, i)
 	}
 	r.hub.Publish(EvJobUpdated, snapshot(a))
@@ -936,7 +998,7 @@ func (r *Runner) runBatch(ctx context.Context, a *active, plan *planner.Plan, id
 	first := plan.Stages[idx[0]]
 	req := engineapi.RunRequest{
 		ClientRunID: a.job.ID + "-" + first.ID + "-" + strings.TrimPrefix(first.Key, "stage:")[:8],
-		Priority:    a.job.Priority, Seed: plan.Seed,
+		Priority:    a.job.Priority, Seed: plan.Seed, Measure: a.measured != nil,
 	}
 	for _, i := range idx {
 		s := plan.Stages[i]
@@ -951,29 +1013,68 @@ func (r *Runner) runBatch(ctx context.Context, a *active, plan *planner.Plan, id
 				return fmt.Errorf("stage %s: input %s has no output", s.ID, in)
 			}
 			if err := p.Upload(ctx, ref); err != nil {
-				return fmt.Errorf("uploading %s to %s: %w", ref, p.ID(), err)
+				if ctx.Err() != nil {
+					return ctx.Err()
+				}
+				err = fmt.Errorf("uploading %s to %s: %w", ref, p.ID(), err)
+				return &stageError{provider: p.ID(), stages: idsAt(plan, idx), down: unreachable(err), err: err}
 			}
 			spec.Inputs = append(spec.Inputs, ref)
 		}
 		req.Stages = append(req.Stages, spec)
 	}
 
+	// A paid batch starts only within the spending limits, and one billed by the second is
+	// stopped once it would pass one.
+	batch := make([]planner.Stage, len(idx))
+	for n, i := range idx {
+		batch[n] = plan.Stages[i]
+	}
+	charges := r.chargesFor(ctx, a, p, batch)
+	bctx, stop := context.WithCancelCause(ctx)
+	defer stop(nil)
+	if p.Paid() {
+		release, err := r.admit(ctx, a.job.Project, a.job.ID, charges, stop)
+		if err != nil {
+			return err
+		}
+		defer release()
+	}
+
 	evs := make(chan engineapi.Event, 64)
 	consumed := make(chan struct{})
+	billed := map[string]bool{}
 	go func() {
 		defer close(consumed)
 		for ev := range evs {
+			if ev.Type == "stage.billed" {
+				id, _ := ev.Data["stage"].(string)
+				billed[id] = true
+				continue
+			}
 			r.onEngineEvent(ctx, a, p, ev)
 		}
 	}()
-	run, err := p.Run(ctx, req, evs)
+	started := time.Now()
+	run, err := p.Run(bctx, req, evs)
+	if a.measured != nil {
+		a.measured.engine += time.Since(started)
+	}
 	close(evs)
 	<-consumed
+	if p.Paid() {
+		r.bill(a, p, batch, charges, run, billed, time.Since(started).Seconds())
+	}
+	if over, ok := context.Cause(bctx).(*BudgetError); ok && ctx.Err() == nil {
+		return over
+	}
+	charged := slices.Sorted(maps.Keys(billed))
 	if err != nil {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		return fmt.Errorf("provider %s: %w", p.ID(), err)
+		err = fmt.Errorf("provider %s: %w", p.ID(), err)
+		return &stageError{provider: p.ID(), stages: idsAt(plan, idx), down: unreachable(err), billed: charged, err: err}
 	}
 
 	for _, i := range idx {
@@ -982,9 +1083,13 @@ func (r *Runner) runBatch(ctx context.Context, a *active, plan *planner.Plan, id
 		var outs []library.Output
 		for _, o := range st.Outputs {
 			if err := p.Download(ctx, o.Hash); err != nil {
-				return fmt.Errorf("downloading %s: %w", o.Hash, err)
+				if ctx.Err() != nil {
+					return ctx.Err()
+				}
+				return &stageError{provider: p.ID(), stages: idsAt(plan, idx), down: true,
+					err: fmt.Errorf("downloading %s: %w", o.Hash, err)}
 			}
-			outs = append(outs, library.Output{Hash: o.Hash, Kind: o.Kind, Preview: o.Preview})
+			outs = append(outs, library.Output{Hash: o.Hash, Kind: o.Kind, Preview: o.Preview, Note: o.Note})
 		}
 		seconds := 0.0
 		if st.Seconds != nil {
@@ -1015,13 +1120,13 @@ func (r *Runner) runBatch(ctx context.Context, a *active, plan *planner.Plan, id
 				js.Status = library.Failed
 			}
 		})
+		if a.measured != nil && st.Metrics != nil {
+			a.measured.metrics[s.ID] = st.Metrics
+		}
 		if st.Status == "succeeded" && len(outs) > 0 {
 			outputs[s.ID], all[s.ID] = outs[0].Hash, outs
-			_ = r.db.CachePut(ctx, s.Key, outs, seconds)
+			a.ran[s.Key] = outs
 			_ = r.db.RecordTiming(ctx, s.Use, s.Model, p.ID(), seconds)
-			if p.Paid() && s.Model != "" {
-				r.recordCost(ctx, a.job.ID, s.ID, p.ID(), s.Model)
-			}
 		}
 	}
 	r.hub.Publish(EvJobUpdated, snapshot(a))
@@ -1033,9 +1138,36 @@ func (r *Runner) runBatch(ctx context.Context, a *active, plan *planner.Plan, id
 		if run.Status == "cancelled" {
 			return context.Canceled
 		}
-		return errors.New(msg)
+		// The stage that failed may fit on another provider; the ones after it never ran here.
+		failure := &stageError{provider: p.ID(), err: errors.New(msg), oom: outOfMemory.MatchString(msg), billed: charged}
+		for _, s := range batch {
+			if st := run.Stages[s.ID]; st.Status == "failed" {
+				failure.stages = append(failure.stages, s.ID)
+				failure.oom = failure.oom || (st.Error != nil && outOfMemory.MatchString(*st.Error))
+			}
+		}
+		return failure
 	}
 	return nil
+}
+
+// idsAt are the ids of a plan's stages at idx.
+func idsAt(plan *planner.Plan, idx []int) []string {
+	out := make([]string, 0, len(idx))
+	for _, i := range idx {
+		out = append(out, plan.Stages[i].ID)
+	}
+	return out
+}
+
+// unreachable reports a run that failed for want of its provider: no connection, a timeout, a
+// server error. A provider that answered and refused the run would refuse it again.
+func unreachable(err error) bool {
+	var answered interface{ StatusCode() int }
+	if errors.As(err, &answered) {
+		return answered.StatusCode() >= 500
+	}
+	return true
 }
 
 func (r *Runner) onEngineEvent(ctx context.Context, a *active, p provider.Provider, ev engineapi.Event) {
@@ -1074,15 +1206,22 @@ func (r *Runner) onEngineEvent(ctx context.Context, a *active, p provider.Provid
 				})
 			}
 		}
+	case "stage.log":
+		// A hosted model's place in its queue: what the user sees while nothing else moves.
+		msg, _ := ev.Data["message"].(string)
+		r.update(a, func(j *library.Job) { j.Stages[idx].Note = msg })
+		r.hub.Publish(EvJobUpdated, snapshot(a))
 	case "stage.finished":
 		secs, _ := ev.Data["seconds"].(float64)
 		r.update(a, func(j *library.Job) {
-			j.Stages[idx].Status, j.Stages[idx].Seconds = library.Succeeded, secs
+			j.Stages[idx].Status, j.Stages[idx].Seconds, j.Stages[idx].Note = library.Succeeded, secs, ""
 		})
 		r.hub.Publish(EvJobUpdated, snapshot(a))
 	case "stage.failed":
 		msg, _ := ev.Data["error"].(string)
-		r.update(a, func(j *library.Job) { j.Stages[idx].Status, j.Stages[idx].Error = library.Failed, msg })
+		r.update(a, func(j *library.Job) {
+			j.Stages[idx].Status, j.Stages[idx].Error, j.Stages[idx].Note = library.Failed, msg, ""
+		})
 		r.hub.Publish(EvJobUpdated, snapshot(a))
 	}
 }

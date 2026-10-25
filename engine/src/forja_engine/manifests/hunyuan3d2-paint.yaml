@@ -2,6 +2,8 @@ id: hunyuan3d2-paint
 name: Hunyuan3D-2 Paint (turbo)
 family: hunyuan3d2
 adapter: forja_hunyuan3d2:Hunyuan3D2Paint
+# 2: keeps the UVs of a mesh that has them.
+adapter_version: "2"
 tasks: [texture]
 rank: 10
 # Upstream's paint pipeline takes a list of reference images, as in its multi-view example.
@@ -18,6 +20,8 @@ license:
 vram_gb: 12.5
 requirements:
   cuda: { status: supported, min_vram_gb: 10 }
+  # Upstream renders through custom_rasterizer, a CUDAExtension with a .cu kernel, and builds
+  # its pipelines on "cuda".
   mps: { status: unsupported }
   cpu: { status: unsupported }
 weights:

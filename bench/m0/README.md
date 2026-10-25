@@ -79,8 +79,7 @@ warm baselines the spec asks for (time and peak VRAM per stage).
 **First image only: check the facing.** Open the asset in the app. If the shape faces sideways
 or backwards, or the texture is projected onto the wrong side, set the yaw in `forja.toml`
 (`[presets.mobile-prop] overrides = { "shape.yaw_degrees" = 90 }`) and re-run. Use
-`"paint.yaw_degrees"` if only the texture is off. Thanks to the stage cache, a paint-only
-change re-runs only paint, LODs and export.
+`"paint.yaw_degrees"` if only the texture is off.
 
 ## 5. Judge and decide
 

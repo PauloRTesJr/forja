@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -20,11 +21,11 @@ import (
 	"time"
 
 	"forja/internal/api"
-	"forja/internal/cache"
 	"forja/internal/catalog"
 	"forja/internal/config"
 	"forja/internal/engineapi"
 	"forja/internal/events"
+	"forja/internal/glb"
 	"forja/internal/installs"
 	"forja/internal/ipc"
 	"forja/internal/jobs"
@@ -33,6 +34,7 @@ import (
 	"forja/internal/provider"
 	"forja/internal/secrets"
 	"forja/internal/store"
+	"forja/internal/sweep"
 )
 
 // fakeEngine is this computer's engine: it installs models at once and "runs" every stage by
@@ -44,6 +46,29 @@ type fakeEngine struct {
 	installed map[string]bool
 	tasks     map[string]engineapi.Task
 	sheet     string
+	// ran lists the stages run, in order, and measured whether each run asked to measure.
+	ran      []string
+	measured []bool
+	// notes are what a stage type says about its first output, such as a stand-in it made.
+	notes map[string]string
+}
+
+// fakeMetrics is what an engine measures of a stage: a model's load, memory, and a mesh's stats.
+func fakeMetrics(s engineapi.StageSpec, outs []engineapi.Output) *engineapi.StageMetrics {
+	ram := int64(512 << 20)
+	m := &engineapi.StageMetrics{Device: "cpu-pool", PeakRAMBytes: &ram, Outputs: []engineapi.OutputStats{}}
+	if s.Model != "" {
+		load, util := 0.25, 80.0
+		m.Device, m.LoadSeconds, m.GPUUtil = "cuda:0", &load, &util
+	}
+	for _, o := range outs {
+		if o.Kind == "mesh/glb" {
+			cover := 0.6
+			m.Outputs = append(m.Outputs, engineapi.OutputStats{Hash: o.Hash, Triangles: 100, Vertices: 80, Watertight: true,
+				UVCoverage: &cover})
+		}
+	}
+	return m
 }
 
 var gpu = "cuda:0"
@@ -66,9 +91,12 @@ func (e *fakeEngine) Info(context.Context) (*engineapi.Info, error) {
 		"mesh.lods", "export", "views.detect", "views.split"} {
 		stages[use] = "1"
 	}
-	return &engineapi.Info{Stages: stages, System: map[string]any{"os": "TestOS",
-		"devices":         []any{map[string]any{"id": "cuda:0", "backend": "cuda", "name": "Test GPU", "vram_bytes": 12 << 30}},
-		"disk_free_bytes": 500 << 30}}, nil
+	// Like an engine on a computer without Blender.
+	noBlender := "Blender 4.2 or newer was not found on the computer that runs the engine"
+	return &engineapi.Info{Stages: stages, Unavailable: map[string]string{"mesh.remesh": noBlender, "mesh.uv.smart": noBlender},
+		System: map[string]any{"os": "TestOS",
+			"devices":         []any{map[string]any{"id": "cuda:0", "backend": "cuda", "name": "Test GPU", "vram_bytes": 12 << 30}},
+			"disk_free_bytes": 500 << 30}}, nil
 }
 
 func (e *fakeEngine) Models(context.Context) ([]engineapi.Model, error) {
@@ -91,6 +119,7 @@ func (e *fakeEngine) Models(context.Context) ([]engineapi.Model, error) {
 		model("shape", "shape", 10, mit),
 		mv,
 		model("paint", "texture", 10, restricted),
+		model("rig", "rig", 10, mit),
 	}, nil
 }
 
@@ -103,6 +132,7 @@ func (e *fakeEngine) set(fn func(e *fakeEngine)) {
 func (e *fakeEngine) Run(_ context.Context, req engineapi.RunRequest, evs chan<- engineapi.Event) (*engineapi.Run, error) {
 	run := &engineapi.Run{ID: "r", Status: "succeeded", Stages: map[string]engineapi.StageState{}}
 	produced := map[string]string{}
+	rigged := slices.ContainsFunc(req.Stages, func(s engineapi.StageSpec) bool { return s.Use == "rig" })
 	for _, s := range req.Stages {
 		var inputs []string
 		for _, in := range s.Inputs {
@@ -130,22 +160,40 @@ func (e *fakeEngine) Run(_ context.Context, req engineapi.RunRequest, evs chan<-
 				outs = append(outs, engineapi.Output{Hash: ref, Kind: "image/png"})
 			}
 		case "export":
-			blob = chestGLB(len(inputs))
+			blob = chestGLB(len(inputs), rigged)
+		case "rig":
+			profile, _ := e.st.PutBytes([]byte(`{"profile": "humanoid"}`))
+			outs = append(outs, engineapi.Output{Hash: profile, Kind: "application/json"})
 		}
 		if len(outs) > 0 && outs[0].Hash == "" {
 			outs[0].Hash, _ = e.st.PutBytes(blob)
 		}
 		if len(outs) > 0 {
 			produced[s.ID] = outs[0].Hash
+			e.mu.Lock()
+			outs[0].Note = e.notes[s.Use]
+			e.mu.Unlock()
 		}
 		secs := 0.01
 		evs <- engineapi.Event{Type: "stage.started", Data: map[string]any{"stage": s.ID}}
-		run.Stages[s.ID] = engineapi.StageState{Status: "succeeded", Seconds: &secs, Outputs: outs}
+		st := engineapi.StageState{Status: "succeeded", Seconds: &secs, Outputs: outs}
+		if req.Measure {
+			st.Metrics = fakeMetrics(s, outs)
+			if s.Model != "" {
+				vram := int64(2 << 30)
+				st.PeakVRAMBytes = &vram
+			}
+		}
+		run.Stages[s.ID] = st
+		e.mu.Lock()
+		e.ran = append(e.ran, s.ID)
+		e.measured = append(e.measured, req.Measure)
+		e.mu.Unlock()
 	}
 	return run, nil
 }
 
-func (e *fakeEngine) Checks(context.Context, []string) (*engineapi.Checks, error) {
+func (e *fakeEngine) Checks(context.Context, []string, []string) (*engineapi.Checks, error) {
 	return &engineapi.Checks{Lane: "cuda", Checks: []engineapi.Check{
 		{ID: "uv", Label: "uv", OK: true, Found: "0.9", Need: "0.5 or newer"},
 		{ID: "msvc", Label: "C++ build tools", Found: "none", Need: "MSVC 14", Fix: &engineapi.Fix{
@@ -189,18 +237,31 @@ func (e *fakeEngine) FollowTask(_ context.Context, id string, states chan<- engi
 	return nil
 }
 
-// chestGLB is a GLB with a full-detail mesh of 100 triangles and two LODs.
-func chestGLB(seed int) []byte {
+// chestGLB is a GLB with a full-detail mesh of 100 triangles and two LODs; rigged, every
+// level is skinned to a humanoid skeleton.
+func chestGLB(seed int, rigged bool) []byte {
+	nodes := []any{map[string]any{"name": "chest_LOD0", "mesh": 0}, map[string]any{"name": "chest_LOD1", "mesh": 0},
+		map[string]any{"name": "chest_LOD2", "mesh": 0}}
 	doc := map[string]any{
 		"asset":  map[string]string{"version": "2.0", "generator": "fake " + strconv.Itoa(seed)},
 		"scene":  0,
 		"scenes": []any{map[string]any{"nodes": []int{0, 1, 2}}},
-		"nodes": []any{map[string]any{"name": "chest_LOD0", "mesh": 0}, map[string]any{"name": "chest_LOD1", "mesh": 0},
-			map[string]any{"name": "chest_LOD2", "mesh": 0}},
 		"meshes": []any{map[string]any{"primitives": []any{map[string]any{"attributes": map[string]int{"POSITION": 0},
 			"indices": 1, "material": 0}}}},
 		"accessors": []any{map[string]int{"count": 80}, map[string]int{"count": 300}},
 	}
+	if rigged {
+		var joints []int
+		for _, name := range glb.HumanoidBones {
+			joints = append(joints, len(nodes))
+			nodes = append(nodes, map[string]any{"name": name})
+		}
+		for _, n := range nodes[:3] {
+			n.(map[string]any)["skin"] = 0
+		}
+		doc["skins"] = []any{map[string]any{"joints": joints, "extras": map[string]string{"forja_skeleton": "humanoid"}}}
+	}
+	doc["nodes"] = nodes
 	js, _ := json.Marshal(doc)
 	for len(js)%4 != 0 {
 		js = append(js, ' ')
@@ -219,6 +280,7 @@ type harness struct {
 	dir      string
 	store    *store.Store
 	eng      *fakeEngine
+	reg      *provider.Registry
 	stopped  chan struct{}
 	stopOnce sync.Once
 }
@@ -256,13 +318,13 @@ func newHarness(t *testing.T) *harness {
 	cat := catalog.New(reg, db, nil, func(id string) { hub.Publish(api.EvModelsChanged, map[string]string{"provider": id}) })
 	cfg := func(project string) (*config.Loaded, error) { return config.Load(project, nil) }
 	runner := jobs.NewRunner(db, st, hub, reg, cat, cfg, log, "test", 4)
-	keeper := cache.New(db, st, runner, cache.Limit(cfg), hub, log)
-	runner.OnIdle = keeper.Nudge
-	keeper.Start()
-	h := &harness{t: t, dir: dir, store: st, eng: eng, stopped: make(chan struct{})}
+	sweeper := sweep.New(db, st, runner, log)
+	runner.OnIdle = sweeper.Nudge
+	sweeper.Start()
+	h := &harness{t: t, dir: dir, store: st, eng: eng, reg: reg, stopped: make(chan struct{})}
 	s := &api.Server{
 		Version: "test", DataDir: filepath.Join(dir, "data"), DB: db, Store: st, Hub: hub, Providers: reg, Catalog: cat,
-		Log: log, Config: cfg, Runner: runner, Cache: keeper, Installs: installs.New(reg, cat, hub, log),
+		Log: log, Config: cfg, Runner: runner, Sweeper: sweeper, Installs: installs.New(reg, cat, hub, log),
 		Engine:   localengine.New(func() (*config.Loaded, error) { return config.Load("", nil) }, st.Root, dir, log),
 		Shutdown: func() { h.stopOnce.Do(func() { close(h.stopped) }) },
 	}
@@ -278,7 +340,7 @@ func newHarness(t *testing.T) *harness {
 			time.Sleep(5 * time.Millisecond)
 		}
 		_ = srv.Close()
-		keeper.Close()
+		sweeper.Close()
 		db.Close()
 	})
 	return h

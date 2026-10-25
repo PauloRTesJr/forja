@@ -1,0 +1,14 @@
+# The benchmark CI can run anywhere, GPU or not: one image from the engine's tests through
+# both presets with the deterministic CPU stub models, pinned in ci/forja.toml. It proves the
+# harness end to end and tracks the core's own overhead; stub times say nothing about real
+# models, so it sets no per-preset budgets.
+schema: 1
+name: ci
+version: 1
+description: One image through Draft and Mobile prop with the CPU stub models.
+presets: [draft, mobile-prop]
+project: ci
+core_overhead_ms: 200
+images:
+  - path: ../../engine/tests/fixtures/chest.png
+    category: prop

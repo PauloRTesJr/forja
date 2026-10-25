@@ -1,3 +1,4 @@
+import dataclasses
 import json
 import os
 import struct
@@ -8,6 +9,7 @@ import pytest
 from fastapi.testclient import TestClient
 from PIL import Image
 
+from forja_engine.adapters import stub
 from forja_engine.adapters.builtin import BUILTINS
 from forja_engine.api.app import EngineConfig, create_app
 from forja_engine.sdk import StageType
@@ -72,10 +74,21 @@ def test_info_and_models_say_what_each_stage_runs(client):
     """The core keys its cache by these: a new adapter or new weights must not reuse old outputs."""
     info = client.get("/v1/info").json()
     assert info["stages"]["bake"] == BUILTINS[StageType.BAKE].version
-    assert set(info["stages"]) == {str(t) for t in BUILTINS}
+    # Every built-in is either offered or said to be unavailable here (Blender's need Blender).
+    assert set(info["stages"]) | set(info["unavailable"]) == {str(t) for t in BUILTINS}
+    assert not set(info["stages"]) & set(info["unavailable"])
     models = {m["id"]: m for m in client.get("/v1/models").json()}
     assert models["stub-shape"]["adapter_version"] == "1" and models["stub-shape"]["upstream"] == ""
     assert models["triposg"]["weights"]["revision"] and len(models["triposg"]["upstream"]) == 64
+
+
+def test_info_leaves_out_blender_stages_where_there_is_no_blender(client, monkeypatch):
+    from forja_engine import blender
+
+    monkeypatch.setenv(blender.ENV, "/no/such/blender")
+    info = client.get("/v1/info").json()
+    assert "mesh.remesh" not in info["stages"] and "mesh.uv.smart" not in info["stages"]
+    assert "there is no Blender at" in info["unavailable"]["mesh.remesh"]
 
 
 def test_upload_rejects_wrong_hash(client):
@@ -173,6 +186,20 @@ def test_side_views_reach_the_stage_that_reads_them(client, tmp_path):
     assert r.status_code == 422
 
 
+def test_a_note_on_an_output_reaches_the_run(tmp_path, monkeypatch):
+    shape = stub.StubShape.run
+
+    def noted(self, ctx):
+        return [dataclasses.replace(o, note="made a stand-in") for o in shape(self, ctx)]
+
+    monkeypatch.setattr(stub.StubShape, "run", noted)
+    app = create_app(EngineConfig(store_root=tmp_path, token="secret", in_process_models=True))
+    with TestClient(app, headers={"Authorization": "Bearer secret"}) as c:
+        run = finished(c, {"stages": [{**PIPELINE[0], "inputs": [upload(c)]}, *PIPELINE[1:3]]})
+    assert run["stages"]["shape"]["outputs"][0]["note"] == "made a stand-in"
+    assert run["stages"]["bg"]["outputs"][0]["note"] == ""
+
+
 def test_sheet_detection_runs_as_a_builtin_stage(client):
     image = upload(client)
     stages = [
@@ -193,3 +220,65 @@ def test_asking_for_an_artifact_marks_it_used(client, tmp_path):
         os.utime(path, (old, old))
         assert ask(f"/v1/artifacts/{ref}").status_code in (200, 201)
         assert time.time() - path.stat().st_mtime < 60
+
+
+def test_a_measured_run_reports_metrics_for_every_stage(client):
+    image = upload(client)
+    stages = [{**PIPELINE[0], "inputs": [image]}, *PIPELINE[1:5]]
+    run = client.post("/v1/runs", json={"stages": stages, "measure": True}).json()
+    assert events(client, run["id"])[-1][1]["status"] == "succeeded"
+    got = client.get(f"/v1/runs/{run['id']}").json()["stages"]
+    shape, cleanup = got["shape"]["metrics"], got["cleanup"]["metrics"]
+    # A stub model runs in its worker on the CPU: its load is timed, it has no GPU to watch.
+    assert shape["device"] == "cpu" and shape["load_seconds"] > 0 and shape["gpu_util"] is None
+    assert shape["peak_ram_bytes"] > 0
+    assert shape["outputs"][0]["hash"] == got["shape"]["outputs"][0]["hash"]
+    assert shape["outputs"][0]["triangles"] > 0
+    # Built-in stages run in the CPU pool and load no model.
+    assert cleanup["device"] == "cpu-pool" and cleanup["load_seconds"] is None
+    assert cleanup["peak_ram_bytes"] > 0
+    assert cleanup["outputs"][0]["watertight"] is True
+    assert got["bg"]["metrics"]["outputs"] == []  # images have no mesh stats
+    assert all(st["metrics"]["measure_seconds"] >= 0 for st in got.values())
+
+    # The worker still holds the shape model: running it again loads nothing.
+    framed = got["frame"]["outputs"][0]["hash"]
+    shape_only = [{**PIPELINE[2], "inputs": [framed]}]
+    again = client.post("/v1/runs", json={"stages": shape_only, "measure": True}).json()
+    events(client, again["id"])
+    assert client.get(f"/v1/runs/{again['id']}").json()["stages"]["shape"]["metrics"]["load_seconds"] == 0
+
+
+def test_a_normal_run_measures_nothing(client):
+    image = upload(client)
+    run = client.post("/v1/runs", json={"stages": [{**PIPELINE[0], "inputs": [image]}]}).json()
+    events(client, run["id"])
+    assert client.get(f"/v1/runs/{run['id']}").json()["stages"]["bg"]["metrics"] is None
+
+
+def test_a_stage_type_asks_for_the_software_it_needs(client, monkeypatch):
+    from forja_engine import blender
+
+    def missing() -> blender.Blender:
+        raise blender.BlenderError("Blender 4.2 or newer was not found on the computer that runs the engine")
+
+    monkeypatch.setattr(blender, "find", missing)
+    got = client.get("/v1/checks", params={"stages": "mesh.remesh"}).json()
+    assert [c["id"] for c in got["checks"]] == ["blender"] and not got["ok"]
+    check = got["checks"][0]
+    assert check["found"] == "not found" and check["fix"]["label"] in ("Install Blender", "Get Blender")
+    # A stage type that runs on anything needs nothing more, and asks about no model either.
+    plain = client.get("/v1/checks", params={"stages": "mesh.decimate"}).json()
+    assert plain == {**plain, "ok": True, "checks": []}
+
+    monkeypatch.setattr(blender, "find", lambda: blender.Blender("/opt/blender/blender", "5.2.1"))
+    found = client.get("/v1/checks", params={"stages": "mesh.uv.smart"}).json()
+    assert found["ok"] and found["checks"][0]["found"] == "5.2.1 at /opt/blender/blender"
+    assert found["checks"][0]["fix"] is None
+
+
+def test_a_wrong_blender_path_is_fixed_in_the_settings_not_by_installing(client, monkeypatch):
+    monkeypatch.setenv("FORJA_BLENDER", "/nowhere/blender")
+    check = client.get("/v1/checks", params={"stages": "mesh.remesh"}).json()["checks"][0]
+    assert not check["ok"] and "/nowhere/blender" in check["found"]
+    assert check["fix"]["label"] == "Fix Blender's path" and not check["fix"]["runnable"]

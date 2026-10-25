@@ -1,0 +1,500 @@
+[
+  {
+    "id": "birefnet-lite",
+    "name": "BiRefNet lite",
+    "family": "birefnet",
+    "tasks": [
+      "background-removal"
+    ],
+    "license": {
+      "spdx": "MIT",
+      "commercial": true,
+      "restrictions": [],
+      "url": "https://github.com/ZhengPeng7/BiRefNet/blob/main/LICENSE"
+    },
+    "requirements": {
+      "cuda": {
+        "status": "supported"
+      },
+      "mps": {
+        "status": "unsupported"
+      },
+      "cpu": {
+        "status": "supported"
+      }
+    },
+    "params": {
+      "keep_alpha": {
+        "type": "boolean",
+        "default": true
+      }
+    },
+    "vram_gb": 0.8,
+    "description": "Cuts the object out of the reference image; smaller and faster, less precise.",
+    "disk_gb": 3.1,
+    "installed": false,
+    "weights": {
+      "repo": "onnx-community/BiRefNet_lite-ONNX",
+      "revision": "de15b22ba131738a16dff04aab8bdf8dc32e3ac1"
+    },
+    "adapter_version": "1",
+    "upstream": "",
+    "rank": 5,
+    "stub": false,
+    "views": [],
+    "status": "not-installed",
+    "device": null,
+    "runs_on": "cpu",
+    "fit": "fits",
+    "task": null
+  },
+  {
+    "id": "birefnet",
+    "name": "BiRefNet (general)",
+    "family": "birefnet",
+    "tasks": [
+      "background-removal"
+    ],
+    "license": {
+      "spdx": "MIT",
+      "commercial": true,
+      "restrictions": [],
+      "url": "https://github.com/ZhengPeng7/BiRefNet/blob/main/LICENSE"
+    },
+    "requirements": {
+      "cuda": {
+        "status": "supported"
+      },
+      "mps": {
+        "status": "unsupported"
+      },
+      "cpu": {
+        "status": "supported"
+      }
+    },
+    "params": {
+      "keep_alpha": {
+        "type": "boolean",
+        "default": true,
+        "description": "Use the image's own alpha when it has one"
+      }
+    },
+    "vram_gb": 8.0,
+    "description": "Cuts the object out of the reference image.",
+    "disk_gb": 3.8,
+    "installed": true,
+    "weights": {
+      "repo": "onnx-community/BiRefNet-ONNX",
+      "revision": "534d3c82d3bb8b2f0867db6dfbc3a525b8e42f67"
+    },
+    "adapter_version": "1",
+    "upstream": "",
+    "rank": 10,
+    "stub": false,
+    "views": [],
+    "status": "ready",
+    "device": "cpu",
+    "runs_on": "cpu",
+    "fit": "fits",
+    "task": null
+  },
+  {
+    "id": "hunyuan3d2-mv",
+    "name": "Hunyuan3D-2mv (turbo)",
+    "family": "hunyuan3d2",
+    "tasks": [
+      "shape"
+    ],
+    "license": {
+      "spdx": "LicenseRef-Tencent-Hunyuan-3D-2.0-Community",
+      "commercial": true,
+      "restrictions": [
+        "not licensed in the EU, UK or South Korea",
+        "separate license above 1M monthly active users"
+      ],
+      "url": "https://huggingface.co/tencent/Hunyuan3D-2mv/blob/3a761b539b29fe4ff64714813aa9560fd66f5de0/LICENSE"
+    },
+    "requirements": {
+      "cuda": {
+        "status": "supported",
+        "min_vram_gb": 6
+      },
+      "mps": {
+        "status": "experimental",
+        "min_vram_gb": 6,
+        "dtypes": [
+          "fp16"
+        ]
+      },
+      "cpu": {
+        "status": "unsupported"
+      }
+    },
+    "params": {
+      "steps": {
+        "type": "integer",
+        "default": 5,
+        "minimum": 1,
+        "maximum": 50
+      },
+      "guidance_scale": {
+        "type": "number",
+        "default": 5.0,
+        "minimum": 1.0,
+        "maximum": 15.0
+      },
+      "octree_resolution": {
+        "type": "integer",
+        "default": 380,
+        "minimum": 256,
+        "maximum": 512
+      },
+      "yaw_degrees": {
+        "type": "number",
+        "default": 0,
+        "description": "Rotate the output about Y if it faces the wrong way"
+      }
+    },
+    "vram_gb": 6.0,
+    "description": "Builds the shape from the front and any side or back views of the same subject.",
+    "disk_gb": 5.0,
+    "installed": true,
+    "weights": {
+      "repo": "tencent/Hunyuan3D-2mv",
+      "revision": "3a761b539b29fe4ff64714813aa9560fd66f5de0"
+    },
+    "adapter_version": "1",
+    "upstream": "52b7c9647e457f9b4055e3488e06e675117eae01d6c48b28d8ec1b869a697b2c",
+    "rank": 5,
+    "stub": false,
+    "views": [
+      "front",
+      "left",
+      "back",
+      "right"
+    ],
+    "status": "ready",
+    "device": "mps",
+    "runs_on": "mps",
+    "fit": "fits",
+    "task": null
+  },
+  {
+    "id": "hunyuan3d2-paint",
+    "name": "Hunyuan3D-2 Paint (turbo)",
+    "family": "hunyuan3d2",
+    "tasks": [
+      "texture"
+    ],
+    "license": {
+      "spdx": "LicenseRef-Tencent-Hunyuan-3D-2.0-Community",
+      "commercial": true,
+      "restrictions": [
+        "not licensed in the EU, UK or South Korea",
+        "separate license above 1M monthly active users"
+      ],
+      "url": "https://github.com/Tencent-Hunyuan/Hunyuan3D-2/blob/f8db63096c8282cb27354314d896feba5ba6ff8a/LICENSE"
+    },
+    "requirements": {
+      "cuda": {
+        "status": "supported",
+        "min_vram_gb": 10
+      },
+      "mps": {
+        "status": "unsupported"
+      },
+      "cpu": {
+        "status": "unsupported"
+      }
+    },
+    "params": {
+      "resolution": {
+        "type": "integer",
+        "default": 2048,
+        "enum": [
+          1024,
+          2048
+        ]
+      },
+      "render_size": {
+        "type": "integer",
+        "default": 2048,
+        "enum": [
+          1024,
+          2048
+        ]
+      },
+      "roughness": {
+        "type": "number",
+        "default": 0.8,
+        "minimum": 0,
+        "maximum": 1
+      },
+      "metallic": {
+        "type": "number",
+        "default": 0.0,
+        "minimum": 0,
+        "maximum": 1
+      },
+      "yaw_degrees": {
+        "type": "number",
+        "default": 0,
+        "description": "Rotate before painting so the front view matches the image"
+      }
+    },
+    "vram_gb": 12.5,
+    "description": "Paints the low-poly mesh in the colors of the reference; it unwraps UVs itself.",
+    "disk_gb": 23.1,
+    "installed": false,
+    "weights": {
+      "repo": "tencent/Hunyuan3D-2",
+      "revision": "9cd649ba6913f7a852e3286bad86bfa9a2d83dcf"
+    },
+    "adapter_version": "1",
+    "upstream": "52b7c9647e457f9b4055e3488e06e675117eae01d6c48b28d8ec1b869a697b2c",
+    "rank": 10,
+    "stub": false,
+    "views": [
+      "front",
+      "left",
+      "back",
+      "right"
+    ],
+    "status": "not-installed",
+    "device": null,
+    "runs_on": null,
+    "fit": "unsupported",
+    "task": null
+  },
+  {
+    "id": "stub-background",
+    "name": "Stub background removal",
+    "family": "stub",
+    "tasks": [
+      "background-removal"
+    ],
+    "license": {
+      "spdx": "Apache-2.0",
+      "commercial": true,
+      "restrictions": [],
+      "url": ""
+    },
+    "requirements": {
+      "cpu": {
+        "status": "supported"
+      }
+    },
+    "params": {
+      "tolerance": {
+        "type": "number",
+        "default": 0.12,
+        "minimum": 0.01,
+        "maximum": 0.5
+      }
+    },
+    "vram_gb": 0.0,
+    "description": "Deterministic stand-in for tests; its output is not a real asset.",
+    "disk_gb": 0.0,
+    "installed": true,
+    "weights": {},
+    "adapter_version": "1",
+    "upstream": "",
+    "rank": 0,
+    "stub": true,
+    "views": [],
+    "status": "ready",
+    "device": "cpu",
+    "runs_on": "cpu",
+    "fit": "fits",
+    "task": null
+  },
+  {
+    "id": "stub-paint",
+    "name": "Stub paint (front projection)",
+    "family": "stub",
+    "tasks": [
+      "texture"
+    ],
+    "license": {
+      "spdx": "Apache-2.0",
+      "commercial": true,
+      "restrictions": [],
+      "url": ""
+    },
+    "requirements": {
+      "cpu": {
+        "status": "supported"
+      }
+    },
+    "params": {
+      "resolution": {
+        "type": "integer",
+        "default": 1024,
+        "enum": [
+          512,
+          1024,
+          2048
+        ]
+      },
+      "roughness": {
+        "type": "number",
+        "default": 0.8,
+        "minimum": 0,
+        "maximum": 1
+      },
+      "metallic": {
+        "type": "number",
+        "default": 0.0,
+        "minimum": 0,
+        "maximum": 1
+      }
+    },
+    "vram_gb": 0.0,
+    "description": "Deterministic stand-in for tests; its output is not a real asset.",
+    "disk_gb": 0.0,
+    "installed": true,
+    "weights": {},
+    "adapter_version": "1",
+    "upstream": "",
+    "rank": 0,
+    "stub": true,
+    "views": [],
+    "status": "ready",
+    "device": "cpu",
+    "runs_on": "cpu",
+    "fit": "fits",
+    "task": null
+  },
+  {
+    "id": "stub-shape",
+    "name": "Stub shape (silhouette inflation)",
+    "family": "stub",
+    "tasks": [
+      "shape"
+    ],
+    "license": {
+      "spdx": "Apache-2.0",
+      "commercial": true,
+      "restrictions": [],
+      "url": ""
+    },
+    "requirements": {
+      "cpu": {
+        "status": "supported"
+      }
+    },
+    "params": {
+      "resolution": {
+        "type": "integer",
+        "default": 96,
+        "minimum": 16,
+        "maximum": 256
+      },
+      "depth": {
+        "type": "number",
+        "default": 0.18,
+        "minimum": 0.01,
+        "maximum": 1.0
+      },
+      "smooth": {
+        "type": "integer",
+        "default": 8,
+        "minimum": 0,
+        "maximum": 50
+      }
+    },
+    "vram_gb": 0.0,
+    "description": "Deterministic stand-in for tests; its output is not a real asset.",
+    "disk_gb": 0.0,
+    "installed": true,
+    "weights": {},
+    "adapter_version": "1",
+    "upstream": "",
+    "rank": 0,
+    "stub": true,
+    "views": [
+      "front",
+      "left",
+      "back",
+      "right"
+    ],
+    "status": "ready",
+    "device": "cpu",
+    "runs_on": "cpu",
+    "fit": "fits",
+    "task": null
+  },
+  {
+    "id": "triposg",
+    "name": "TripoSG",
+    "family": "triposg",
+    "tasks": [
+      "shape"
+    ],
+    "license": {
+      "spdx": "MIT",
+      "commercial": true,
+      "restrictions": [],
+      "url": "https://github.com/VAST-AI-Research/TripoSG/blob/fc5c40990181e2a756c4e0b1c2f4d6b5202faf8c/LICENSE"
+    },
+    "requirements": {
+      "cuda": {
+        "status": "supported",
+        "min_vram_gb": 8,
+        "dtypes": [
+          "fp16",
+          "bf16"
+        ]
+      },
+      "mps": {
+        "status": "unsupported"
+      },
+      "cpu": {
+        "status": "unsupported"
+      }
+    },
+    "params": {
+      "steps": {
+        "type": "integer",
+        "default": 50,
+        "minimum": 8,
+        "maximum": 100
+      },
+      "guidance_scale": {
+        "type": "number",
+        "default": 7.0,
+        "minimum": 1.0,
+        "maximum": 15.0
+      },
+      "octree_depth": {
+        "type": "integer",
+        "default": 9,
+        "minimum": 7,
+        "maximum": 10
+      },
+      "yaw_degrees": {
+        "type": "number",
+        "default": 0,
+        "description": "Rotate the output about Y if it faces the wrong way"
+      }
+    },
+    "vram_gb": 8.0,
+    "description": "Turns the cut-out image into a detailed 3D shape.",
+    "disk_gb": 12.5,
+    "installed": false,
+    "weights": {
+      "repo": "VAST-AI/TripoSG",
+      "revision": "2c1c516d22d58db486a058d98d31bb6177344e06"
+    },
+    "adapter_version": "1",
+    "upstream": "3d06f11eb795bcabea7863e670e9cea02f96bfc6ec3e6db20e015e5710653682",
+    "rank": 10,
+    "stub": false,
+    "views": [],
+    "status": "not-installed",
+    "device": null,
+    "runs_on": null,
+    "fit": "unsupported",
+    "task": null
+  }
+]

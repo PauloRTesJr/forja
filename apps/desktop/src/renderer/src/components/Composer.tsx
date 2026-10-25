@@ -1,10 +1,12 @@
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { Fragment, type ReactNode } from 'react'
-import { api, fetchModels, pinModel, type Model, type Pick, type Preset } from '../lib/api'
+import { api, fetchModels, pinModel, type Estimate, type Model, type Preset } from '../lib/api'
+import { describeEstimate, whereItRan } from '../lib/estimate'
 import { keys } from '../lib/events'
-import { money, PER_CALL, stageLabel } from '../lib/format'
+import { money, stageLabel } from '../lib/format'
 import { useToast } from '../lib/toast'
 import { PresetEmblem } from './icons'
+import { StageSetup } from './StageSetup'
 
 interface Config {
   models?: { stages?: Record<string, string>; stubs?: boolean }
@@ -31,18 +33,41 @@ function groupsFor(models: Model[], use: string, stubs: boolean, pinned?: string
   return [...by.entries()].sort(([a], [b]) => (a === 'This computer' ? -1 : b === 'This computer' ? 1 : a.localeCompare(b)))
 }
 
-/** What the paid steps of one image cost, and the models whose price is not fixed. */
-export function estimate(plan: Pick[]): { usd: number; unknown: string[]; hosts: string[] } {
-  let usd = 0
-  const unknown: string[] = []
-  const hosts = new Set<string>()
-  for (const p of plan) {
-    if (p.skipped || !p.paid) continue
-    if (p.provider) hosts.add(p.provider)
-    if (p.price?.unit !== PER_CALL) unknown.push(p.model_name || p.model || p.stage)
-    else usd += p.price.amount
-  }
-  return { usd, unknown, hosts: [...hosts] }
+/** How long an image should take and what it should cost, as the core estimates it before queueing. */
+function EstimateNote({ estimate }: { estimate?: Estimate | null }) {
+  if (estimate === null) return null
+  if (!estimate) return <div className="composer-estimate skeleton" aria-hidden />
+  const text = describeEstimate(estimate)
+  return (
+    <div className="composer-estimate" role="status">
+      <p>
+        <strong>{text.time}</strong>
+        {text.cost && <span className="composer-cost"> · {text.cost}</span>}
+      </p>
+      {text.notes.map((n) => (
+        <p key={n} className="muted small">
+          {n}
+        </p>
+      ))}
+      {estimate.paid && <p className="muted small">The reference image is sent to the paid provider; the asset comes back to this computer.</p>}
+      {text.problem && <p className="error">Would be refused: {text.problem}</p>}
+    </div>
+  )
+}
+
+/**
+ * The optional steps' switches as a job's overrides. A step no provider can run here (a Blender
+ * step without Blender) goes off, so a switch left on earlier never refuses the job.
+ */
+export function optionalOverrides(
+  preset: Preset,
+  isOn: (stage: string, fallback: boolean) => boolean,
+): Record<string, boolean> {
+  return Object.fromEntries(
+    preset.stages
+      .filter((s) => s.optional)
+      .map((s) => [`${s.id}.enabled`, isOn(s.id, s.optional!.default) && !preset.unavailable?.[s.id]]),
+  )
 }
 
 /**
@@ -87,12 +112,15 @@ export function Composer({
   onPreset,
   isOn,
   onToggle,
+  estimate,
 }: {
   presets: Preset[]
   preset: string
   onPreset: (id: string) => void
   isOn: (stage: string, fallback: boolean) => boolean
   onToggle: (stage: string, on: boolean) => void
+  /** The core's estimate of the job as it would be queued now; null when there is none to show. */
+  estimate?: Estimate | null
 }) {
   const toast = useToast()
   const models = useQuery({ queryKey: keys.models, queryFn: fetchModels })
@@ -111,7 +139,6 @@ export function Composer({
   const rows = new Map(
     current.plan.filter((p) => p.model || p.missing || (p.skipped && !isOptional.has(p.stage))).map((p) => [p.stage, p]),
   )
-  const cost = estimate(current.plan)
 
   return (
     <>
@@ -140,7 +167,8 @@ export function Composer({
           const row = rows.get(s.id)
           const by = row?.by ? byStage.get(row.by) : undefined
           const optional = s.optional && !byStage.get(s.id)?.skipped ? s.optional : undefined
-          const on = optional ? isOn(s.id, optional.default) : false
+          const cannot = current.unavailable?.[s.id]
+          const on = optional ? isOn(s.id, optional.default) && !cannot : false
           if (!row && !optional) return null
           return (
             <Fragment key={s.id}>
@@ -150,6 +178,8 @@ export function Composer({
                     <span className="composer-skip">
                       Done by {by?.model_name || by?.model} in the {stageLabel(by?.use ?? '').toLowerCase()} step
                     </span>
+                  ) : row.problem ? (
+                    <span className="composer-skip">{row.problem}</span>
                   ) : (
                     <select
                       id={`model-${row.stage}`}
@@ -175,12 +205,19 @@ export function Composer({
                       ))}
                     </select>
                   )}
+                  {!row.skipped && whereItRan(row) && <span className="composer-where">Runs on {whereItRan(row)}</span>}
                 </Step>
               )}
               {optional && (
                 <Step node={on ? 'on' : 'off'}>
                   <span className="option">
-                    <button className="switch" role="switch" aria-checked={on} onClick={() => onToggle(s.id, !on)}>
+                    <button
+                      className="switch"
+                      role="switch"
+                      aria-checked={on}
+                      disabled={!!cannot}
+                      onClick={() => onToggle(s.id, !on)}
+                    >
                       <span className="switch-track" aria-hidden />
                       {optional.label}
                     </button>
@@ -193,6 +230,10 @@ export function Composer({
                       </span>
                     )}
                   </span>
+                  {cannot && <span className="composer-skip">{cannot}</span>}
+                  {cannot && current.install?.[s.id] && (
+                    <StageSetup install={current.install[s.id]!} onReady={() => onToggle(s.id, true)} />
+                  )}
                 </Step>
               )}
             </Fragment>
@@ -200,18 +241,7 @@ export function Composer({
         })}
       </div>
 
-      {(cost.usd > 0 || cost.unknown.length > 0) && (
-        <p className="composer-cost">
-          {cost.usd > 0 && (
-            <>
-              About ${cost.usd.toFixed(2)} per image on{' '}
-              {cost.hosts.map((id) => models.data?.find((m) => m.provider === id)?.provider_label ?? id).join(', ')}.{' '}
-            </>
-          )}
-          {cost.unknown.length > 0 && <>{cost.unknown.join(', ')} has no fixed price. </>}
-          The reference image is sent there; the asset comes back to this computer.
-        </p>
-      )}
+      <EstimateNote estimate={estimate} />
     </>
   )
 }

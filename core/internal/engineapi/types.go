@@ -26,12 +26,17 @@ type RunRequest struct {
 	Priority    string      `json:"priority"`
 	Seed        int         `json:"seed"`
 	Stages      []StageSpec `json:"stages"`
+	// Measure asks for each stage's Metrics (API 1.7): a benchmark's run.
+	Measure bool `json:"measure,omitempty"`
 }
 
 type Output struct {
 	Hash    string `json:"hash"`
 	Kind    string `json:"kind"`
 	Preview bool   `json:"preview"`
+	// Note is what the person should know about the output, such as a stand-in the stage made
+	// when it could not do what it was asked (API 1.8).
+	Note string `json:"note,omitempty"`
 }
 
 type StageState struct {
@@ -43,6 +48,8 @@ type StageState struct {
 	Total   int      `json:"total"`
 	// PeakVRAMBytes is PyTorch's reserved peak during the stage; nil when not measurable.
 	PeakVRAMBytes *int64 `json:"peak_vram_bytes"`
+	// Metrics are set when the run asked to measure; nil otherwise.
+	Metrics *StageMetrics `json:"metrics"`
 }
 
 type Run struct {
@@ -67,6 +74,9 @@ type Info struct {
 	Lanes      map[string]any `json:"lanes"`
 	// Stages maps each built-in stage type to its adapter version (API 1.2+).
 	Stages map[string]string `json:"stages"`
+	// Unavailable says why the engine runs some built-in stage types nowhere here: those backed
+	// by Blender where none is found (API 1.7). Routing passes such an engine by.
+	Unavailable map[string]string `json:"unavailable,omitempty"`
 }
 
 type Model struct {
@@ -266,4 +276,33 @@ type TaskProgress struct {
 type InstallRequest struct {
 	Lane    string `json:"lane,omitempty"`
 	Weights *bool  `json:"weights,omitempty"`
+}
+
+// StageMetrics are what an engine measured about one stage of a run that asked to measure
+// (API 1.7). A value it could not read is nil.
+type StageMetrics struct {
+	// Device is where the stage ran: a device id ("cuda:0", "cpu"), or "cpu-pool" for built-ins.
+	Device string `json:"device"`
+	// LoadSeconds is the model load the stage waited for, 0 when the model was warm; nil for
+	// built-in stages, which load none.
+	LoadSeconds *float64 `json:"load_seconds"`
+	// PeakRAMBytes is the peak resident memory of the process that ran it, sampled at 10 Hz.
+	PeakRAMBytes *int64 `json:"peak_ram_bytes"`
+	// GPUUtil is the mean percent of time the GPU ran kernels while the stage ran (NVML, 10 Hz).
+	GPUUtil *float64 `json:"gpu_util"`
+	// Outputs are the stats of the stage's meshes.
+	Outputs []OutputStats `json:"outputs"`
+	// MeasureSeconds is the time measuring the outputs took: no part of the stage, and time a
+	// run that does not measure never spends.
+	MeasureSeconds float64 `json:"measure_seconds"`
+}
+
+// OutputStats describe a mesh output's full-detail level.
+type OutputStats struct {
+	Hash       string `json:"hash"`
+	Triangles  int    `json:"triangles"`
+	Vertices   int    `json:"vertices"`
+	Watertight bool   `json:"watertight"`
+	// UVCoverage is the fraction of the UV square its triangles cover; nil without UVs.
+	UVCoverage *float64 `json:"uv_coverage"`
 }

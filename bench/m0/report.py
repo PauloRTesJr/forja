@@ -38,22 +38,21 @@ def main() -> None:
         ran = 0.0
         for s in job["stages"]:
             if s["id"] not in stages:
-                stages[s["id"]] = {"seconds": [], "vram": [], "cached": []}
+                stages[s["id"]] = {"seconds": [], "vram": []}
                 order.append(s["id"])
             agg = stages[s["id"]]
-            agg["cached"].append(1.0 if s.get("cached") else 0.0)
-            if s["status"] == "succeeded" and not s.get("cached"):
+            if s["status"] == "succeeded":
                 agg["seconds"].append(s["seconds"])
                 ran += s["seconds"]
             if s.get("peak_vram_bytes"):
                 agg["vram"].append(s["peak_vram_bytes"] / GB)
-            rows.append([job["name"], job["id"], s["id"], s.get("model", ""), s["status"], s.get("cached", False),
+            rows.append([job["name"], job["id"], s["id"], s.get("model", ""), s["status"],
                          round(s["seconds"], 3), round(s.get("peak_vram_bytes", 0) / GB, 2)])
         totals.append((job["name"], job["status"], ran))
 
     print(f"# M0 report: {len(jobs)} jobs\n")
-    print("| Stage | Runs | Median s | p90 s | Max s | Peak VRAM GB | Cached |")
-    print("|---|---:|---:|---:|---:|---:|---:|")
+    print("| Stage | Runs | Median s | p90 s | Max s | Peak VRAM GB |")
+    print("|---|---:|---:|---:|---:|---:|")
     for sid in order:
         a = stages[sid]
         sec = a["seconds"]
@@ -62,7 +61,7 @@ def main() -> None:
             line = f"| {sid} | {len(sec)} | {statistics.median(sec):.2f} | {pct(sec, 0.9):.2f} | {max(sec):.2f}"
         else:
             line = f"| {sid} | 0 | — | — | —"
-        print(f"{line} | {vram} | {int(sum(a['cached']))} |")
+        print(f"{line} | {vram} |")
 
     done = [t for t in totals if t[1] == "succeeded"]
     print(f"\n## Image to GLB (budget {BUDGET_SECONDS} s)\n")
@@ -74,12 +73,12 @@ def main() -> None:
     failed = [t for t in totals if t[1] != "succeeded"]
     if failed:
         print(f"- not succeeded: {', '.join(f'{n} ({s})' for n, s, _ in failed)}")
-    print("\nTimes exclude cached stages; the first job also pays model loading.")
+    print("\nThe first job also pays model loading.")
 
     if args.csv:
         with args.csv.open("w", newline="") as f:
             w = csv.writer(f)
-            w.writerow(["job", "job_id", "stage", "model", "status", "cached", "seconds", "peak_vram_gb"])
+            w.writerow(["job", "job_id", "stage", "model", "status", "seconds", "peak_vram_gb"])
             w.writerows(rows)
 
 

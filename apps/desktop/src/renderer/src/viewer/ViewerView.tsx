@@ -16,6 +16,9 @@ export function ViewerView({ url, onStats }: { url: string | undefined; onStats?
   const [mode, setMode] = useState<ViewMode>('lit')
   const [spin, setSpin] = useState(false)
   const [state, setState] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle')
+  const [rigged, setRigged] = useState(false)
+  const [bones, setBones] = useState(false)
+  const [bending, setBending] = useState(false)
   const statsRef = useRef(onStats)
   useEffect(() => {
     statsRef.current = onStats
@@ -33,10 +36,15 @@ export function ViewerView({ url, onStats }: { url: string | undefined; onStats?
     if (!url || !viewer.current) return
     const ctrl = new AbortController()
     setState('loading')
+    // A new model drops the old one's overlay and stops its bend test.
+    setRigged(false)
+    setBones(false)
+    setBending(false)
     viewer.current
       .load(url, ctrl.signal)
       .then((s) => {
         setState('ready')
+        setRigged(s.bones > 0)
         statsRef.current?.(s)
       })
       .catch((e: unknown) => {
@@ -75,6 +83,37 @@ export function ViewerView({ url, onStats }: { url: string | undefined; onStats?
         >
           Turntable
         </button>
+        {rigged && (
+          <>
+            <button
+              className="viewer-rig"
+              aria-pressed={bones}
+              title="Show the bones over the mesh"
+              onClick={() => {
+                setBones(!bones)
+                viewer.current?.setSkeleton(!bones)
+              }}
+            >
+              Skeleton
+            </button>
+            <button
+              className="viewer-rig"
+              aria-pressed={bending}
+              disabled={bending}
+              title="Flex the limbs to check how the skin follows the bones"
+              onClick={() => {
+                const v = viewer.current
+                if (!v) return
+                setBending(true)
+                void v.playBend().then(() => {
+                  if (viewer.current === v) setBending(false)
+                })
+              }}
+            >
+              Bend test
+            </button>
+          </>
+        )}
       </div>
     </div>
   )

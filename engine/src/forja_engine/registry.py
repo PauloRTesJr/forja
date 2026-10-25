@@ -7,6 +7,7 @@ runs it and to the interpreter of the family's own virtual environment.
 from __future__ import annotations
 
 import importlib
+import re
 import sys
 from dataclasses import dataclass, field, replace
 from functools import cache
@@ -40,8 +41,8 @@ class Manifest:
     adapter: str  # "module:Class"
     tasks: tuple[StageType, ...]
     license: License
-    # Mirrors the adapter class's `version`, so the core can key the cache without importing
-    # code that lives in another environment. tests/test_families.py keeps the two equal.
+    # Mirrors the adapter class's `version`, so the core can tell it without importing code
+    # that lives in another environment. tests/test_families.py keeps the two equal.
     adapter_version: str = "1"
     requirements: dict[str, Any] = field(default_factory=dict)
     params: dict[str, Any] = field(default_factory=dict)
@@ -61,6 +62,8 @@ class Manifest:
     # Explicit interpreter; otherwise the family's environment, or the supervisor's own for
     # families that need nothing beyond the engine (built-in, stub).
     python: str | None = None
+    # The family folder when the model came in a model package instead of engine/families.
+    family_dir: Path | None = None
     env_dir: Path | None = None
     weights_dir: Path | None = None
     installed: bool = True
@@ -80,6 +83,17 @@ class Manifest:
     @property
     def vram_bytes(self) -> int:
         return int(self.vram_gb * (1 << 30))
+
+    def supports(self, backend: str) -> bool:
+        """Whether the model runs on a device of this backend ("cuda", "mps", "rocm", "cpu")."""
+        spec = self.requirements.get(backend) or {}
+        status = spec.get("status", "supported" if backend in self.requirements else None)
+        return status in ("supported", "experimental")
+
+    def runs_on_lane(self, lane: str) -> bool:
+        """Whether a machine of this torch lane can run the model: on its GPU, or on its CPU,
+        which every machine has."""
+        return self.supports(lane) or self.supports("cpu")
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -101,7 +115,7 @@ class Manifest:
             "installed": self.installed,
             "weights": {k: self.weights[k] for k in ("repo", "revision") if k in self.weights},
             "adapter_version": self.adapter_version,
-            "upstream": upstream_pin(self.family),
+            "upstream": upstream_pin(self.family, self.family_dir),
             "rank": self.rank,
             "stub": self.stub,
             "views": list(self.views),
@@ -113,24 +127,37 @@ class ManifestError(ValueError):
 
 
 @cache
-def upstream_pin(family: str) -> str:
+def upstream_pin(family: str, root: Path | None = None) -> str:
     """The sha256 of the upstream source a family runs, or "" for families with none."""
     if family in IN_ENGINE_FAMILIES:
         return ""
     try:
-        up = families.load(family).upstream
+        up = families.load(family, root).upstream
     except FileNotFoundError:
         return ""
     return up.sha256 if up else ""
+
+
+# A model id and a family name each name a folder the installer creates and removes
+# (<data>/models/<id>, <data>/envs/<family>), so neither may reach outside it. As in
+# catalog/schema.
+_MODEL_ID = re.compile(r"[a-z0-9][a-z0-9._-]*")
+_FAMILY = re.compile(r"[a-z0-9][a-z0-9_-]*")
+
+
+def _slug(value: Any, pattern: re.Pattern[str], what: str) -> str:
+    if not isinstance(value, str) or not pattern.fullmatch(value) or ".." in value:
+        raise ValueError(f"{what} {value!r} is not a name like 'my-model' ({pattern.pattern}, no '..')")
+    return value
 
 
 def parse(doc: dict[str, Any], source: str) -> Manifest:
     try:
         lic = doc["license"]
         return Manifest(
-            id=doc["id"],
+            id=_slug(doc["id"], _MODEL_ID, "model id"),
             name=doc.get("name", doc["id"]),
-            family=doc["family"],
+            family=_slug(doc["family"], _FAMILY, "family"),
             adapter=doc["adapter"],
             tasks=tuple(StageType(t) for t in doc["tasks"]),
             license=License(
@@ -153,6 +180,30 @@ def parse(doc: dict[str, Any], source: str) -> Manifest:
         )
     except (KeyError, ValueError, TypeError) as e:
         raise ManifestError(f"{source}: invalid manifest: {e}") from e
+
+
+def _package(root: Path) -> list[Manifest]:
+    """A model package: a family folder (family.yaml, requirements/, src/) with a manifests/ folder.
+
+    It adds models from outside the engine: install builds the family's environment from the
+    package, the same way it does for engine/families.
+    """
+    doc = yaml.safe_load((root / "family.yaml").read_text(encoding="utf-8")) or {}
+    try:
+        family = _slug(doc.get("name", ""), _FAMILY, "family")
+    except ValueError as e:
+        raise ManifestError(f"{root / 'family.yaml'}: {e}") from e
+    if family in IN_ENGINE_FAMILIES or (families.families_dir() / family / "family.yaml").is_file():
+        raise ManifestError(
+            f"{root}: family {family!r} is one of the engine's; give the package its own name"
+        )
+    out = []
+    for path in sorted((root / "manifests").glob("*.y*ml")):
+        m = parse(yaml.safe_load(path.read_text(encoding="utf-8")), str(path))
+        if m.family != family:
+            raise ManifestError(f"{path}: names family {m.family!r}, but its package is {family!r}")
+        out.append(replace(m, family_dir=root.resolve()))
+    return out
 
 
 def _views(raw: list[str]) -> tuple[str, ...]:
@@ -184,9 +235,21 @@ class Registry:
         for entry in sorted(builtin_dir.iterdir(), key=lambda e: e.name):
             if entry.name.endswith((".yaml", ".yml")):
                 found.append(parse(yaml.safe_load(entry.read_text()), entry.name))
+        # A manifest from outside the engine never replaces one, bundled or from another folder:
+        # it would run its own code, under a name the user trusts, on install and remove.
+        sources = {m.id: "the engine" for m in found}
         for d in extra_dirs or []:
-            for path in sorted(d.glob("*.y*ml")):
-                found.append(parse(yaml.safe_load(path.read_text()), str(path)))
+            if (d / "family.yaml").is_file():
+                extra = _package(d)
+            else:
+                extra = [parse(yaml.safe_load(p.read_text()), str(p)) for p in sorted(d.glob("*.y*ml"))]
+            for m in extra:
+                if m.id in sources:
+                    raise ManifestError(
+                        f"{d}: model {m.id!r} is already defined by {sources[m.id]}; give it its own id"
+                    )
+                sources[m.id] = str(d)
+            found += extra
         return cls(found)
 
     def resolve(self, task: StageType, model: str | None) -> Manifest | None:

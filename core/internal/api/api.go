@@ -18,7 +18,7 @@ import (
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
 
-	"forja/internal/cache"
+	"forja/internal/bench"
 	"forja/internal/catalog"
 	"forja/internal/config"
 	"forja/internal/events"
@@ -30,6 +30,7 @@ import (
 	"forja/internal/presets"
 	"forja/internal/provider"
 	"forja/internal/store"
+	"forja/internal/sweep"
 )
 
 // EvModelsChanged tells clients that a provider's models changed: re-read models and presets.
@@ -42,7 +43,7 @@ type Server struct {
 	Store     *store.Store
 	Hub       *events.Hub
 	Runner    *jobs.Runner
-	Cache     *cache.Keeper
+	Sweeper   *sweep.Sweeper
 	Providers *provider.Registry
 	Catalog   *catalog.Catalog
 	Installs  *installs.Tracker
@@ -50,6 +51,9 @@ type Server struct {
 	Config    func(project string) (*config.Loaded, error)
 	Shutdown  func()
 	Log       *slog.Logger
+
+	benchOnce sync.Once
+	bench     *bench.Bench
 }
 
 type route struct {
@@ -105,14 +109,22 @@ func (s *Server) routes() []route {
 		{"POST /v1/assets/{id}/drag", s.assetDrag},
 		{"GET /v1/export/formats", s.exportFormats},
 		{"POST /v1/export", s.exportAssets},
-		{"GET /v1/cache", s.cacheGet},
-		{"DELETE /v1/cache", s.cacheClear},
 		{"GET /v1/artifacts/{ref}", s.artifactGet},
 		{"PUT /v1/artifacts", s.artifactPut},
 		{"POST /v1/artifacts/import", s.artifactImport},
 		{"GET /v1/events", s.eventsWS},
 		{"GET /v1/events/stream", s.eventsSSE},
 		{"POST /v1/shutdown", s.shutdown},
+		{"POST /v1/bench", s.benchStart},
+		{"GET /v1/bench", s.benchList},
+		{"GET /v1/bench/{id}", s.benchGet},
+		{"DELETE /v1/bench/{id}", s.benchCancel},
+		{"GET /v1/bench/{id}/report", s.benchReport},
+		{"POST /v1/bench/compare", s.benchCompare},
+		{"POST /v1/estimate", s.estimate},
+		{"GET /v1/prices", s.prices},
+		{"PUT /v1/prices/{id...}", s.priceSet},
+		{"DELETE /v1/prices/{id...}", s.priceRemove},
 	}
 }
 
@@ -208,6 +220,44 @@ type PresetView struct {
 	Plan    []jobs.Pick `json:"plan"`
 	Ready   bool        `json:"ready"`
 	Error   string      `json:"error,omitempty"`
+	// Unavailable says why an optional stage that is off could not run if turned on, by stage id.
+	Unavailable map[string]string `json:"unavailable,omitempty"`
+	// Install says, for those stages, what this computer can install so they run, by stage id.
+	Install map[string]StageInstall `json:"install,omitempty"`
+}
+
+// StageInstall is what makes an unavailable optional stage run on this computer: a model to
+// install, or other software, which GET /v1/checks?stages=<use> names with its fix (Blender).
+type StageInstall struct {
+	Use      string `json:"use"`
+	Model    string `json:"model,omitempty"`
+	Software bool   `json:"software,omitempty"`
+}
+
+// installs says what to install here for each blocked stage that this computer could run.
+func (s *Server) installs(ctx context.Context, blocked map[string]jobs.Blocked) map[string]StageInstall {
+	local, err := s.Catalog.Get(ctx, jobs.LocalProvider)
+	if err != nil {
+		return nil
+	}
+	out := map[string]StageInstall{}
+	for id, b := range blocked {
+		switch {
+		case b.Software:
+			// Only where this computer's engine says why: then installing the program helps.
+			if _, ok := local.Unavailable[b.Use]; ok {
+				out[id] = StageInstall{Use: b.Use, Software: true}
+			}
+		default:
+			if m := bestHere(local.Models, b.Use); m != nil {
+				out[id] = StageInstall{Use: b.Use, Model: m.ID}
+			}
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // fresh is ?fresh=1: ask providers now, even if that starts the local engine, instead of
@@ -270,6 +320,13 @@ func (s *Server) presets(w http.ResponseWriter, r *http.Request) {
 			for _, pick := range plan {
 				v.Ready = v.Ready && !pick.Missing
 			}
+			if off, err := s.Runner.Unavailable(ctx, project, p); err == nil && len(off) > 0 {
+				v.Unavailable = make(map[string]string, len(off))
+				for id, b := range off {
+					v.Unavailable[id] = b.Reason
+				}
+				v.Install = s.installs(ctx, off)
+			}
 		}
 		list[i] = v
 	}
@@ -278,24 +335,30 @@ func (s *Server) presets(w http.ResponseWriter, r *http.Request) {
 
 // engineUnload frees all VRAM now, for the "pause engine" toggle while gaming or in Unity.
 func (s *Server) engineUnload(w http.ResponseWriter, r *http.Request) {
-	if !s.Engine.Running() {
-		w.WriteHeader(204)
-		return
-	}
-	base, token, err := s.Engine.Endpoint(r.Context())
-	if err != nil {
+	if err := s.unloadModels(r.Context()); err != nil {
 		problem(w, 502, err.Error())
 		return
 	}
-	req, _ := http.NewRequestWithContext(r.Context(), http.MethodPost, base+"/v1/models/unload-all", nil)
+	w.WriteHeader(204)
+}
+
+// unloadModels frees every model this computer's engine holds; a stopped engine holds none.
+func (s *Server) unloadModels(ctx context.Context) error {
+	if !s.Engine.Running() {
+		return nil
+	}
+	base, token, err := s.Engine.Endpoint(ctx)
+	if err != nil {
+		return err
+	}
+	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, base+"/v1/models/unload-all", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		problem(w, 502, err.Error())
-		return
+		return err
 	}
 	resp.Body.Close()
-	w.WriteHeader(204)
+	return nil
 }
 
 func (s *Server) jobCreate(w http.ResponseWriter, r *http.Request) {

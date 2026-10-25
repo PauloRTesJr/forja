@@ -20,11 +20,32 @@ type Stats struct {
 	Materials int `json:"materials"`
 	// LODs is the highest level of detail below the full one, from node names ending _LOD<n>.
 	LODs int `json:"lods"`
+	// Bones counts the joints of the skin on the full-detail level; 0 for a mesh with no rig.
+	Bones int `json:"bones,omitempty"`
+	// Skeleton is SkeletonHumanoid or SkeletonGeneric for a rigged asset.
+	Skeleton string `json:"skeleton,omitempty"`
 }
 
-// Map is the stats as an asset stores them.
+const (
+	SkeletonHumanoid = "humanoid"
+	SkeletonGeneric  = "generic"
+)
+
+// HumanoidBones are the bones a skeleton needs to be a humanoid, named as Unity's
+// HumanBodyBones: the names the engine gives a humanoid rig, which game engines retarget to.
+var HumanoidBones = []string{
+	"Hips", "Spine", "Head",
+	"LeftUpperArm", "LeftLowerArm", "LeftHand", "RightUpperArm", "RightLowerArm", "RightHand",
+	"LeftUpperLeg", "LeftLowerLeg", "LeftFoot", "RightUpperLeg", "RightLowerLeg", "RightFoot",
+}
+
+// Map is the stats as an asset stores them. Only a rigged asset has bones and a skeleton.
 func (s Stats) Map() map[string]any {
-	return map[string]any{"triangles": s.Triangles, "vertices": s.Vertices, "materials": s.Materials, "lods": s.LODs}
+	m := map[string]any{"triangles": s.Triangles, "vertices": s.Vertices, "materials": s.Materials, "lods": s.LODs}
+	if s.Bones > 0 {
+		m["bones"], m["skeleton"] = s.Bones, s.Skeleton
+	}
+	return m
 }
 
 type document struct {
@@ -35,8 +56,14 @@ type document struct {
 	Nodes []struct {
 		Name     string `json:"name"`
 		Mesh     *int   `json:"mesh"`
+		Skin     *int   `json:"skin"`
 		Children []int  `json:"children"`
 	} `json:"nodes"`
+	Skins []struct {
+		Joints []int `json:"joints"`
+		// glTF allows any JSON as extras; only an object with forja_skeleton says anything.
+		Extras json.RawMessage `json:"extras"`
+	} `json:"skins"`
 	Meshes []struct {
 		Primitives []struct {
 			Attributes map[string]int `json:"attributes"`
@@ -130,6 +157,7 @@ func (d *document) stats() Stats {
 	}
 	var st Stats
 	materials := map[int]bool{}
+	skin := -1
 	seen := map[int]bool{} // a malformed file may list a node twice or in a cycle
 	var walk func(i int)
 	walk = func(i int) {
@@ -140,6 +168,10 @@ func (d *document) stats() Stats {
 		n := d.Nodes[i]
 		level := lodLevel(n.Name)
 		st.LODs = max(st.LODs, level)
+		if n.Mesh != nil && n.Skin != nil && level == 0 && *n.Skin >= 0 && *n.Skin < len(d.Skins) &&
+			(skin < 0 || len(d.Skins[*n.Skin].Joints) > len(d.Skins[skin].Joints)) {
+			skin = *n.Skin
+		}
 		if n.Mesh != nil && *n.Mesh >= 0 && *n.Mesh < len(d.Meshes) && level == 0 {
 			for _, p := range d.Meshes[*n.Mesh].Primitives {
 				pos, ok := p.Attributes["POSITION"]
@@ -166,5 +198,33 @@ func (d *document) stats() Stats {
 		walk(r)
 	}
 	st.Materials = len(materials)
+	if skin >= 0 && len(d.Skins[skin].Joints) > 0 {
+		st.Bones = len(d.Skins[skin].Joints)
+		st.Skeleton = d.skeleton(skin)
+	}
 	return st
+}
+
+// skeleton is what the rig says it is, else what its bone names show: gltfpack and other
+// tools may drop extras, never node names.
+func (d *document) skeleton(skin int) string {
+	var extras struct {
+		Skeleton string `json:"forja_skeleton"`
+	}
+	if json.Unmarshal(d.Skins[skin].Extras, &extras) == nil &&
+		(extras.Skeleton == SkeletonHumanoid || extras.Skeleton == SkeletonGeneric) {
+		return extras.Skeleton
+	}
+	names := map[string]bool{}
+	for _, j := range d.Skins[skin].Joints {
+		if j >= 0 && j < len(d.Nodes) {
+			names[d.Nodes[j].Name] = true
+		}
+	}
+	for _, b := range HumanoidBones {
+		if !names[b] {
+			return SkeletonGeneric
+		}
+	}
+	return SkeletonHumanoid
 }

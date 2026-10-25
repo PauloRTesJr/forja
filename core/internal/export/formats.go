@@ -16,7 +16,7 @@ type Format struct {
 
 var formats = []Format{
 	{ID: "glb", Name: "GLB", Ext: ".glb", For: "The asset as made, with its LODs: Unity, Godot, Unreal and the web"},
-	{ID: "fbx", Name: "FBX", Ext: ".fbx", For: "Unity, Unreal, Maya and 3ds Max, textures inside; the LODs become a LOD group", Blender: true},
+	{ID: "fbx", Name: "FBX", Ext: ".fbx", For: "Unity, Unreal, Maya and 3ds Max, textures inside; the LODs become a LOD group, a rig an armature", Blender: true},
 	{ID: "obj", Name: "OBJ", Ext: ".obj", For: "Any 3D tool; full detail only, its material and textures beside it", Blender: true},
 	{ID: "gltf", Name: "glTF", Ext: ".gltf", For: "The GLB as separate JSON, buffer and texture files", Blender: true},
 	{ID: "usdz", Name: "USDZ", Ext: ".usdz", For: "AR Quick Look on iPhone, iPad and Vision Pro; full detail only", Blender: true},

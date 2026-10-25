@@ -1,0 +1,92 @@
+# Real models end to end on the maintainer's GPU machine (spec, section 15: GPU integration).
+#
+# The runner is self-hosted ([self-hosted, linux, gpu]), so this workflow must never run code
+# from a pull request: it has no pull_request trigger, and the job refuses one anyway. It runs
+# only where the repository variable FORJA_GPU_RUNNER is "true", so forks and a repository
+# without the runner skip it instead of queueing forever.
+#
+# Repository variables, all optional:
+#   FORJA_GPU_DATA_DIR  data folder kept between runs, so model environments and weights are
+#                       installed once (default: ~/.cache/forja-ci)
+#   FORJA_GPU_REFS_DIR  folder of reference images on the runner (the benchmark set is not
+#                       committed); the engine's chest fixture always runs
+#   FORJA_GPU_MODELS    models to install (default: the M0 set, which the built-in presets pick)
+name: GPU nightly
+
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  real-models:
+    if: >-
+      vars.FORJA_GPU_RUNNER == 'true' &&
+      github.event_name != 'pull_request' && github.event_name != 'pull_request_target'
+    runs-on: [self-hosted, linux, gpu]
+    timeout-minutes: 240
+    env:
+      FORJA_E2E_MODELS: real
+      ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        with:
+          node: "false"
+      - run: make core
+
+      - name: Data folder
+        env:
+          DATA_DIR: ${{ vars.FORJA_GPU_DATA_DIR }}
+        run: |
+          data=${DATA_DIR:-$HOME/.cache/forja-ci}
+          mkdir -p "$data"
+          # A fresh library and store every night, so nothing an earlier night left counts;
+          # model environments (envs/, _uv/) and weights (models/) stay.
+          rm -rf "$data/store" "$data/logs" "$data"/library.db*
+          {
+            echo "FORJA_E2E_DATA=$data"
+            echo "FORJA_E2E_OUT=$RUNNER_TEMP/e2e"
+          } >>"$GITHUB_ENV"
+
+      - name: Install the models (idempotent; verifies pinned hashes)
+        env:
+          MODELS: ${{ vars.FORJA_GPU_MODELS || 'birefnet triposg hunyuan3d2-paint' }}
+        run: |
+          # shellcheck disable=SC2086 # one model id per word
+          bash scripts/e2e.sh forja models install $MODELS --accept-license
+          bash scripts/e2e.sh forja models ls
+
+      - name: Generate
+        env:
+          REFS_DIR: ${{ vars.FORJA_GPU_REFS_DIR }}
+        run: |
+          shopt -s nullglob
+          images=(engine/tests/fixtures/chest.png)
+          if [ -n "$REFS_DIR" ]; then
+            images+=("$REFS_DIR"/*.png "$REFS_DIR"/*.jpg "$REFS_DIR"/*.jpeg "$REFS_DIR"/*.webp)
+          fi
+          echo "${#images[@]} images"
+          bash scripts/e2e.sh generate "${images[@]}"
+
+      - if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: gpu-nightly
+          path: |
+            ${{ runner.temp }}/e2e/glb
+            ${{ runner.temp }}/e2e/*.json
+            ${{ env.FORJA_E2E_DATA }}/logs
+          if-no-files-found: ignore
+          retention-days: 14

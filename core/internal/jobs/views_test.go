@@ -53,18 +53,13 @@ func TestSideViewsGoToTheModelThatReadsThem(t *testing.T) {
 	if done.Status != library.Succeeded || done.Sheet != nil {
 		t.Fatalf("%s %s, sheet %+v", done.Status, done.Error, done.Sheet)
 	}
-	// The front's framing is cached from the first job, so it arrives by hash.
 	shape := fp.spec("shape")
-	if shape.Inputs[0] != jobStage(done, "frame").Outputs[0].Hash ||
-		strings.Join(shape.Inputs[1:], ",") != "stage:frame-left,stage:frame-back" ||
+	if strings.Join(shape.Inputs, ",") != "stage:frame,stage:frame-left,stage:frame-back" ||
 		strings.Join(shape.Views, ",") != "front,left,back" {
 		t.Fatalf("shape got %v %v", shape.Inputs, shape.Views)
 	}
 	if got := fp.spec("bg-left").Inputs; len(got) != 1 || got[0] != left {
 		t.Fatalf("bg-left read %v", got)
-	}
-	if !jobStage(done, "bg").Cached || !jobStage(done, "frame").Cached {
-		t.Fatal("the front's preparation was not reused from the first job")
 	}
 	for _, bad := range []map[string]string{{"front": left}, {"top": left}, {"left": "blake3:" + strings.Repeat("9", 64)}} {
 		if _, err := r.Submit(ctx, SubmitRequest{Input: img, Preset: "draft", Views: bad}); err == nil {
@@ -169,12 +164,11 @@ func TestASheetIsKeptWholeOrSplitAsProposedWhenTheJobSaysSo(t *testing.T) {
 	if kept.Status != library.Succeeded || !kept.Sheet.Found || kept.Sheet.Answer != library.SheetKeep || len(kept.Views) != 0 {
 		t.Fatalf("kept %s %+v %v", kept.Status, kept.Sheet, kept.Views)
 	}
-	if bg := jobStage(kept, "bg"); bg.Cached {
-		t.Fatal("background removal ran while looking for a sheet, yet shows as cached")
-	}
 
+	n := fp.count()
 	j, _ = r.Submit(ctx, SubmitRequest{Input: img, Preset: "draft", Sheet: library.SheetSplit})
 	split := wait(t, r, j.ID)
+	ran := fp.executed(n)
 	if split.Status != library.Succeeded || len(split.Views) != 3 || split.Sheet.Answer != library.SheetSplit {
 		t.Fatalf("split %s %s %v", split.Status, split.Error, split.Views)
 	}
@@ -182,11 +176,11 @@ func TestASheetIsKeptWholeOrSplitAsProposedWhenTheJobSaysSo(t *testing.T) {
 		t.Fatalf("stages %s", got)
 	}
 
-	// The same sheet split the same way again computes nothing.
-	n := fp.count()
+	// The same sheet split the same way again runs all of it again.
+	n = fp.count()
 	j, _ = r.Submit(ctx, SubmitRequest{Input: img, Preset: "draft", Sheet: library.SheetSplit})
-	if again := wait(t, r, j.ID); again.Status != library.Succeeded || fp.executed(n) != "" {
-		t.Fatalf("again %s %s, ran %q", again.Status, again.Error, fp.executed(n))
+	if again := wait(t, r, j.ID); again.Status != library.Succeeded || fp.executed(n) != ran {
+		t.Fatalf("again %s %s, ran %q, not %q", again.Status, again.Error, fp.executed(n), ran)
 	}
 }
 

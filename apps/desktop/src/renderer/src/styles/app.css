@@ -935,11 +935,6 @@ h1 {
   fill: var(--accent);
   stroke: var(--accent-hi);
 }
-/* After .succeeded: a cached stage is also succeeded, and reads as reused, not recomputed. */
-:is(.star-slot, .stage-list li).cached .star path {
-  fill: #5e4e36;
-  stroke: var(--accent);
-}
 :is(.star-slot, .stage-list li).running .star path {
   fill: var(--live);
   stroke: #f6b98a;
@@ -1019,10 +1014,6 @@ h1 {
 }
 .stage-list li:is(.queued, .cancelled) :is(.stage-name, .stage-time) {
   color: var(--text-3);
-}
-.stage-list li.cached .stage-time {
-  font-style: italic;
-  color: #a89a84;
 }
 .stage-list li.running :is(.stage-name, .stage-time) {
   color: var(--live-hi);
@@ -1554,6 +1545,12 @@ h1 {
 .viewer-modes button[aria-pressed='true'] {
   background: var(--accent-soft);
   color: var(--accent-hi);
+}
+.viewer-modes button:disabled {
+  cursor: default;
+}
+.viewer-modes .viewer-rig {
+  animation: fade-in var(--dur-2) var(--ease-out) both;
 }
 .panel {
   display: flex;
@@ -2132,6 +2129,9 @@ pre.code {
   border-color: var(--frame);
   color: var(--accent-hi);
 }
+.rig-tag {
+  animation: fade-in var(--dur-2) var(--ease-out) both;
+}
 .model-desc {
   max-width: 64ch;
   margin: 0;
@@ -2571,20 +2571,6 @@ select.input {
 .hardware {
   grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
 }
-.cache-meter {
-  margin-bottom: 12px;
-}
-.cache-meter b small {
-  color: var(--text-3);
-  font-size: 14px;
-  font-weight: 500;
-}
-.cache-meter .bar {
-  margin-top: 10px;
-}
-.cache-meter .bar > i {
-  background: var(--accent);
-}
 .provider-list {
   display: flex;
   flex-direction: column;
@@ -2856,9 +2842,7 @@ select.input {
   font-style: italic;
 }
 .composer-cost {
-  margin: 18px 0 0 34px;
   color: var(--warn);
-  font-size: 14.5px;
 }
 .quality {
   display: grid;
@@ -3348,4 +3332,113 @@ button.view-slot:disabled {
   color: var(--text-3);
   font-size: 15px;
   font-style: italic;
+}
+
+/* Routing and cost: the estimate before a job, where stages run, and the price table. */
+.composer-estimate {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 18px 0 0 34px;
+  font-size: 15px;
+  animation: fade-in var(--dur-2) var(--ease-out) both;
+}
+.composer-estimate.skeleton {
+  height: 44px;
+}
+.composer-estimate p {
+  margin: 0;
+}
+.composer-estimate strong {
+  color: var(--text);
+  font-weight: 600;
+}
+.composer-where {
+  color: var(--text-3);
+  font-size: 14px;
+  font-style: italic;
+}
+.stage-list li:has(.stage-note) {
+  flex-wrap: wrap;
+}
+.stage-note {
+  flex-basis: 100%;
+  padding: 0 0 6px 23px;
+  color: var(--live-hi);
+  font-size: 14px;
+  font-style: italic;
+}
+.stage-note.warn {
+  color: var(--warn);
+}
+.job-fallback {
+  margin: 0;
+  color: var(--warn);
+  font-size: 14.5px;
+}
+.job-fallback.asset-note {
+  margin-top: 12px;
+}
+.setting.prices {
+  flex-direction: column;
+  align-items: stretch;
+}
+.setting.prices .setting-text {
+  max-width: none;
+}
+.price-list {
+  margin-top: 10px;
+}
+.price-item .number .input {
+  width: 130px;
+}
+/* Adding a cloud GPU or ComfyUI: a workflow per stage type, and what trying the settings found. */
+.workflow-picks {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.workflow-pick {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.workflow-pick > strong {
+  flex: none;
+  width: 150px;
+  font-weight: 500;
+}
+.workflow-pick > .mono {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.probe {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  animation: enter-up var(--dur-2) var(--ease-out) both;
+}
+/* Setting up an optional step where its switch is: a model to install, or a program it needs. */
+.stage-setup {
+  margin-top: 8px;
+}
+.stage-setup-open {
+  font-size: 14px;
+}
+.stage-setup-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 4px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-2);
+  background: var(--surface);
+}
+.stage-setup-panel > p {
+  margin: 0;
 }

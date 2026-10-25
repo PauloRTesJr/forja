@@ -1,10 +1,11 @@
 import type { CSSProperties } from 'react'
 import type { Stage } from '../lib/api'
+import { whereItRan } from '../lib/estimate'
 import { stageName } from '../lib/format'
 import { phaseState, phasesOf, stageFraction, stageTime } from '../lib/jobs'
 import { Star } from './icons'
 
-const starClass = (s: Stage): string => `star-slot ${s.status} ${s.cached ? 'cached' : ''}`
+const starClass = (s: Stage): string => `star-slot ${s.status}`
 
 /** The pipeline as phases; each phase's rule fills with transform only as its stages finish. */
 export function StageTrack({ stages }: { stages: Stage[] }) {
@@ -27,7 +28,7 @@ export function StageTrack({ stages }: { stages: Stage[] }) {
             </div>
             <div className="phase-stars">
               {p.stages.map((s) => (
-                <span key={s.id} className={starClass(s)} title={`${stageName(s)}: ${s.cached ? 'cached' : s.status}`}>
+                <span key={s.id} className={starClass(s)} title={`${stageName(s)}: ${s.status}`}>
                   <Star />
                 </span>
               ))}
@@ -39,18 +40,33 @@ export function StageTrack({ stages }: { stages: Stage[] }) {
   )
 }
 
-/** Every stage on its own line: what ran it and how long it took. */
+/** Every stage on its own line: what ran it, where when not here, and how long it took. */
 export function StageList({ stages }: { stages: Stage[] }) {
   return (
     <ol className="stage-list">
-      {stages.map((s) => (
-        <li key={s.id} className={`${s.status} ${s.cached ? 'cached' : ''}`}>
-          <Star size={13} />
-          <span className="stage-name">{stageName(s)}</span>
-          <span className="stage-model">{s.model ?? 'built-in'}</span>
-          <span className="stage-time">{stageTime(s)}</span>
-        </li>
-      ))}
+      {stages.map((s) => {
+        const where = whereItRan(s)
+        return (
+          <li key={s.id} className={s.status}>
+            <Star size={13} />
+            <span className="stage-name">{stageName(s)}</span>
+            <span className="stage-model" title={where}>
+              {s.model ?? 'built-in'}
+              {where && ` · ${where}`}
+            </span>
+            <span className="stage-time">{stageTime(s)}</span>
+            {s.status === 'running' && s.note && <span className="stage-note">{s.note}</span>}
+            {s.status === 'succeeded' &&
+              s.outputs
+                .filter((o) => o.note)
+                .map((o) => (
+                  <span key={o.hash} className="stage-note warn">
+                    {o.note}
+                  </span>
+                ))}
+          </li>
+        )
+      })}
     </ol>
   )
 }

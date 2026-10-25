@@ -27,8 +27,19 @@ def reset():
 
 def import_glb(path):
     before = set(bpy.data.objects)
-    bpy.ops.import_scene.gltf(filepath=path, import_pack_images=True)
+    options = {"import_pack_images": True}
+    # Newer importers draw each bone of a rig as a sphere, an object every export would carry.
+    if "disable_bone_shape" in bpy.ops.import_scene.gltf.get_rna_type().properties.keys():
+        options["disable_bone_shape"] = True
+    bpy.ops.import_scene.gltf(filepath=path, **options)
+    shapes = {b.custom_shape for o in bpy.data.objects if o.type == "ARMATURE" for b in o.pose.bones}
+    for o in [o for o in bpy.data.objects if o in shapes and o not in before]:
+        bpy.data.objects.remove(o, do_unlink=True)
     return [o for o in bpy.data.objects if o not in before]
+
+
+def rigged():
+    return any(o.type == "ARMATURE" for o in bpy.context.scene.objects)
 
 
 def hide_lower_lods(objects):
@@ -96,10 +107,13 @@ def export(fmt, out):
     files = [out]
     if fmt == "fbx":
         # Unity and Unreal read the _LOD<n> names as a LOD group. Textures go inside the file.
+        # Blender documents baking the axis conversion as broken with armatures, so a rig keeps
+        # it in the file's axis settings instead; with no animation there is no take to bake.
+        rig = rigged()
         bpy.ops.export_scene.fbx(
-            filepath=out, apply_scale_options="FBX_SCALE_ALL", bake_space_transform=True,
+            filepath=out, apply_scale_options="FBX_SCALE_ALL", bake_space_transform=not rig,
             mesh_smooth_type="FACE", add_leaf_bones=False, path_mode="COPY", embed_textures=True,
-            object_types={"EMPTY", "MESH"},
+            object_types={"EMPTY", "MESH", "ARMATURE"}, bake_anim=not rig,
         )
     elif fmt == "gltf":
         before = set(os.listdir(out_dir))

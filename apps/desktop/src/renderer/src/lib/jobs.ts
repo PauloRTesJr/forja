@@ -53,26 +53,27 @@ export const isActive = (j: Job): boolean => j.status === 'queued' || j.status =
 /** Waiting for the user to check the views found in its image. */
 export const needsAnswer = (j: Job): boolean => j.status === 'waiting' && !!j.sheet?.found
 
-export type PhaseId = 'prepare' | 'shape' | 'paint' | 'finish'
+export type PhaseId = 'prepare' | 'shape' | 'paint' | 'rig' | 'finish'
 export interface Phase {
   id: PhaseId
   label: string
   stages: Stage[]
 }
 
-const phaseLabels: Record<PhaseId, string> = { prepare: 'Prepare', shape: 'Shape', paint: 'Paint', finish: 'Finish' }
+const phaseLabels: Record<PhaseId, string> = { prepare: 'Prepare', shape: 'Shape', paint: 'Paint', rig: 'Rig', finish: 'Finish' }
 
 function phaseOfUse(use: string): PhaseId | undefined {
   if (use === 'background-removal' || use === 'framing') return 'prepare'
   if (use === 'shape' || use === 'mesh.cleanup' || use === 'mesh.decimate' || use === 'mesh.uv') return 'shape'
   if (use === 'texture' || use.startsWith('texture.') || use === 'bake') return 'paint'
+  if (use === 'rig') return 'rig'
   if (use === 'mesh.lods' || use === 'export') return 'finish'
   return undefined
 }
 
 /**
  * Groups stages into the pipeline's phases, keeping their order. Ten stage names in a row are
- * too many to read at a glance; four phases are not. A stage type the UI does not know joins
+ * too many to read at a glance; a handful of phases are not. A stage type the UI does not know joins
  * the phase before it, so a new adapter never breaks the track.
  */
 export function phasesOf(stages: Stage[]): Phase[] {
@@ -104,16 +105,16 @@ export interface Summary {
 export function summarize(job: Job): Summary {
   const n = job.stages.length
   const done = job.stages.filter((s) => s.status === 'succeeded').length
-  const cached = job.stages.filter((s) => s.cached).length
-  const ran = job.stages.reduce((t, s) => t + (s.cached ? 0 : s.seconds), 0)
+  const ran = job.stages.reduce((t, s) => t + s.seconds, 0)
   const at = (s: Stage): string => `stage ${job.stages.indexOf(s) + 1} of ${n}`
   switch (job.status) {
     case 'running': {
       const s = job.stages.find((x) => x.status === 'running')
       const overall = `${Math.round(jobFraction(job) * 100)}% overall`
-      return s
-        ? { headline: `Running ${stageLabel(s.use)}`, note: `${at(s)} · ${overall}` }
-        : { headline: 'Running', note: `${done} of ${n} stages done · ${overall}` }
+      if (!s) return { headline: 'Running', note: `${done} of ${n} stages done · ${overall}` }
+      // Another computer or a hosted model says where; its own word (a queue place) says more than a count.
+      const where = s.provider && s.provider !== 'local' ? ` on ${s.provider_label || s.provider}` : ''
+      return { headline: `Running ${stageLabel(s.use)}${where}`, note: `${s.note || at(s)} · ${overall}` }
     }
     case 'queued':
       return { headline: 'Waiting to start', note: done ? `${n - done} of ${n} stages left to run` : `${n} stages to run` }
@@ -122,10 +123,7 @@ export function summarize(job: Job): Summary {
       return { headline: 'Several views found', note: `${views} views of one subject · check them to go on` }
     }
     case 'succeeded':
-      return {
-        headline: ran > 0 ? `Finished in ${seconds(ran)}` : 'Finished from cache',
-        note: cached ? `${cached} of ${n} stages reused from cache` : `${n} stages`,
-      }
+      return { headline: `Finished in ${seconds(ran)}`, note: `${n} stages` }
     case 'failed': {
       const s = job.stages.find((x) => x.status === 'failed')
       return s ? { headline: `Stopped at ${stageLabel(s.use)}`, note: at(s) } : { headline: 'Failed', note: `${done} of ${n} stages done` }
@@ -139,7 +137,7 @@ export function summarize(job: Job): Summary {
 export function stageTime(s: Stage): string {
   switch (s.status) {
     case 'succeeded':
-      return s.cached ? 'cached' : seconds(s.seconds)
+      return seconds(s.seconds)
     case 'running':
       return s.total > 0 ? `${Math.round((s.step / s.total) * 100)}%` : 'running'
     case 'failed':
