@@ -50,12 +50,14 @@ App, core and engine share one version.
 ### Documentation
 
 - change the app and the CLI together, with a feature-parity skill
+- add the changelog generated from the commit history
 
 ### Build and packaging
 
 - one version for the app, the core and the engine
 - desktop: make dist packages the app for this OS
 - optional pre-commit hooks that mirror CI's fast checks
+- desktop: make dist packages macOS through pnpm dist:mac
 
 ### Continuous integration
 
