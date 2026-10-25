@@ -21,6 +21,8 @@ The library exports to GLB, FBX, OBJ, glTF, USDZ, STL and Blender's .blend, one 
 | OBJ, USDZ | full detail only | |
 | STL | full detail only | In millimetres, for printing |
 
+A rigged asset's GLB carries its skin, and FBX, glTF and .blend keep its armature ([rigging](rigging.md#lods-and-exports)).
+
 **In the app:** select one or more assets in the Library, or open one, and pick a format from the export menu.
 
 **From a terminal:**

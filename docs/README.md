@@ -4,6 +4,8 @@
 
 - [Install and first asset](install.md): what you need, installing the models, making an asset, where files live.
 - [Presets](presets.md): the four built-in pipelines, optional stages, overrides, your own presets, how a stage gets its model.
+- [Rigging](rigging.md): the rig stage on Hero character, the rig models, humanoid bone names, rigs in LODs, exports and the viewer.
+- [Quad remesh, Smart UV and baking](remesh.md): the Blender stages, how Forja finds Blender, replacing a stage, how the bake makes its maps.
 - [Models and licenses](models.md): the models, installing and removing them, license acceptance, models from a folder.
 - [Hardware guide](hardware.md): what runs on 8, 12, 16 and 24 GB of VRAM, on Macs and on rented GPUs.
 - [macOS and Apple Silicon](macos.md): what a Mac runs itself, a Mac as a client of a GPU computer, building and signing the DMGs.
@@ -15,11 +17,6 @@
 - [Benchmarks](bench.md): `forja bench`, suites, what is measured, comparing runs, the CI gate.
 - [The forja command line](cli.md): every command, scripting, exit codes.
 - [Configuration](configuration.md): the layers, the settings, the files.
-
-Documented after integration:
-
-- [Rigging](rigging.md)
-- [Quad remesh, Smart UV and baking](remesh.md)
 
 ## Contributing
 

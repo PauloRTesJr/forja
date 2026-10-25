@@ -11,13 +11,16 @@ Forja ships no model weights. Each model is described by a manifest (where its w
 | TripoSG | `triposg` | Shape | MIT | 8 GB (needs 8) | 12.5 GB | NVIDIA |
 | Hunyuan3D-2mv (turbo) | `hunyuan3d2-mv` | Shape, from the front plus side and back views | Tencent Hunyuan 3D 2.0 Community² | 6 GB (needs 6) | 5.0 GB | NVIDIA, Apple Silicon (experimental: [macOS](macos.md)) |
 | Hunyuan3D-2 Paint (turbo) | `hunyuan3d2-paint` | Texture (base color) | Tencent Hunyuan 3D 2.0 Community² | 12.5 GB (needs 10) | 23.1 GB | NVIDIA |
+| SkinTokens (TokenRig) | `skintokens` | Rig ([rigging](rigging.md)) | MIT | 14 GB (needs 14) | 8.1 GB | NVIDIA |
+| UniRig | `unirig` | Rig ([rigging](rigging.md)) | MIT³ | 8.7 GB (needs 8) | 10.7 GB | NVIDIA |
 
 VRAM is the peak at default settings; "needs" is the least the model runs in at all. The engine replaces these figures with the peaks it measures on your GPU. The [hardware guide](hardware.md) says what runs on 8, 12, 16 and 24 GB.
 
 1. BiRefNet's figure is what ONNX Runtime's CUDA arena grows to on a 12 GB card, because cuDNN sizes its workspace to the free memory. It runs in much less.
 2. Commercial use is allowed, with limits: the license does not cover the EU, the UK or South Korea, and above 1 million monthly active users a separate license is needed. Forja shows these terms; it does not block by location.
+3. UniRig's upstream tree, fetched at install time, also carries the Michelangelo shape encoder under GPL-3.0.
 
-The stub models (`stub-background`, `stub-shape`, `stub-paint`) are deterministic CPU stand-ins for tests and machines without a GPU. They are used only when `models.stubs = true`.
+The stub models (`stub-background`, `stub-shape`, `stub-paint`, `stub-rig`) are deterministic CPU stand-ins for tests and machines without a GPU. They are used only when `models.stubs = true`.
 
 ## Install, repair and remove
 

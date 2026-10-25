@@ -17,10 +17,10 @@ forja daemon stop     # stop it and its engine
 | Command | What it does |
 |---|---|
 | `forja setup` | Install what the built-in presets need on this computer, then test them ([install](install.md)) |
-| `forja generate <image>...` | One job per image, followed until it ends ([install](install.md#make-your-first-asset)); `--estimate` shows each stage's expected time, cost and provider instead ([routing](routing.md#estimates-before-queueing)), `--dry-run` the plan |
+| `forja generate <image>...` | One job per image, followed until it ends ([install](install.md#make-your-first-asset)); `--with` and `--skip` turn optional stages such as `rig`, `remesh` and `uv` on and off ([presets](presets.md#optional-stages)); `--estimate` shows each stage's expected time, cost and provider instead ([routing](routing.md#estimates-before-queueing)), `--dry-run` the plan |
 | `forja jobs ls / show / watch / cancel / sheet` | Jobs: list, inspect, follow, cancel, answer a turnaround sheet |
-| `forja assets ls / show / get / export / formats / blender / rm` | The library ([library](library.md)) |
-| `forja presets ls / show` | Presets and the plan each would run now ([presets](presets.md)) |
+| `forja assets ls / show / get / export / formats / blender / rm` | The library ([library](library.md)); `ls` and `show` say how an asset is rigged ([rigging](rigging.md#see-the-rig)) |
+| `forja presets ls / show` | Presets and the plan each would run now, and which optional stages cannot be turned on now and why ([presets](presets.md)) |
 | `forja models ls / install / rm / checks / fix / pin / unpin` | Models ([models](models.md)) |
 | `forja installs ls / watch / cancel` | Installs, removals and fixes in progress |
 | `forja share`, `share on / off / code` | Share this computer's GPU ([sharing](sharing.md)) |

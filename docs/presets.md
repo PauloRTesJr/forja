@@ -9,21 +9,29 @@ A preset is a pipeline: the stages a job runs, in order, with their budgets. It 
 | Draft | `draft` | as generated | none | none | Judging the shape before spending time on texture |
 | Mobile prop | `mobile-prop` | 5,000 | 1K base color, baked normal and AO | 50% and 25% | Props for mobile and the web; the default |
 | Environment piece | `environment-piece` | 15,000 | 2K base color, baked normal and AO | 50% and 25% | Buildings, rocks, set dressing |
-| Hero character | `hero-character` | 30,000 | 2K base color, baked normal and AO | 50% and 25% | Characters seen up close |
+| Hero character | `hero-character` | 30,000 | 2K base color, baked normal and AO | 50% and 25% | Characters seen up close; optionally rigged |
 
-Every preset starts the same way: remove the background, frame the subject at 1024 pixels, generate the shape, clean it up. The textured presets then reduce the mesh to their triangle budget, paint it (the painter unwraps UVs itself), bake the high-poly detail into normal and AO maps, build the LODs and export a GLB, meshopt-compressed when `gltfpack` is on your `PATH`.
+Every preset starts the same way: remove the background, frame the subject at 1024 pixels, generate the shape, clean it up. The textured presets then reduce the mesh to their triangle budget, paint it (the painter unwraps UVs itself, unless a UV stage did), bake the high-poly detail into normal and AO maps ([baking](remesh.md#baking)), build the LODs and export a GLB, meshopt-compressed when `gltfpack` is on your `PATH`.
 
-Local painters produce base color only. Roughness and metallic are constants, the paint stage's `roughness` (0.8) and `metallic` (0) parameters. Rigging is documented after integration ([rigging](rigging.md)).
+Local painters produce base color only. Roughness and metallic are constants, the paint stage's `roughness` (0.8) and `metallic` (0) parameters.
 
 ## Optional stages
 
-**Match the reference colors** (`match`, off by default) pulls the painted texture back toward the reference image's colors and projects the reference onto the parts of the asset it shows. Painting models can drift in color; turn it on when they do. In the app it is a switch under the preset; from the CLI:
+Optional stages are switches under the preset on Generate, all off by default. From the CLI, `--with <stage>` turns one on and `--skip <stage>` turns it off.
+
+| Switch | Stage | Presets | What it does |
+|---|---|---|---|
+| Match the reference colors | `match` | Mobile prop, Environment piece, Hero character | Pulls the painted texture back toward the reference image's colors and projects the reference onto the parts of the asset it shows. Painting models can drift in color; turn it on when they do |
+| Quad remesh with Blender | `remesh` | Environment piece, Hero character | Rebuilds the mesh from even quads in place of the decimation, within the same triangle budget ([quad remesh](remesh.md#quad-remesh)) |
+| Unwrap with Blender's Smart UV Project | `uv` | Environment piece, Hero character | Unwraps before painting, in fewer, straighter islands ([Smart UV](remesh.md#smart-uv-project)) |
+| Rig the character | `rig` | Hero character | Adds a skeleton and skin weights ([rigging](rigging.md)) |
 
 ```sh
 forja generate chest.png --with match
+forja generate knight.png --preset hero-character --with remesh --with rig
 ```
 
-`--skip <stage>` turns an optional stage off.
+A switch that cannot run now, such as a Blender stage where no provider has Blender or the rig with no rig model ready, is greyed out on Generate with the reason; `forja presets show <preset>` prints it, and a job that turns it on is refused.
 
 ## Changing a preset's values
 
@@ -64,7 +72,7 @@ stages:
   - { id: export, use: export, params: { format: glb, compression: meshopt } }
 ```
 
-A stage reads the previous stage's output unless `inputs` names other stage ids, or `input:image` for the job's image. An `optional:` block with `label`, `help` and `default` makes a stage switchable.
+A stage reads the previous stage's output unless `inputs` names other stage ids, or `input:image` for the job's image. An `optional:` block with `label`, `help` and `default` makes a stage switchable, and its `replaces: <stage>` makes it stand in for a later stage while it is on ([replacing a stage](remesh.md#replacing-a-stage-in-your-own-presets)). The last stage cannot be optional.
 
 | Stage type | Runs | Reads |
 |---|---|---|
@@ -73,10 +81,13 @@ A stage reads the previous stage's output unless `inputs` names other stage ids,
 | `shape` | a model | the framed cut-out (and side views) |
 | `mesh.cleanup` | built in | a mesh |
 | `mesh.decimate` | built in | a mesh; `target_tris` |
+| `mesh.remesh` | built in, through Blender | a mesh; `target_tris`, `preserve_sharp` |
 | `mesh.uv` | built in | a mesh (painters unwrap for themselves) |
+| `mesh.uv.smart` | built in, through Blender | a mesh; `angle_limit`, `margin` |
 | `texture` | a model | a mesh and the framed cut-out |
 | `texture.match` | built in | the painted mesh and the framed cut-out |
-| `bake` | built in | the low-poly painted mesh and the high-poly mesh |
+| `bake` | built in | the low-poly painted mesh and the high-poly mesh; `resolution`, `samples`, `cage`, `ao_samples`, `ao_radius` |
+| `rig` | a model | the baked low-poly mesh |
 | `mesh.lods` | built in | a mesh; `ratios` |
 | `export` | built in | a mesh; `format: glb`, `compression: meshopt` |
 

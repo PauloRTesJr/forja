@@ -12,7 +12,7 @@ What runs where, from the VRAM figures in the model manifests. Your own numbers 
 
 ## By VRAM
 
-Figures are for NVIDIA GPUs. The shape and texture models run only on CUDA, except Hunyuan3D-2mv, which also runs on Apple GPUs ([macOS](macos.md)).
+Figures are for NVIDIA GPUs. The shape, texture and rig models run only on CUDA, except Hunyuan3D-2mv, which also runs on Apple GPUs ([macOS](macos.md)).
 
 | | 8 GB | 12 GB | 16 GB | 24 GB |
 |---|---|---|---|---|
@@ -20,13 +20,15 @@ Figures are for NVIDIA GPUs. The shape and texture models run only on CUDA, exce
 | Shape: TripoSG (8 GB, needs 8) | too big | fits | fits | fits |
 | Shape with side views: Hunyuan3D-2mv (6 GB, needs 6) | fits | fits | fits | fits |
 | Texture: Hunyuan3D-2 Paint (12.5 GB, needs 10) | too big | offload | fits | fits |
+| Rig: UniRig (8.7 GB, needs 8) | too big | fits | fits | fits |
+| Rig: SkinTokens (14 GB, needs 14) | too big | too big | fits | fits |
 | Presets that run locally | Draft | all | all | all |
 
 ¹ BiRefNet's figure is its ONNX Runtime arena on a 12 GB card, which grows to the free memory; it runs in much less.
 
-- **8 GB** (RTX 3060 Ti, 3070, 4060): cut-outs and shapes, with Hunyuan3D-2mv. Texture on another computer ([sharing](sharing.md)), a rented GPU ([cloud](cloud.md)) or a hosted model ([hubs](hubs.md)), or use the Draft preset.
-- **12 GB** (RTX 3060 12 GB, 4070, 4070 Ti): every preset. Hunyuan3D-2 Paint runs with offload, so the texture stage is the slow one. This is the setup Forja is built and tested on.
-- **16 GB** (RTX 4060 Ti 16 GB, 4080, 5080): every preset without offload. Shape and texture models take turns on the GPU.
+- **8 GB** (RTX 3060 Ti, 3070, 4060): cut-outs and shapes, with Hunyuan3D-2mv. Texture and rigging on another computer ([sharing](sharing.md)), a rented GPU ([cloud](cloud.md)) or a hosted model ([hubs](hubs.md)), or use the Draft preset.
+- **12 GB** (RTX 3060 12 GB, 4070, 4070 Ti): every preset. Hunyuan3D-2 Paint runs with offload, so the texture stage is the slow one. Rigging uses UniRig (about 8.7 GB at its peak); SkinTokens is remote-only here ([rigging](rigging.md#what-fits)). This is the setup Forja is built and tested on.
+- **16 GB** (RTX 4060 Ti 16 GB, 4080, 5080): every preset without offload. Shape, texture and rig models take turns on the GPU. SkinTokens, the higher-ranked rig model, fits.
 - **24 GB** (RTX 3090, 4090): TripoSG and Hunyuan3D-2 Paint fit side by side (20.5 GB), so jobs in a row reload models less often. BiRefNet lite leaves them more room than BiRefNet general.
 
 Larger texture models that paint full PBR materials need more than 24 GB and are not in the catalog yet.
@@ -39,4 +41,6 @@ Larger texture models that paint full PBR materials need more than 24 GB and are
 
 ## Disk and memory
 
-Plan for the models' disk (environment and weights): about 4 GB for BiRefNet, 12.5 GB for TripoSG, 5 GB for Hunyuan3D-2mv (which shares Hunyuan3D-2 Paint's environment) and 23 GB for Hunyuan3D-2 Paint. Offload keeps part of a model in system RAM, so leave room for it there. The stage cache is capped at 50 GB by default ([library](library.md#the-cache)).
+Plan for the models' disk (environment and weights): about 4 GB for BiRefNet, 12.5 GB for TripoSG, 5 GB for Hunyuan3D-2mv (which shares Hunyuan3D-2 Paint's environment), 23 GB for Hunyuan3D-2 Paint, 10.7 GB for UniRig and 8.1 GB for SkinTokens. Offload keeps part of a model in system RAM, so leave room for it there. The stage cache is capped at 50 GB by default ([library](library.md#the-cache)).
+
+Quad remesh and Smart UV Project run in Blender, on the CPU of the computer that runs the engine, not on the GPU ([remesh](remesh.md#blender)).
