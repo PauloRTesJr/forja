@@ -288,9 +288,13 @@ func (p *Provider) Cancel(ctx context.Context, runID string) error {
 
 var _ provider.Provider = (*Provider)(nil)
 
-func (p *Provider) Checks(ctx context.Context, models []string) (*engineapi.Checks, error) {
+func (p *Provider) Checks(ctx context.Context, models, stages []string) (*engineapi.Checks, error) {
+	q := url.Values{"models": {strings.Join(models, ",")}}
+	if len(stages) > 0 {
+		q.Set("stages", strings.Join(stages, ","))
+	}
 	var out engineapi.Checks
-	_, err := p.do(ctx, http.MethodGet, "/v1/checks?models="+url.QueryEscape(strings.Join(models, ",")), nil, &out)
+	_, err := p.do(ctx, http.MethodGet, "/v1/checks?"+q.Encode(), nil, &out)
 	return &out, err
 }
 

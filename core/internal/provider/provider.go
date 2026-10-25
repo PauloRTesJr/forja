@@ -45,7 +45,9 @@ type Provider interface {
 // Installer is implemented by providers that manage models on their own machine (engines).
 // Callers type-assert for it; a managed API has nothing to install.
 type Installer interface {
-	Checks(ctx context.Context, models []string) (*engineapi.Checks, error)
+	// Checks says what the models need on the provider's machine, and what it needs to run
+	// built-in stages of the given types itself (Blender for quad remesh).
+	Checks(ctx context.Context, models, stages []string) (*engineapi.Checks, error)
 	Fix(ctx context.Context, check string) (*engineapi.Task, error)
 	Install(ctx context.Context, model string, req engineapi.InstallRequest) (*engineapi.Task, error)
 	Remove(ctx context.Context, model string) (*engineapi.Task, error)

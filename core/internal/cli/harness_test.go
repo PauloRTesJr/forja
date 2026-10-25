@@ -188,7 +188,7 @@ func (e *fakeEngine) Run(_ context.Context, req engineapi.RunRequest, evs chan<-
 	return run, nil
 }
 
-func (e *fakeEngine) Checks(context.Context, []string) (*engineapi.Checks, error) {
+func (e *fakeEngine) Checks(context.Context, []string, []string) (*engineapi.Checks, error) {
 	return &engineapi.Checks{Lane: "cuda", Checks: []engineapi.Check{
 		{ID: "uv", Label: "uv", OK: true, Found: "0.9", Need: "0.5 or newer"},
 		{ID: "msvc", Label: "C++ build tools", Found: "none", Need: "MSVC 14", Fix: &engineapi.Fix{

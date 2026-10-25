@@ -345,6 +345,12 @@ func (a *app) showPlan(p *api.PresetView) {
 		}
 		if why := p.Unavailable[s.ID]; why != "" {
 			a.printf("%s cannot be turned on now: %s\n", s.ID, why)
+			switch in := p.Install[s.ID]; {
+			case in.Model != "":
+				a.printf("  install what it needs: forja models install %s\n", in.Model)
+			case in.Software:
+				a.printf("  see what it needs: forja models checks --stage %s\n", in.Use)
+			}
 		}
 	}
 	if cost > 0 {

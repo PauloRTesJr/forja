@@ -53,8 +53,8 @@ An engine started by hand with `forja engine serve` gets your `blender.path` the
 
 An engine without Blender, or with one older than 4.2, does not offer these stages, and says why in `/v1/info`. Routing sends each Blender stage to the first provider that offers it ([routing](routing.md)). When none does:
 
-- **In the app**, the switch is greyed out on Generate, with the reason.
-- **From a terminal**, `forja presets show <preset>` and `forja generate --dry-run` print that the stage cannot be turned on now, and why, and a job that turns it on anyway is refused with the reason: "Blender 4.2 or newer was not found on the computer that runs the engine: install it, or set its path in Settings (blender.path) or in FORJA_BLENDER".
+- **In the app**, the switch is greyed out on Generate, with the reason and an **Install Blender** button. It shows the Blender check with its fix: on Windows, Forja installs Blender with winget, and Windows asks for permission; on macOS and Linux it gives the steps. Once Blender is found the switch turns on. When the Blender settings name a program that is not there, the fix is to correct or clear that path instead.
+- **From a terminal**, `forja presets show <preset>` and `forja generate --dry-run` print that the stage cannot be turned on now, and why, and point at `forja models checks --stage mesh.remesh`, which shows the same check; `forja models fix blender` runs its fix. A job that turns the stage on anyway is refused with the reason: "Blender 4.2 or newer was not found on the computer that runs the engine: install it, or set its path in Settings (blender.path) or in FORJA_BLENDER".
 
 ## Replacing a stage in your own presets
 

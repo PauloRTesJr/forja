@@ -520,8 +520,11 @@ func TestBlenderStagesRunWhereBlenderIsAndAreRefusedWhereNoneIs(t *testing.T) {
 	}
 	all, _ := r.Presets("")
 	off, err := r.Unavailable(ctx, "", all["environment-piece"])
-	if err != nil || off["remesh"] != why || off["uv"] != why || off["match"] != "" {
+	if err != nil || off["remesh"].Reason != why || off["uv"].Reason != why || !off["remesh"].Software {
 		t.Fatalf("unavailable %v, %v", off, err)
+	}
+	if _, ok := off["match"]; ok {
+		t.Fatalf("match runs anywhere, yet: %v", off["match"])
 	}
 
 	r.providers.Add(&blenderBox{fp})

@@ -224,6 +224,42 @@ type PresetView struct {
 	Error   string      `json:"error,omitempty"`
 	// Unavailable says why an optional stage that is off could not run if turned on, by stage id.
 	Unavailable map[string]string `json:"unavailable,omitempty"`
+	// Install says, for those stages, what this computer can install so they run, by stage id.
+	Install map[string]StageInstall `json:"install,omitempty"`
+}
+
+// StageInstall is what makes an unavailable optional stage run on this computer: a model to
+// install, or other software, which GET /v1/checks?stages=<use> names with its fix (Blender).
+type StageInstall struct {
+	Use      string `json:"use"`
+	Model    string `json:"model,omitempty"`
+	Software bool   `json:"software,omitempty"`
+}
+
+// installs says what to install here for each blocked stage that this computer could run.
+func (s *Server) installs(ctx context.Context, blocked map[string]jobs.Blocked) map[string]StageInstall {
+	local, err := s.Catalog.Get(ctx, jobs.LocalProvider)
+	if err != nil {
+		return nil
+	}
+	out := map[string]StageInstall{}
+	for id, b := range blocked {
+		switch {
+		case b.Software:
+			// Only where this computer's engine says why: then installing the program helps.
+			if _, ok := local.Unavailable[b.Use]; ok {
+				out[id] = StageInstall{Use: b.Use, Software: true}
+			}
+		default:
+			if m := bestHere(local.Models, b.Use); m != nil {
+				out[id] = StageInstall{Use: b.Use, Model: m.ID}
+			}
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // fresh is ?fresh=1: ask providers now, even if that starts the local engine, instead of
@@ -287,7 +323,11 @@ func (s *Server) presets(w http.ResponseWriter, r *http.Request) {
 				v.Ready = v.Ready && !pick.Missing
 			}
 			if off, err := s.Runner.Unavailable(ctx, project, p); err == nil && len(off) > 0 {
-				v.Unavailable = off
+				v.Unavailable = make(map[string]string, len(off))
+				for id, b := range off {
+					v.Unavailable[id] = b.Reason
+				}
+				v.Install = s.installs(ctx, off)
 			}
 		}
 		list[i] = v

@@ -376,6 +376,15 @@ export interface Preset {
   error?: string
   /** Why an optional step that is off could not run if switched on, by stage id. */
   unavailable?: Record<string, string>
+  /** What this computer can install so those steps run, by stage id. */
+  install?: Record<string, StageInstall>
+}
+
+/** A model to install for a blocked step, or other software its checks name (Blender). */
+export interface StageInstall {
+  use: string
+  model?: string
+  software?: boolean
 }
 
 export interface License {

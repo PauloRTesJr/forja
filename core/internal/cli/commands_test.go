@@ -84,6 +84,7 @@ func TestBlenderSwitchesSayWhyTheyCannotRunAndRefuseTheJob(t *testing.T) {
 		"Quad remesh with Blender (remesh.enabled)",
 		"remesh cannot be turned on now: Blender 4.2 or newer was not found",
 		"uv cannot be turned on now: Blender 4.2 or newer was not found",
+		"see what it needs: forja models checks --stage mesh.remesh",
 	} {
 		if !strings.Contains(r.out, want) {
 			t.Fatalf("dry run lacks %q:\n%s", want, r.out)
@@ -91,8 +92,11 @@ func TestBlenderSwitchesSayWhyTheyCannotRunAndRefuseTheJob(t *testing.T) {
 	}
 	var plan api.PresetView
 	h.okJSON(&plan, "presets", "show", "hero-character")
-	if plan.Unavailable["remesh"] == "" || plan.Unavailable["match"] != "" {
-		t.Fatalf("unavailable %v", plan.Unavailable)
+	if plan.Unavailable["remesh"] == "" || plan.Unavailable["match"] != "" || !plan.Install["remesh"].Software {
+		t.Fatalf("unavailable %v, install %v", plan.Unavailable, plan.Install)
+	}
+	if r := h.cli("", "models", "checks", "--stage", "mesh.remesh"); r.code != 0 {
+		t.Fatalf("checks --stage: exit %d: %s", r.code, r.err)
 	}
 	r = h.cli("", "generate", img, "--preset", "hero-character", "--with", "remesh")
 	if r.code == 0 || !strings.Contains(r.err, "no provider can run mesh.remesh: Blender 4.2 or newer was not found") {

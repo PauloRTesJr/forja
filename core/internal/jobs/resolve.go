@@ -120,7 +120,7 @@ func (r *Runner) Resolve(ctx context.Context, project string, p *presets.Preset,
 // Unavailable says, for each optional stage of a preset that is off in project, why turning it
 // on would refuse the job: no provider runs it (a Blender stage where no Blender is found) or
 // no model for it is ready. Stages that could run are left out.
-func (r *Runner) Unavailable(ctx context.Context, project string, p *presets.Preset) (map[string]string, error) {
+func (r *Runner) Unavailable(ctx context.Context, project string, p *presets.Preset) (map[string]Blocked, error) {
 	cfg, err := r.config(project)
 	if err != nil {
 		return nil, err
@@ -130,7 +130,7 @@ func (r *Runner) Unavailable(ctx context.Context, project string, p *presets.Pre
 			return nil, err
 		}
 	}
-	out := map[string]string{}
+	out := map[string]Blocked{}
 	for _, s := range p.Stages {
 		if s.Optional == nil || !s.Off {
 			continue
@@ -140,12 +140,21 @@ func (r *Runner) Unavailable(ctx context.Context, project string, p *presets.Pre
 			continue
 		}
 		if pick.Problem != "" {
-			out[s.ID] = pick.Problem
+			out[s.ID] = Blocked{Use: s.Use, Reason: pick.Problem, Software: true}
 		} else {
-			out[s.ID] = fmt.Sprintf("no %s model is installed", s.Use)
+			out[s.ID] = Blocked{Use: s.Use, Reason: fmt.Sprintf("no %s model is installed", s.Use)}
 		}
 	}
 	return out, nil
+}
+
+// Blocked is why an optional stage could not run if turned on.
+type Blocked struct {
+	Use    string
+	Reason string
+	// Software is set when no provider runs the built-in stage for lack of a program there
+	// (Blender), rather than for lack of a model.
+	Software bool
 }
 
 // resolve picks a provider and a model for every stage (docs/decisions.md, decisions 12 and

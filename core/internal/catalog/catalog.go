@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"reflect"
 	"sync"
 	"time"
@@ -102,7 +103,9 @@ func (c *Catalog) Ask(ctx context.Context, id string) (*Entry, error) {
 	if raw, err := json.Marshal(e); err == nil {
 		_ = c.store.SaveCatalog(context.WithoutCancel(ctx), id, raw)
 	}
-	if prev == nil || !reflect.DeepEqual(prev.Models, e.Models) {
+	// The built-ins it runs count too: installing Blender makes its stages runnable there.
+	if prev == nil || !reflect.DeepEqual(prev.Models, e.Models) || !maps.Equal(prev.Stages, e.Stages) ||
+		!maps.Equal(prev.Unavailable, e.Unavailable) {
 		c.changed(id)
 	}
 	return e, nil

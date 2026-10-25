@@ -27,6 +27,8 @@ The rig stage (`rig`, stage type `rig`) runs after the bake and before the LODs,
 
 An open rig stage gets the highest-ranked ready model, as any stage does ([presets](presets.md#which-model-a-stage-uses)): SkinTokens where it is ready, else UniRig. Pin one for every job with `forja models pin rig unirig`, or for one job with `--set rig.model=<id>`. Both need an NVIDIA GPU; neither runs on a Mac or on the CPU, so a computer without one sends the stage to another provider ([routing](routing.md)).
 
+When no rig model is ready, Generate greys out "Rig the character" and offers **Install UniRig** beside it: the rig model that fits this computer, with what the computer needs, its license and the install's progress, as in the first setup. Once it is installed the switch turns on. From a terminal, `forja presets show hero-character` names the same model:
+
 ```sh
 forja models install unirig
 forja models install skintokens --provider studio-pc   # on a computer with 16 GB or more

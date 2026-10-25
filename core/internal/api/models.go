@@ -262,13 +262,17 @@ func (s *Server) checks(w http.ResponseWriter, r *http.Request) {
 		writeProviderError(w, err)
 		return
 	}
-	var models []string
+	var models, stages []string
 	if q := r.URL.Query().Get("models"); q != "" {
 		models = strings.Split(q, ",")
 	}
+	// ?stages=mesh.remesh: what this machine needs to run those stage types itself (Blender).
+	if q := r.URL.Query().Get("stages"); q != "" {
+		stages = strings.Split(q, ",")
+	}
 	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
 	defer cancel()
-	out, err := inst.Checks(ctx, models)
+	out, err := inst.Checks(ctx, models, stages)
 	if err != nil {
 		writeProviderError(w, err)
 		return
@@ -365,16 +369,7 @@ func (s *Server) setup(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		view.Ready = false
-		var best *engineapi.Model
-		for i := range local.Models {
-			m := &local.Models[i]
-			if m.Stub || !m.Does(use) || (m.Fit != "fits" && m.Fit != "offload") {
-				continue
-			}
-			if best == nil || m.Rank > best.Rank {
-				best = m
-			}
-		}
+		best := bestHere(local.Models, use)
 		if best == nil {
 			st.Status = "remote"
 		} else {
@@ -388,6 +383,23 @@ func (s *Server) setup(w http.ResponseWriter, r *http.Request) {
 		view.Stages = append(view.Stages, st)
 	}
 	writeJSON(w, 200, view)
+}
+
+// bestHere is the best-ranked real model for a stage type that this computer can run, with
+// offload if need be: what setup and a blocked optional stage offer to install. Nil when
+// every model for it needs another computer.
+func bestHere(models []engineapi.Model, use string) *engineapi.Model {
+	var best *engineapi.Model
+	for i := range models {
+		m := &models[i]
+		if m.Stub || !m.Does(use) || (m.Fit != "fits" && m.Fit != "offload") {
+			continue
+		}
+		if best == nil || m.Rank > best.Rank {
+			best = m
+		}
+	}
+	return best
 }
 
 // setupTest generates the bundled sample with the default preset, to prove the models work

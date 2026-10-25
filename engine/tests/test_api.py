@@ -238,3 +238,31 @@ def test_a_normal_run_measures_nothing(client):
     run = client.post("/v1/runs", json={"stages": [{**PIPELINE[0], "inputs": [image]}]}).json()
     events(client, run["id"])
     assert client.get(f"/v1/runs/{run['id']}").json()["stages"]["bg"]["metrics"] is None
+
+
+def test_a_stage_type_asks_for_the_software_it_needs(client, monkeypatch):
+    from forja_engine import blender
+
+    def missing() -> blender.Blender:
+        raise blender.BlenderError("Blender 4.2 or newer was not found on the computer that runs the engine")
+
+    monkeypatch.setattr(blender, "find", missing)
+    got = client.get("/v1/checks", params={"stages": "mesh.remesh"}).json()
+    assert [c["id"] for c in got["checks"]] == ["blender"] and not got["ok"]
+    check = got["checks"][0]
+    assert check["found"] == "not found" and check["fix"]["label"] in ("Install Blender", "Get Blender")
+    # A stage type that runs on anything needs nothing more, and asks about no model either.
+    plain = client.get("/v1/checks", params={"stages": "mesh.decimate"}).json()
+    assert plain == {**plain, "ok": True, "checks": []}
+
+    monkeypatch.setattr(blender, "find", lambda: blender.Blender("/opt/blender/blender", "5.2.1"))
+    found = client.get("/v1/checks", params={"stages": "mesh.uv.smart"}).json()
+    assert found["ok"] and found["checks"][0]["found"] == "5.2.1 at /opt/blender/blender"
+    assert found["checks"][0]["fix"] is None
+
+
+def test_a_wrong_blender_path_is_fixed_in_the_settings_not_by_installing(client, monkeypatch):
+    monkeypatch.setenv("FORJA_BLENDER", "/nowhere/blender")
+    check = client.get("/v1/checks", params={"stages": "mesh.remesh"}).json()["checks"][0]
+    assert not check["ok"] and "/nowhere/blender" in check["found"]
+    assert check["fix"]["label"] == "Fix Blender's path" and not check["fix"]["runnable"]

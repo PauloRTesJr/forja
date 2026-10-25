@@ -7,6 +7,7 @@ Toolchain checks matter only at install time: nothing compiles while models run.
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import sys
@@ -334,6 +335,70 @@ def check_disk(models: list[Manifest], models_dir: Path) -> Check:
         fix=Fix(label="Free up space", steps=("Free up space on this drive, then check again.",)),
         models=tuple(m.id for m in models),
     )
+
+
+def check_blender() -> Check:
+    """Blender, for the built-in stages that run in it (quad remesh, Smart UV Project)."""
+    from forja_engine import blender
+
+    try:
+        found, ok = blender.find(), True
+        found_text = f"{found.version} at {found.path}"
+    except blender.BlenderError as e:
+        ok, found_text = False, "not found" if "was not found" in str(e) else str(e)
+    need = f"Blender {blender.MIN_VERSION[0]}.{blender.MIN_VERSION[1]} or newer"
+    url = "https://www.blender.org/download/"
+    if not ok and os.environ.get(blender.ENV, "").strip():
+        # A Blender named in the settings is the only one tried, so installing another won't help.
+        fix = Fix(
+            label="Fix Blender's path",
+            steps=(
+                "In Settings, under Blender, pick the Blender program, or clear the path to use the "
+                "installed one.",
+                "From the command line: forja config unset blender.path",
+            ),
+        )
+    elif sys.platform == "win32":
+        # Blender's installer is per machine, so Windows asks for permission.
+        fix = Fix(
+            label="Install Blender",
+            command=_winget("--id", "BlenderFoundation.Blender", "-e", "--silent"),
+            url=url,
+            steps=("Download Blender from blender.org and run its installer.",),
+            admin=True,
+        )
+    elif sys.platform == "darwin":
+        fix = Fix(
+            label="Get Blender",
+            url=url,
+            steps=("Download Blender for your Mac from blender.org and drag it to Applications.",),
+        )
+    else:
+        fix = Fix(
+            label="Get Blender",
+            url=url,
+            steps=("Run: sudo snap install blender --classic", "Or download it from blender.org."),
+        )
+    return Check(
+        id="blender",
+        label="Blender",
+        ok=ok,
+        found=found_text,
+        need=need,
+        why="Quad remesh and Smart UV Project run in Blender, in the background.",
+        fix=fix,
+    )
+
+
+def for_stages(stages: Iterable[str]) -> list[Check]:
+    """What this machine needs to run built-in stages of these types itself: today, Blender for
+    the stages backed by it. Stages that need nothing more give no checks."""
+    from forja_engine.adapters.builtin import BUILTINS
+
+    wanted = set(stages)
+    if any(getattr(cls, "blender", False) for task, cls in BUILTINS.items() if str(task) in wanted):
+        return [check_blender()]
+    return []
 
 
 def for_models(manifests: list[Manifest], models_dir: Path, lane: str | None = None) -> list[Check]:

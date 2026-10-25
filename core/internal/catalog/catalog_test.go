@@ -18,9 +18,10 @@ func (m memStore) ForgetCatalog(_ context.Context, id string) error         { de
 // fake answers Info and Models, counting how often it is asked.
 type fake struct {
 	provider.Provider
-	asked  int
-	down   bool
-	models []engineapi.Model
+	asked   int
+	down    bool
+	models  []engineapi.Model
+	blender bool
 }
 
 func (f *fake) ID() string { return "local" }
@@ -29,7 +30,29 @@ func (f *fake) Info(context.Context) (*engineapi.Info, error) {
 	if f.down {
 		return nil, errors.New("connection refused")
 	}
-	return &engineapi.Info{Stages: map[string]string{"bake": "1"}}, nil
+	if f.blender {
+		return &engineapi.Info{Stages: map[string]string{"bake": "1", "mesh.remesh": "1+blender-5.2.1"}}, nil
+	}
+	return &engineapi.Info{Stages: map[string]string{"bake": "1"},
+		Unavailable: map[string]string{"mesh.remesh": "Blender was not found"}}, nil
+}
+
+func TestABuiltInStageThatBecomesRunnableIsAChange(t *testing.T) {
+	f := &fake{models: []engineapi.Model{{ID: "triposg"}}}
+	reg := provider.NewRegistry()
+	reg.Add(f)
+	changes := 0
+	c := New(reg, memStore{}, nil, func(string) { changes++ })
+	_, _ = c.Ask(context.Background(), "local")
+	_, _ = c.Ask(context.Background(), "local")
+	if changes != 1 {
+		t.Fatalf("the same answer twice made %d changes", changes)
+	}
+	f.blender = true // Blender was installed: the models are the same, the stages are not.
+	_, _ = c.Ask(context.Background(), "local")
+	if changes != 2 {
+		t.Fatalf("installing Blender made %d changes in all", changes)
+	}
 }
 func (f *fake) Models(context.Context) ([]engineapi.Model, error) { return f.models, nil }
 

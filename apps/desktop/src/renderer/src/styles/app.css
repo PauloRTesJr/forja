@@ -3439,3 +3439,23 @@ button.view-slot:disabled {
   gap: 8px;
   animation: enter-up var(--dur-2) var(--ease-out) both;
 }
+/* Setting up an optional step where its switch is: a model to install, or a program it needs. */
+.stage-setup {
+  margin-top: 8px;
+}
+.stage-setup-open {
+  font-size: 14px;
+}
+.stage-setup-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 4px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-2);
+  background: var(--surface);
+}
+.stage-setup-panel > p {
+  margin: 0;
+}

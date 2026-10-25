@@ -29,6 +29,7 @@ In the app, the Models screen lists every model with its status, where it runs, 
 ```sh
 forja models ls                      # this computer's models; --all adds other providers'
 forja models checks triposg          # what this computer still needs for it
+forja models checks --stage mesh.remesh  # what it needs to run a stage type itself (Blender)
 forja models fix <check>             # run a check's fix, such as installing the CUDA toolkit
 forja models install triposg         # build its environment and fetch its weights
 forja installs ls                    # installs, removals and fixes, running and recent

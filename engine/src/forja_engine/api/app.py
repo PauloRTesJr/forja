@@ -25,6 +25,7 @@ from forja_engine.install import STEPS, Installer, InstallError, Reporter, _run
 from forja_engine.registry import Manifest, ManifestError, Registry
 from forja_engine.runs import RunManager, RunRequest
 from forja_engine.scheduler import Scheduler
+from forja_engine.sdk import StageType
 from forja_engine.store import ArtifactStore
 from forja_engine.tasks import TaskManager, TaskReporter
 from forja_engine.vram import DoesNotFit, FitMode
@@ -221,10 +222,20 @@ def create_app(cfg: EngineConfig) -> FastAPI:
     def checks_for(ms: list[Manifest]) -> list[checks.Check]:
         return checks.for_models(ms, cfg.models(), families.detect_lane())
 
+    def checks_for_stages(stages: list[str]) -> list[checks.Check]:
+        return checks.for_stages(stages)
+
     @app.get("/v1/checks", dependencies=guarded)
-    async def checks_get(models: str = "") -> dict[str, Any]:
-        ids = [m for m in models.split(",") if m] or [m.id for m in refresh().models.values() if not m.stub]
-        found = await asyncio.to_thread(checks_for, manifests(ids))
+    async def checks_get(models: str = "", stages: str = "") -> dict[str, Any]:
+        """What these models need, and what this machine needs to run these stage types itself
+        (API 1.7: stages, such as mesh.remesh needing Blender). No models and no stages means
+        every model."""
+        wanted = [s for s in stages.split(",") if s]
+        ids = [m for m in models.split(",") if m]
+        if not ids and not wanted:
+            ids = [m.id for m in refresh().models.values() if not m.stub]
+        found = await asyncio.to_thread(checks_for, manifests(ids)) if ids else []
+        found += await asyncio.to_thread(checks_for_stages, wanted)
         return {
             "lane": families.detect_lane(),
             "ok": all(c.ok for c in found),
@@ -234,7 +245,12 @@ def create_app(cfg: EngineConfig) -> FastAPI:
     @app.post("/v1/checks/{check_id}/fix", dependencies=[*guarded, Depends(local_caller)], status_code=202)
     async def check_fix(check_id: str) -> dict[str, Any]:
         known = [m for m in refresh().models.values() if not m.stub]
-        check = next((c for c in await asyncio.to_thread(checks_for, known) if c.id == check_id), None)
+        every_stage = [str(t) for t in StageType]
+
+        def all_checks() -> list[checks.Check]:
+            return checks_for(known) + checks_for_stages(every_stage)
+
+        check = next((c for c in await asyncio.to_thread(all_checks) if c.id == check_id), None)
         if check is None:
             raise HTTPException(404, f"no check {check_id}")
         if check.ok:
@@ -254,7 +270,7 @@ def create_app(cfg: EngineConfig) -> FastAPI:
                 raise
             r.step("run", "done")
             r.step("verify", "running")
-            again = next((c for c in checks_for(known) if c.id == check_id), None)
+            again = next((c for c in all_checks() if c.id == check_id), None)
             if again is not None and not again.ok:
                 r.step("verify", "failed")
                 raise InstallError(

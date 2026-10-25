@@ -19,7 +19,7 @@ export const keys = {
   config: ['config'] as const,
   installs: ['installs'] as const,
   setup: ['setup'] as const,
-  checks: (models: string[]) => ['checks', models.join(',')] as const,
+  checks: (models: string[], stages: string[] = []) => ['checks', models.join(','), stages.join(',')] as const,
   settings: ['settings'] as const,
   share: ['share'] as const,
   spend: ['spend'] as const,

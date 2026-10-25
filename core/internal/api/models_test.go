@@ -45,7 +45,8 @@ func (e *fakeEngine) Paid() bool          { return false }
 func (e *fakeEngine) Info(context.Context) (*engineapi.Info, error) {
 	return &engineapi.Info{Stages: map[string]string{"framing": "1", "mesh.cleanup": "1", "mesh.decimate": "1",
 		"texture.match": "1", "bake": "1", "mesh.lods": "1", "export": "1"},
-		System: map[string]any{"devices": []any{map[string]any{"id": "cuda:0", "name": "Test GPU"}}}}, nil
+		Unavailable: map[string]string{"mesh.remesh": "Blender was not found", "mesh.uv.smart": "Blender was not found"},
+		System:      map[string]any{"devices": []any{map[string]any{"id": "cuda:0", "name": "Test GPU"}}}}, nil
 }
 
 func (e *fakeEngine) Models(context.Context) ([]engineapi.Model, error) {
@@ -66,6 +67,8 @@ func (e *fakeEngine) Models(context.Context) ([]engineapi.Model, error) {
 		model("shape", "shape", 10, "fits", mit),
 		model("shape-big", "shape", 20, "too-big", mit),
 		model("paint", "texture", 10, "offload", restricted),
+		model("rig-small", "rig", 5, "fits", mit),
+		model("rig-big", "rig", 10, "too-big", mit),
 	}, nil
 }
 
@@ -87,7 +90,7 @@ func (e *fakeEngine) FollowTask(_ context.Context, id string, states chan<- engi
 	return nil
 }
 
-func (e *fakeEngine) Checks(context.Context, []string) (*engineapi.Checks, error) {
+func (e *fakeEngine) Checks(context.Context, []string, []string) (*engineapi.Checks, error) {
 	return &engineapi.Checks{}, nil
 }
 func (e *fakeEngine) Fix(context.Context, string) (*engineapi.Task, error)    { return nil, nil }
@@ -318,5 +321,33 @@ func TestAddingAComputerByCodeStoresItsTokenInTheKeychainOnly(t *testing.T) {
 	}
 	if cfg, _ := config.Load("", nil); len(cfg.Providers) != 0 || strings.Join(cfg.Routing.Priority, ",") != "local" {
 		t.Fatalf("left behind: %+v %v", cfg.Providers, cfg.Routing.Priority)
+	}
+}
+
+func TestABlockedOptionalStageSaysWhatInstallsIt(t *testing.T) {
+	ts, _, _ := server(t)
+	var list []PresetView
+	if code := call(t, ts, "GET", "/v1/presets?fresh=1", nil, &list); code != 200 {
+		t.Fatalf("presets %d", code)
+	}
+	var hero, env *PresetView
+	for i := range list {
+		switch list[i].ID {
+		case "hero-character":
+			hero = &list[i]
+		case "environment-piece":
+			env = &list[i]
+		}
+	}
+	// The rig model this computer can run, not the better-ranked one that needs more VRAM.
+	if got := hero.Install["rig"]; got.Model != "rig-small" || got.Use != "rig" || hero.Unavailable["rig"] == "" {
+		t.Fatalf("rig: %+v, %q", got, hero.Unavailable["rig"])
+	}
+	// No model makes a Blender stage run: the program does, which the checks name.
+	if got := env.Install["remesh"]; !got.Software || got.Model != "" || got.Use != "mesh.remesh" {
+		t.Fatalf("remesh: %+v", got)
+	}
+	if _, ok := env.Install["match"]; ok {
+		t.Fatal("a stage that can run offers an install")
 	}
 }

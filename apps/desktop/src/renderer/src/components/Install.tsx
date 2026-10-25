@@ -21,11 +21,13 @@ export function taskFor(list: InstallTask[] | undefined, kind: InstallTask['kind
  * System checks change outside the app (an installer finishes, a driver updates), so they are
  * read again when the window regains focus: the one exception to push-only data.
  */
-export function useChecks(models: string[], enabled = true) {
+export function useChecks(models: string[], enabled = true, stages: string[] = []) {
+  const query = new URLSearchParams({ models: models.join(',') })
+  if (stages.length > 0) query.set('stages', stages.join(','))
   return useQuery({
-    queryKey: keys.checks(models),
-    queryFn: () => api<Checks>('GET', `/v1/checks?models=${encodeURIComponent(models.join(','))}`),
-    enabled: enabled && models.length > 0,
+    queryKey: keys.checks(models, stages),
+    queryFn: () => api<Checks>('GET', `/v1/checks?${query}`),
+    enabled: enabled && (models.length > 0 || stages.length > 0),
     staleTime: 0,
     refetchOnWindowFocus: 'always',
   })

@@ -6,6 +6,7 @@ import { keys } from '../lib/events'
 import { money, stageLabel } from '../lib/format'
 import { useToast } from '../lib/toast'
 import { PresetEmblem } from './icons'
+import { StageSetup } from './StageSetup'
 
 interface Config {
   models?: { stages?: Record<string, string>; stubs?: boolean }
@@ -230,6 +231,9 @@ export function Composer({
                     )}
                   </span>
                   {cannot && <span className="composer-skip">{cannot}</span>}
+                  {cannot && current.install?.[s.id] && (
+                    <StageSetup install={current.install[s.id]!} onReady={() => onToggle(s.id, true)} />
+                  )}
                 </Step>
               )}
             </Fragment>
