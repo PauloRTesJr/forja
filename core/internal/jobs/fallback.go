@@ -15,10 +15,11 @@ const EvJobFallback = "job.fallback"
 
 // stageError is a batch that failed on a provider, saying whether another provider may do
 // better: this one could not be reached (down) or ran out of memory (oom). stages are the ones
-// that should leave it.
+// that should leave it; billed are the stages it charged for even so.
 type stageError struct {
 	provider string
 	stages   []string
+	billed   []string
 	down     bool
 	oom      bool
 	err      error
@@ -34,7 +35,8 @@ var outOfMemory = regexp.MustCompile(`(?i)out of memory|OutOfMemoryError|CUBLAS_
 // fallback moves the stages that failed on a provider to the next place that can run them, when
 // the provider could not be reached or ran out of memory (spec section 8). The routing that
 // picked the first place picks the next, so a stage never moves to a paid provider unless
-// routing.allow_paid_fallback is on, nor away from a provider the job or project names. Stages
+// routing.allow_paid_fallback is on, nor away from a provider the job or project names, and a
+// stage the provider billed moves only to a free one: it is paid for once already. Stages
 // that already succeeded there stay. It returns false when nothing can take over, and the
 // failure stands.
 func (r *Runner) fallback(ctx context.Context, a *active, cfg *config.Loaded, prep *prepared, err error) (*prepared, bool) {
@@ -61,6 +63,13 @@ func (r *Runner) fallback(ctx context.Context, a *active, cfg *config.Loaded, pr
 	}
 	for _, id := range leaving {
 		a.avoid.add(id, se.provider, reason)
+	}
+	for _, id := range se.billed {
+		for _, p := range r.providers.All() {
+			if p.Paid() && !a.avoid.has(id, p.ID()) {
+				a.avoid.add(id, p.ID(), "billed for it already")
+			}
+		}
 	}
 	next, perr := r.prepare(ctx, cfg, snapshot(a), a.avoid)
 	if perr != nil {

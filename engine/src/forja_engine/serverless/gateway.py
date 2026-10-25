@@ -31,6 +31,9 @@ from forja_engine.store import PREFIX, ArtifactStore
 
 _DONE = ("succeeded", "failed", "cancelled")
 
+# The shortest token the gateway serves with: it stands between the internet and paid GPU time.
+MIN_TOKEN = 16
+
 
 class Board(Protocol):
     def get(self, key: str) -> Any: ...
@@ -83,7 +86,15 @@ def create_gateway(
     describe_wait: float = 140.0,
     max_upload: int = 2 << 30,
 ) -> FastAPI:
-    """window: how long one event stream stays open (vendors cut long requests; cores resume)."""
+    """window: how long one event stream stays open (vendors cut long requests; cores resume).
+
+    token None serves without one, for tests and trying the gateway on this computer; an empty
+    or short one is refused, since `Bearer ` alone would otherwise pass."""
+    if token is not None and len(token.strip()) < MIN_TOKEN:
+        raise ValueError(
+            f"FORJA_ENGINE_TOKEN must be at least {MIN_TOKEN} characters; "
+            "set a long random one in the forja-engine Modal secret"
+        )
     store = ArtifactStore(store_root)
     app = FastAPI(title="forja-engine gateway", version=API_VERSION)
 

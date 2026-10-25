@@ -127,7 +127,7 @@ The check asks RunPod's health endpoint about the endpoint's workers and queue, 
 - **With the volume's S3 key**, the engine's store lives on the volume (`forja/store`), and the core reaches it through RunPod's S3 API for that datacenter. Before a run, it checks each input's hash and uploads only what the volume lacks; after, it downloads only the outputs this computer lacks. Intermediate files stay on the volume between runs.
 - **Without it**, the inputs ride in the job as base64, and every output comes back in the job's result. RunPod caps a job's payload at 10 MB, and base64 grows data by a third, so each direction is capped at 7 MB. A stage whose inputs or outputs pass that fails with a message asking for the volume's S3 key. Nothing stays on the endpoint between runs.
 
-Each run is one queue job. The worker streams the engine's events back while it runs, so progress shows as it does for a local engine; cancelling the job in Forja cancels it on RunPod.
+Each run is one queue job. The worker streams the engine's events back while it runs, so progress shows as it does for a local engine; cancelling the job in Forja cancels it on RunPod. A failed look at the job is tried again a few times, waiting longer each time; when RunPod still does not answer, Forja cancels the job there before it fails the stage, so a job it no longer follows does not run on and bill.
 
 ### What it costs
 
@@ -156,6 +156,8 @@ Deploy it from the repository root with your own Modal account and the Modal CLI
 modal secret create forja-engine FORJA_ENGINE_TOKEN=<a long random token>
 modal deploy docker/modal/app.py
 ```
+
+The token must be at least 16 characters: the gateway refuses to start without one, or with a shorter one, since anyone who has it can spend your GPU time. A random one, such as `openssl rand -hex 24`, is best.
 
 The image builds on Modal from `docker/engine/Dockerfile`; nothing is pushed to a registry. The app, `forja-engine`, has:
 
@@ -220,6 +222,12 @@ forja providers add comfyui 192.0.2.10:8188 --workflow shape=hunyuan-shape.json 
 ```
 
 An address without a scheme means `http://`, and without a port, 8188. `--token-stdin` reads a proxy's token from stdin; `--price <usd-per-second>` makes it a paid provider.
+
+A token goes only over https: a ComfyUI that takes one needs its proxy's `https://` address, unless it runs on this computer (`localhost`, `127.0.0.1`). Forja refuses to add one at a plain `http://` address on another machine, and refuses to call one whose address in `config.toml` was changed to that, rather than send the token in the clear.
+
+```sh
+forja providers add comfyui https://comfy.example.com --workflow shape=hunyuan-shape.json --token-stdin < token.txt
+```
 
 Forja checks each workflow (the API format, known placeholders, the inputs its stage needs) and asks ComfyUI's `/system_stats`, then copies each workflow beside `config.toml`, to `comfyui/<provider id>/<stage type>.json`. To change a workflow, edit that copy; the core reads it when it starts. A workflow is keyed by its content, so an edited workflow never reuses results cached from the old one.
 

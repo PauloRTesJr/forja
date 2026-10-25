@@ -23,7 +23,7 @@ A **family** is one Python environment shared by related models (Hunyuan3D-2mv a
 
 ## 1. Copy the template
 
-Copy `templates/adapter/` out of the checkout and rename the family (`example`), the package (`forja_example`) and the model id (`example-extrude`). A family name must be new: not one in `engine/families/`, nor `stub` or `builtin`. Its [README](../../templates/adapter/README.md) lists every place each name appears.
+Copy `templates/adapter/` out of the checkout and rename the family (`example`), the package (`forja_example`) and the model id (`example-extrude`). A family name must be new: not one in `engine/families/`, nor `stub` or `builtin`; so must a model id, which no bundled model or other package may use. Both name folders on disk, so a family is lowercase letters, digits, `-` and `_`, and a model id may also have `.` (never `..`); the engine refuses to start with a package that breaks either rule. Its [README](../../templates/adapter/README.md) lists every place each name appears.
 
 ## 2. Write the adapter
 

@@ -1,4 +1,4 @@
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import { app, BrowserWindow, clipboard, dialog, ipcMain, nativeImage, nativeTheme, shell, type NativeImage } from 'electron'
 import iconIco from '../../build/icon.ico?asset'
 import iconPng from '../../build/icon.png?asset'
@@ -106,6 +106,11 @@ ipcMain.handle('settings:openData', async () => {
 ipcMain.handle('bench:openReport', async (_e, id: string) => {
   const { report } = await coreJSON<{ report?: string }>('GET', `/v1/bench/${encodeURIComponent(String(id))}`)
   if (!report) throw new Error('this benchmark has no report yet')
+  // The core names the report after the result's id; the OS opens whatever it is given with
+  // the program its type has, so anything else is refused.
+  if (!/^[0-9A-HJKMNP-TV-Z]{26}$/.test(String(id)) || basename(report) !== `${String(id)}.html`) {
+    throw new Error('this benchmark has no report')
+  }
   const err = await shell.openPath(report)
   if (err) throw new Error(err)
 })

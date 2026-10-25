@@ -3,6 +3,7 @@ package comfyui
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -296,6 +297,23 @@ func TestModelsAreTheMappedWorkflows(t *testing.T) {
 	models, _ = broken.Models(context.Background())
 	if len(models) != 1 || models[0].Status != "unsupported" || models[0].Ready() {
 		t.Fatalf("a workflow that cannot load: %+v", models)
+	}
+}
+
+func TestATokenNeverCrossesTheNetworkInTheClear(t *testing.T) {
+	_, srv := newComfy(t)
+	st, _ := store.Open(filepath.Join(t.TempDir(), "store"))
+	ctx := context.Background()
+	if _, err := New("c", "http://192.0.2.10:8188", "proxy-fake-token", nil, false, 0, st).Stats(ctx); !errors.Is(err, errCleartext) {
+		t.Fatalf("a token over plain http to another machine: %v", err)
+	}
+	if New("c", "http://192.0.2.10:8188", "", nil, false, 0, st).cleartext() ||
+		New("c", "https://comfy.example.test", "proxy-fake-token", nil, false, 0, st).cleartext() {
+		t.Fatal("refused a ComfyUI that takes no token, or one behind https")
+	}
+	// On this computer the token never leaves it.
+	if _, err := New("c", srv.URL, "proxy-fake-token", nil, false, 0, st).Stats(ctx); err != nil {
+		t.Fatalf("a token to this computer: %v", err)
 	}
 }
 

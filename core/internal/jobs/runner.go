@@ -1148,12 +1148,13 @@ func (r *Runner) runBatch(ctx context.Context, a *active, plan *planner.Plan, id
 	if over, ok := context.Cause(bctx).(*BudgetError); ok && ctx.Err() == nil {
 		return over
 	}
+	charged := slices.Sorted(maps.Keys(billed))
 	if err != nil {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
 		err = fmt.Errorf("provider %s: %w", p.ID(), err)
-		return &stageError{provider: p.ID(), stages: idsAt(plan, idx), down: unreachable(err), err: err}
+		return &stageError{provider: p.ID(), stages: idsAt(plan, idx), down: unreachable(err), billed: charged, err: err}
 	}
 
 	for _, i := range idx {
@@ -1222,7 +1223,7 @@ func (r *Runner) runBatch(ctx context.Context, a *active, plan *planner.Plan, id
 			return context.Canceled
 		}
 		// The stage that failed may fit on another provider; the ones after it never ran here.
-		failure := &stageError{provider: p.ID(), err: errors.New(msg), oom: outOfMemory.MatchString(msg)}
+		failure := &stageError{provider: p.ID(), err: errors.New(msg), oom: outOfMemory.MatchString(msg), billed: charged}
 		for _, s := range batch {
 			if st := run.Stages[s.ID]; st.Status == "failed" {
 				failure.stages = append(failure.stages, s.ID)

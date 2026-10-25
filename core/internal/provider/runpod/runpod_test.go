@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -29,6 +30,8 @@ type fakeRunPod struct {
 	polls    map[string]int
 	hold     bool // keep jobs running until cancelled
 	fail     string
+	broken   int // /stream answers a 502 this many times (-1: always)
+	refused  int // the 502s it answered
 	cancels  []string
 	lastBody map[string]any
 }
@@ -72,6 +75,12 @@ func (f *fakeRunPod) serve(w http.ResponseWriter, r *http.Request) {
 		f.jobs[jobID] = body["input"].(map[string]any)
 		_ = json.NewEncoder(w).Encode(map[string]any{"id": jobID, "status": "IN_QUEUE"})
 	case "stream":
+		if f.broken != 0 {
+			f.broken--
+			f.refused++
+			w.WriteHeader(http.StatusBadGateway)
+			return
+		}
 		f.polls[id]++
 		if f.hold {
 			_, _ = io.WriteString(w, `{"status":"IN_PROGRESS","stream":[]}`)
@@ -362,6 +371,36 @@ func TestAFailedJobSaysWhy(t *testing.T) {
 	}
 }
 
+// The datacenter names the host the volume's S3 key goes to, so a config edited by hand cannot
+// send it anywhere else.
+func TestAVolumeInNoRunPodDatacenterIsRefused(t *testing.T) {
+	f, _ := newFake(t)
+	old := VolumeEndpoint
+	VolumeEndpoint = func(dc string) string {
+		t.Errorf("asked for the S3 host of %q", dc)
+		return old(dc)
+	}
+	t.Cleanup(func() { VolumeEndpoint = old })
+	st, img := newStore(t)
+	for _, dc := range []string{"evil.example/x", "eu-ro-1.attacker.example", "", "EU-RO-1?x=1"} {
+		p := New("rp", "ep-fake", "rp-fake-key", 0, &Volume{ID: "vol-fake", Datacenter: dc, AccessKey: "user_fake", Secret: "x"}, st)
+		if err := p.Health(context.Background()); err == nil || !strings.Contains(err.Error(), "not a RunPod datacenter") {
+			t.Fatalf("%q: health %v", dc, err)
+		}
+		if _, _, err := collect(t, p, shapeRun(img)); err == nil || !strings.Contains(err.Error(), "not a RunPod datacenter") {
+			t.Fatalf("%q: run %v", dc, err)
+		}
+	}
+	if len(f.jobs) != 0 {
+		t.Fatalf("%d jobs sent", len(f.jobs))
+	}
+	for _, dc := range []string{"EU-RO-1", "eur-is-1", "US-KS-2", "CA-MTL-1"} {
+		if !ValidDatacenter(dc) {
+			t.Fatalf("%q is a RunPod datacenter", dc)
+		}
+	}
+}
+
 func TestHealthNamesAWrongKeyOrEndpoint(t *testing.T) {
 	newFake(t)
 	st, _ := newStore(t)
@@ -384,5 +423,81 @@ func TestInputsTooLargeToCarryAskForTheVolume(t *testing.T) {
 	p := New("rp", "ep-fake", "rp-fake-key", 0, nil, st)
 	if _, _, err := collect(t, p, shapeRun(big)); err == nil || !strings.Contains(err.Error(), "S3 key") {
 		t.Fatalf("err %v", err)
+	}
+}
+
+// quick shortens the waits between failed looks at a job for one test.
+func quick(t *testing.T) {
+	t.Helper()
+	b, m := retryBase, retryMax
+	retryBase, retryMax = time.Millisecond, 2*time.Millisecond
+	t.Cleanup(func() { retryBase, retryMax = b, m })
+}
+
+func TestAFailedLookAtAJobIsTriedAgain(t *testing.T) {
+	quick(t)
+	f, _ := newFake(t)
+	f.broken = failures - 1
+	st, img := newStore(t)
+	p := New("rp", "ep-fake", "rp-fake-key", 0, nil, st)
+	p.Poll = time.Millisecond
+	if run, _, err := collect(t, p, shapeRun(img)); err != nil || run.Status != "succeeded" {
+		t.Fatalf("run %+v %v", run, err)
+	}
+	if len(f.jobs) != 1 || len(f.cancels) != 0 {
+		t.Fatalf("%d jobs, cancels %v", len(f.jobs), f.cancels)
+	}
+}
+
+// A job Forja stops following would run on, billed, until RunPod's own timeout.
+func TestAJobThatCannotBeFollowedIsCancelled(t *testing.T) {
+	quick(t)
+	f, _ := newFake(t)
+	f.broken = -1
+	st, img := newStore(t)
+	p := New("rp", "ep-fake", "rp-fake-key", 0, nil, st)
+	p.Poll = time.Millisecond
+	_, _, err := collect(t, p, shapeRun(img))
+	if err == nil {
+		t.Fatal("a job RunPod never answered for succeeded")
+	}
+	if f.refused != failures {
+		t.Fatalf("looked %d times, want %d", f.refused, failures)
+	}
+	if len(f.cancels) != 1 || f.cancels[0] != "job-a" {
+		t.Fatalf("cancels %v", f.cancels)
+	}
+	// RunPod failing is a provider down: another may take the stage.
+	if code, ok := statusOf(err); ok && code < 500 {
+		t.Fatalf("a 502 reads as an answer: %d", code)
+	}
+}
+
+// statusOf is the status the job runner reads off a run's error to tell a provider that
+// answered from one that could not be reached.
+func statusOf(err error) (int, bool) {
+	var answered interface{ StatusCode() int }
+	if errors.As(err, &answered) {
+		return answered.StatusCode(), true
+	}
+	return 0, false
+}
+
+func TestAJobThatRanAndFailedIsAnAnswerNotAnOutage(t *testing.T) {
+	f, _ := newFake(t)
+	f.fail = "CUDA out of memory"
+	st, img := newStore(t)
+	p := New("rp", "ep-fake", "rp-fake-key", 0, nil, st)
+	p.Poll = time.Millisecond
+	_, _, err := collect(t, p, shapeRun(img))
+	if code, ok := statusOf(err); !ok || code >= 500 {
+		t.Fatalf("a failed job reads as RunPod down: %v (%d, %v)", err, code, ok)
+	}
+	// It ended on RunPod's side: nothing to cancel.
+	if len(f.cancels) != 0 {
+		t.Fatalf("cancels %v", f.cancels)
+	}
+	if code, ok := statusOf(New("rp", "ep-fake", "wrong", 0, nil, st).Health(context.Background())); !ok || code != 401 {
+		t.Fatalf("a refused key: %d %v", code, ok)
 	}
 }

@@ -152,18 +152,28 @@ def sse_events(client: TestClient, path: str) -> list[dict[str, Any]]:
     return out
 
 
+GW_TOKEN = "gw-fake-token-0123"
+
+
 def test_a_token_with_a_stray_byte_order_mark_is_refused_not_a_crash(tmp_path, engine):
-    gw = create_gateway(tmp_path / "store", "gw-token", MemoryBoard(), Calls(None, MemoryBoard()).backend)
-    bom = {"Authorization": "Bearer \ufeffgw-token".encode()}
+    gw = create_gateway(tmp_path / "store", GW_TOKEN, MemoryBoard(), Calls(None, MemoryBoard()).backend)
+    bom = {"Authorization": f"Bearer \ufeff{GW_TOKEN}".encode()}
     assert TestClient(gw).get("/v1/info", headers=bom).status_code == 401
     assert engine.get("/v1/info", headers=bom).status_code == 401
+
+
+@pytest.mark.parametrize("token", ["", "   ", "short-token"])
+def test_the_gateway_refuses_to_start_with_an_empty_or_short_token(tmp_path, token):
+    # An empty token would let "Bearer " alone through to paid GPU time.
+    with pytest.raises(ValueError, match="at least 16 characters"):
+        create_gateway(tmp_path / "store", token, MemoryBoard(), Calls(None, MemoryBoard()).backend)
 
 
 def test_the_gateway_serves_v1_from_the_volume_and_wakes_a_worker_only_to_run(tmp_path, engine):
     board = MemoryBoard()
     calls = Calls(Worker(ClientEngine(engine)), board)
-    gw = create_gateway(tmp_path / "store", "gw-token", board, calls.backend, poll=0.02)
-    with TestClient(gw, headers={"Authorization": "Bearer gw-token"}) as c:
+    gw = create_gateway(tmp_path / "store", GW_TOKEN, board, calls.backend, poll=0.02)
+    with TestClient(gw, headers={"Authorization": f"Bearer {GW_TOKEN}"}) as c:
         assert TestClient(gw).get("/v1/info").status_code == 401
         assert c.get("/v1/health").status_code == 200
         assert calls.threads == []  # health and artifacts never wake a GPU worker

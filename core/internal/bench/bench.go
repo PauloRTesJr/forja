@@ -417,7 +417,23 @@ func (b *Bench) Get(id string) (*Result, error) {
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, ErrNotFound
 	}
+	if err == nil {
+		res.Report = b.report(id)
+	}
 	return res, err
+}
+
+// report is where a kept result's HTML report is, or "" when it has none. The path comes from
+// the id, never from the result file, which the app opens with the OS's default program.
+func (b *Bench) report(id string) string {
+	if !idPattern.MatchString(id) {
+		return ""
+	}
+	path := filepath.Join(b.Dir, id+".html")
+	if st, err := os.Lstat(path); err != nil || !st.Mode().IsRegular() {
+		return ""
+	}
+	return path
 }
 
 // Load is a result by id, or a result file by path: what Compare reads.
@@ -490,7 +506,7 @@ func (b *Bench) List() (List, error) {
 		}
 		e := Entry{ID: res.ID, Label: res.Label, Status: res.Status, Suite: res.Suite, Options: res.Options,
 			Forja: res.Forja, Device: res.Device, StartedAt: res.StartedAt, FinishedAt: res.FinishedAt,
-			Samples: len(res.Jobs), Presets: []PresetSummary{}, Report: res.Report}
+			Samples: len(res.Jobs), Presets: []PresetSummary{}, Report: b.report(res.ID)}
 		for _, j := range res.Jobs {
 			if j.Status != library.Succeeded {
 				e.Failed++

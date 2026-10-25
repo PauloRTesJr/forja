@@ -79,6 +79,9 @@ func (s *Server) checkCloud(ctx context.Context, b cloudBody) (*cloud, error) {
 			if region == "" || id == "" || secret == "" {
 				return nil, errors.New("a network volume needs its datacenter and an S3 API key (access key and secret)")
 			}
+			if !runpod.ValidDatacenter(region) {
+				return nil, fmt.Errorf("%q is not a RunPod datacenter: give the volume's, such as EU-RO-1", b.Region)
+			}
 			vol = &runpod.Volume{ID: v, Datacenter: region, AccessKey: id, Secret: secret}
 			c.pc.Volume, c.pc.Region, c.volumeKey = v, region, id+":"+secret
 		}
@@ -109,7 +112,7 @@ func (s *Server) checkCloud(ctx context.Context, b cloudBody) (*cloud, error) {
 			c.pc.Label = "Modal"
 		}
 	case b.Kind == string(provider.KindComfyUI):
-		u, err := comfyURL(b.URL)
+		u, err := comfyURL(b.URL, c.key != "")
 		if err != nil {
 			return nil, err
 		}
@@ -156,8 +159,10 @@ func gatewayURL(addr string) (string, error) {
 	return u.Scheme + "://" + u.Host, nil
 }
 
-// comfyURL turns "192.168.1.30" into ComfyUI's usual http://192.168.1.30:8188.
-func comfyURL(addr string) (string, error) {
+// comfyURL turns "192.168.1.30" into ComfyUI's usual http://192.168.1.30:8188. A ComfyUI that
+// takes a token needs https, unless it is on this computer: plain http would show the token
+// to anyone on the way.
+func comfyURL(addr string, withToken bool) (string, error) {
 	addr = strings.TrimSpace(addr)
 	if addr == "" {
 		return "", errors.New("enter ComfyUI's address")
@@ -168,6 +173,10 @@ func comfyURL(addr string) (string, error) {
 	u, err := url.Parse(addr)
 	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
 		return "", fmt.Errorf("%q is not an address like 192.168.1.30:8188", addr)
+	}
+	if withToken && u.Scheme == "http" && !isLoopback(u.Hostname()) {
+		return "", fmt.Errorf("Forja sends an access token only over https: give the proxy's https address, "+
+			"such as https://%s, or leave the token empty", u.Hostname())
 	}
 	if u.Port() == "" && u.Scheme == "http" {
 		u.Host = net.JoinHostPort(u.Hostname(), "8188")
