@@ -62,6 +62,19 @@ jobs:
           bash scripts/e2e.sh forja models install $MODELS --accept-license
           bash scripts/e2e.sh forja models ls
 
+      - name: Reference images
+        env:
+          REFS_DIR: ${{ vars.FORJA_GPU_REFS_DIR }}
+        run: |
+          # The suite reads bench/m0/refs, which git ignores and checkout empties: the CC0 set
+          # lives on the runner.
+          if [ -z "$REFS_DIR" ]; then
+            echo "::error::Set the repository variable FORJA_GPU_REFS_DIR to the runner's folder of reference images."
+            exit 1
+          fi
+          mkdir -p bench/m0/refs
+          cp -R "$REFS_DIR"/. bench/m0/refs/
+
       - name: Run the default suite
         run: bash scripts/e2e.sh forja bench --suite bench/suites/default.yaml --json --out "$BENCH/current"
 
@@ -88,7 +101,7 @@ jobs:
 
       - name: Compare (fails on a regression over 10%)
         if: steps.baseline.outputs.dir != ''
-        run: bash scripts/e2e.sh forja bench compare "$BENCH/baseline" "$BENCH/current" --threshold 10
+        run: bash scripts/e2e.sh forja bench compare "$BENCH/baseline/bench.json" "$BENCH/current/bench.json" --threshold 10
 
       - name: Pack the results
         if: always()
