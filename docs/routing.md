@@ -61,9 +61,10 @@ When a stage fails because its provider could not be reached, or because it ran 
 
 - they go to the next place that can run them, in the policy's order;
 - never to a paid provider unless `routing.allow_paid_fallback` is on;
+- never to another paid provider when the one that failed charged for the stage anyway (a hosted model bills a generation once it starts it), so a stage is never paid for twice;
 - never away from a provider a stage was routed to by name.
 
-When the provider could not be reached, the stages it had still to run move with them. What already succeeded stays and is reused. A stage that fails again moves again, so a stage can fall back along a chain of providers, until no place is left and the job fails with the last error. Other failures, such as a model error on a bad image, do not fall back.
+A provider counts as unreachable when it does not answer, or answers with a server error. One that answers and refuses (a wrong key, a job that ran and failed) is up, and its stage stays. When the provider could not be reached, the stages it had still to run move with them. What already succeeded stays and is reused. A stage that fails again moves again, so a stage can fall back along a chain of providers, until no place is left and the job fails with the last error. Other failures, such as a model error on a bad image, do not fall back.
 
 Every move is kept with the job:
 

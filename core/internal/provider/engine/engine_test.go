@@ -6,7 +6,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"sync"
 	"testing"
+	"time"
 
 	"forja/internal/engineapi"
 	"forja/internal/provider"
@@ -40,6 +42,45 @@ func TestStreamsThatEndEarlyResumeWithoutGivingUp(t *testing.T) {
 	run, err := p.Run(context.Background(), engineapi.RunRequest{Stages: []engineapi.StageSpec{{ID: "shape", Use: "shape"}}}, evs)
 	if err != nil || run.Status != "succeeded" || len(evs) != events {
 		t.Fatalf("run %+v, %v, %d events", run, err, len(evs))
+	}
+}
+
+// A run whose events stop coming is cancelled before Run gives up on it: a Modal gateway or a
+// rented pod would otherwise go on billing for it.
+func TestARunWhoseStreamKeepsFailingIsCancelled(t *testing.T) {
+	old := reconnect
+	reconnect = time.Millisecond
+	t.Cleanup(func() { reconnect = old })
+	var mu sync.Mutex
+	var deleted []string
+	streams := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/runs":
+			_, _ = w.Write([]byte(`{"id":"run-1","status":"queued","stages":{}}`))
+		case r.URL.Path == "/v1/runs/run-1/events":
+			streams++
+			w.WriteHeader(http.StatusBadGateway)
+		case r.Method == http.MethodDelete:
+			deleted = append(deleted, r.URL.Path)
+			_, _ = w.Write([]byte(`{"id":"run-1","status":"cancelled","stages":{}}`))
+		default:
+			w.WriteHeader(404)
+		}
+	}))
+	defer srv.Close()
+	p := New("modal", provider.KindServerless, true, false, Static(srv.URL, "tok"), nil)
+	_, err := p.Run(context.Background(), engineapi.RunRequest{Stages: []engineapi.StageSpec{{ID: "shape", Use: "shape"}}},
+		make(chan engineapi.Event, 8))
+	mu.Lock()
+	defer mu.Unlock()
+	if err == nil || streams != 6 {
+		t.Fatalf("err %v after %d streams", err, streams)
+	}
+	if len(deleted) != 1 || deleted[0] != "/v1/runs/run-1" {
+		t.Fatalf("cancelled %v", deleted)
 	}
 }
 

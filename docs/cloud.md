@@ -127,7 +127,7 @@ The check asks RunPod's health endpoint about the endpoint's workers and queue, 
 - **With the volume's S3 key**, the engine's store lives on the volume (`forja/store`), and the core reaches it through RunPod's S3 API for that datacenter. Before a run, it checks each input's hash and uploads only what the volume lacks; after, it downloads only the outputs this computer lacks. Intermediate files stay on the volume between runs.
 - **Without it**, the inputs ride in the job as base64, and every output comes back in the job's result. RunPod caps a job's payload at 10 MB, and base64 grows data by a third, so each direction is capped at 7 MB. A stage whose inputs or outputs pass that fails with a message asking for the volume's S3 key. Nothing stays on the endpoint between runs.
 
-Each run is one queue job. The worker streams the engine's events back while it runs, so progress shows as it does for a local engine; cancelling the job in Forja cancels it on RunPod.
+Each run is one queue job. The worker streams the engine's events back while it runs, so progress shows as it does for a local engine; cancelling the job in Forja cancels it on RunPod. A failed look at the job is tried again a few times, waiting longer each time; when RunPod still does not answer, Forja cancels the job there before it fails the stage, so a job it no longer follows does not run on and bill.
 
 ### What it costs
 

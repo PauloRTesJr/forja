@@ -205,21 +205,35 @@ func (p *Provider) Run(ctx context.Context, req engineapi.RunRequest, events cha
 			attempt = 0
 		}
 		if ctx.Err() != nil {
-			cancelCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			_ = p.Cancel(cancelCtx, run.ID)
-			cancel()
+			p.abandon(run.ID)
 			return nil, ctx.Err()
 		}
 		if attempt >= 5 {
+			// Unwatched, the run would go on, and a paid gateway or pod bills it.
+			p.abandon(run.ID)
 			return nil, fmt.Errorf("event stream for run %s kept failing: %w", run.ID, err)
 		}
-		time.Sleep(time.Duration(attempt+1) * 200 * time.Millisecond) // reconnect, resuming at cursor
+		select { // reconnect, resuming at cursor
+		case <-ctx.Done():
+		case <-time.After(time.Duration(attempt+1) * reconnect):
+		}
 	}
 	var final engineapi.Run
 	if _, err := p.do(ctx, http.MethodGet, "/v1/runs/"+run.ID, nil, &final); err != nil {
 		return nil, err
 	}
 	return &final, nil
+}
+
+// reconnect is the pause before the first reconnect of a run's event stream; it grows by as
+// much each time. Tests shorten it.
+var reconnect = 200 * time.Millisecond
+
+// abandon cancels a run the core stops following, whatever became of the caller's context.
+func (p *Provider) abandon(runID string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_ = p.Cancel(ctx, runID)
 }
 
 // stream reads SSE until run.finished (done=true) or the connection drops.

@@ -199,6 +199,10 @@ type httpError struct {
 
 func (e *httpError) Error() string { return e.Msg }
 
+// StatusCode tells the job runner fal.ai answered: only a 5xx or no answer at all reads as
+// fal.ai down, which may move a stage to another provider.
+func (e *httpError) StatusCode() int { return e.Status }
+
 // permanent marks an error that trying again cannot fix, such as a file that is not a GLB.
 type permanent struct{ error }
 
@@ -690,24 +694,25 @@ func (p *Provider) runStage(ctx context.Context, runID string, seed int, s engin
 		delete(p.cancels, runID)
 		p.mu.Unlock()
 	}()
-	started, err := p.wait(ctx, sub.StatusURL, s.ID, events)
-	if err != nil {
-		if ctx.Err() != nil || errors.Is(err, errTooLong) {
+	g := &progress{events: events, stage: s.ID}
+	if err := p.wait(ctx, sub.StatusURL, g); err != nil {
+		if !g.done {
+			// It may still be queued or running, whatever stopped Forja following it.
 			p.cancel(sub.CancelURL)
-			// fal only cancels a request still in its queue: one the model began runs on, and is billed.
-			if started {
-				billed(events, s.ID)
-			}
+		}
+		// fal bills a request once its model takes it, and cancels only one still in its queue.
+		if g.started {
+			billed(events, s.ID)
 		}
 		return "", err
 	}
+	// From here the generation is paid for, whatever becomes of its result.
+	billed(events, s.ID)
 	var result map[string]any
 	fetch := func() error { return p.call(ctx, http.MethodGet, sub.ResponseURL, nil, &result) }
 	if err := again(ctx, func(err error) bool { return transient(ctx, err) }, fetch); err != nil {
 		return "", err
 	}
-	// From here the generation is paid for, whatever becomes of its file.
-	billed(events, s.ID)
 	fileURL, _ := dig(result, append(strings.Split(e.Output, "."), "url")...).(string)
 	if fileURL == "" {
 		return "", fmt.Errorf("%s returned no mesh in %s", e.Name, e.Output)
@@ -756,10 +761,10 @@ type queueStatus struct {
 
 // progress turns a request's status into what the job shows, once per change.
 type progress struct {
-	events  chan<- engineapi.Event
-	stage   string
-	last    string
-	started bool
+	events        chan<- engineapi.Event
+	stage         string
+	last          string
+	started, done bool
 }
 
 func (g *progress) saw(ctx context.Context, st queueStatus) {
@@ -771,7 +776,7 @@ func (g *progress) saw(ctx context.Context, st queueStatus) {
 			msg = fmt.Sprintf("Waiting in fal.ai's queue, position %d", *st.QueuePosition+1)
 		}
 	case "IN_PROGRESS", "COMPLETED":
-		g.started = true
+		g.started, g.done = true, st.Status == "COMPLETED"
 		msg = "Running on fal.ai"
 	}
 	if msg != "" && msg != g.last {
@@ -781,19 +786,19 @@ func (g *progress) saw(ctx context.Context, st queueStatus) {
 }
 
 // wait follows a request until it completes. fal streams its status; polling takes over when
-// the stream drops or goes quiet, and rides out a few failed polls in a row. started says the
-// model began on the request, after which fal bills it even when it is cancelled.
-func (p *Provider) wait(ctx context.Context, statusURL, stage string, events chan<- engineapi.Event) (bool, error) {
+// the stream drops or goes quiet, and rides out a few failed polls in a row. g says what fal
+// showed of it: whether the model began on it (fal bills it from then, even when it is
+// cancelled) and whether fal finished it, well or not.
+func (p *Provider) wait(ctx context.Context, statusURL string, g *progress) error {
 	ctx, cancel := context.WithTimeoutCause(ctx, maxWait, errTooLong)
 	defer cancel()
-	g := &progress{events: events, stage: stage}
 	if done, err := p.stream(ctx, statusURL, g); done {
-		return g.started, err
+		return err
 	}
 	misses := 0
 	for delay := retryBase; ; delay = min(delay*2, pollMax) {
 		if ctx.Err() != nil {
-			return g.started, context.Cause(ctx)
+			return context.Cause(ctx)
 		}
 		var st queueStatus
 		err := p.call(ctx, http.MethodGet, statusURL+"?logs=1", nil, &st)
@@ -802,18 +807,18 @@ func (p *Provider) wait(ctx context.Context, statusURL, stage string, events cha
 			misses = 0
 			g.saw(ctx, st)
 			if st.Status == "COMPLETED" {
-				return g.started, completed(st)
+				return completed(st)
 			}
 		case ctx.Err() != nil:
-			return g.started, context.Cause(ctx)
+			return context.Cause(ctx)
 		case transient(ctx, err) && misses+1 < failures:
 			misses++
 		default:
-			return g.started, err
+			return err
 		}
 		select {
 		case <-ctx.Done():
-			return g.started, context.Cause(ctx)
+			return context.Cause(ctx)
 		case <-time.After(delay):
 		}
 	}

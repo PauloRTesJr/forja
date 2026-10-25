@@ -3,6 +3,7 @@ package jobs
 import (
 	"context"
 	"errors"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -26,9 +27,11 @@ type engine struct {
 	paid bool
 
 	mu sync.Mutex
-	// refuse fails runs as if the machine went off; oom runs stages of these types out of
-	// memory; slow holds runs until they are cancelled; billed reports a failed stage billed.
+	// refuse fails runs as if the machine went off; answer fails them with an error the
+	// provider answered with; oom runs stages of these types out of memory; slow holds runs
+	// until they are cancelled; billed reports a failed stage billed.
 	refuse bool
+	answer error
 	oom    map[string]bool
 	slow   bool
 	billed bool
@@ -63,7 +66,7 @@ func (e *engine) stagesRun() string {
 
 func (e *engine) Run(ctx context.Context, req engineapi.RunRequest, evs chan<- engineapi.Event) (*engineapi.Run, error) {
 	e.mu.Lock()
-	refuse, slow, billed := e.refuse, e.slow, e.billed
+	refuse, answer, slow, billed := e.refuse, e.answer, e.slow, e.billed
 	oom := -1
 	for i, s := range req.Stages {
 		if oom < 0 && e.oom[s.Use] {
@@ -73,6 +76,9 @@ func (e *engine) Run(ctx context.Context, req engineapi.RunRequest, evs chan<- e
 	e.mu.Unlock()
 	if refuse {
 		return nil, errors.New("dial tcp 192.0.2.10:7861: connectex: No connection could be made because the target machine actively refused it")
+	}
+	if answer != nil {
+		return nil, answer
 	}
 	if slow {
 		<-ctx.Done()
@@ -381,6 +387,54 @@ func TestAFailureNeverEscalatesToAPaidProviderUnlessAllowed(t *testing.T) {
 		t.Fatalf("%s %q %v", got.Status, got.Error, providers(got))
 	}
 }
+
+// A hosted model that charged for a generation and then failed it is paid for once: with paid
+// help allowed, the stage still moves only to a free provider, never to pay for it twice.
+func TestAStageTheProviderBilledNeverMovesToAnotherPaidProvider(t *testing.T) {
+	r, _, _, st, img := setup(t)
+	hub := newEngine(st, "hub", provider.KindAPI, true)
+	hub.with(func(e *engine) { e.oom["shape"], e.billed = true, true })
+	r.providers.Add(hub)
+	other := newEngine(st, "other", provider.KindAPI, true)
+	r.providers.Add(other)
+	project := withProject(t, "[routing]\npriority = [\"hub\", \"other\", \"local\"]\nallow_paid_fallback = true\n")
+	j, err := r.Submit(context.Background(), SubmitRequest{Input: img, Preset: "draft", Project: project})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if providers(j)["shape"] != "hub" {
+		t.Fatalf("routes %v", providers(j))
+	}
+	got := wait(t, r, j.ID)
+	if got.Status != library.Succeeded || providers(got)["shape"] != LocalProvider {
+		t.Fatalf("%s %q %v", got.Status, got.Error, providers(got))
+	}
+	if strings.Contains(other.stagesRun(), "shape") {
+		t.Fatalf("another paid provider ran the shape again: %q", other.stagesRun())
+	}
+}
+
+// A provider that answered and refused a run is up: its stage stays, rather than paying for
+// it again elsewhere.
+func TestARefusalIsNotAnOutage(t *testing.T) {
+	r, _, _, st, img := setup(t)
+	pod := newEngine(st, "pod", provider.KindServerless, true)
+	pod.with(func(e *engine) { e.answer = &answeredErr{http.StatusPaymentRequired} })
+	r.providers.Add(pod)
+	project := withProject(t, "[routing]\npriority = [\"pod\", \"local\"]\nallow_paid_fallback = true\n")
+	j, err := r.Submit(context.Background(), SubmitRequest{Input: img, Preset: "draft", Project: project})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := wait(t, r, j.ID); got.Status != library.Failed || len(fallbacks(got, "shape")) != 0 {
+		t.Fatalf("%s %q %v", got.Status, got.Error, fallbacks(got, "shape"))
+	}
+}
+
+type answeredErr struct{ status int }
+
+func (e *answeredErr) Error() string   { return http.StatusText(e.status) }
+func (e *answeredErr) StatusCode() int { return e.status }
 
 func TestAStageRoutedToOneProviderDoesNotFallBack(t *testing.T) {
 	r, _, _, st, img := setup(t)

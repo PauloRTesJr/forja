@@ -56,6 +56,8 @@ Limits are in US dollars, for every paid provider; 0 means no limit. A job is ch
 
 While any limit is set, a hosted model with no known price is refused, because its cost cannot be checked in advance. A model fal prices in its own compute units has none until you give it a price per image: Settings, **Prices**, or `forja prices set <model-id> <usd>`.
 
+fal charges a generation once its model starts on it, whatever happens next, so Forja records the price from then: for a generation that fails, is cancelled, or whose result cannot be fetched. When Forja loses track of a generation (fal stops answering, or it takes over 30 minutes), it cancels it, which fal does only while it is still queued.
+
 ```sh
 forja config set routing.budget_usd.per_day=5
 forja spend          # today, this month, and the limits

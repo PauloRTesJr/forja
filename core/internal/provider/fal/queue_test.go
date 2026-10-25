@@ -3,6 +3,7 @@ package fal
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -22,7 +23,8 @@ import (
 type queueFake struct {
 	*httptest.Server
 	mu sync.Mutex
-	// stream is "complete" (the default), "drop" (a 500) or "silent" (open, never a line).
+	// stream is "complete" (the default), "drop" (a 500), "silent" (open, never a line) or
+	// "running" (the model takes the request, then the stream ends).
 	stream string
 	polls  []string
 	fail   map[string]int
@@ -94,6 +96,9 @@ func (q *queueFake) serve(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(200)
 			w.(http.Flusher).Flush()
 			<-r.Context().Done()
+		case "running":
+			w.Header().Set("Content-Type", "text/event-stream")
+			fmt.Fprintf(w, "data: %s\n\n", `{"status":"IN_PROGRESS"}`)
 		default:
 			w.Header().Set("Content-Type", "text/event-stream")
 			for _, s := range []string{`{"status":"IN_QUEUE","queue_position":2}`, `{"status":"IN_PROGRESS"}`, `{"status":"COMPLETED"}`} {
@@ -315,6 +320,55 @@ func TestTheKeyGoesOnlyToFalsQueue(t *testing.T) {
 	defer mu.Unlock()
 	if len(leaked) > 0 {
 		t.Fatalf("requests went to another host: %v", leaked)
+	}
+}
+
+// A request Forja loses track of while the model runs it is cancelled and billed: fal goes on
+// with it, and charges for it, either way.
+func TestARunningRequestWhoseStatusIsLostIsCancelledAndBilled(t *testing.T) {
+	quick(t)
+	q := newQueue(t)
+	q.stream = "running"
+	q.fail["GET "+reqBase+"/status"] = 100
+	run, err, evs := runOnce(t, context.Background(), q)
+	if err != nil || run.Status != "failed" {
+		t.Fatalf("run %+v %v", run, err)
+	}
+	if _, cancels := q.counts(); cancels != 1 {
+		t.Fatalf("cancelled %d times", cancels)
+	}
+	if got := strings.Count(types(evs), "stage.billed"); got != 1 {
+		t.Fatalf("billed %d times: %s", got, types(evs))
+	}
+}
+
+func TestAFinishedGenerationWhoseResultCannotBeReadIsBilled(t *testing.T) {
+	quick(t)
+	q := newQueue(t)
+	q.fail["GET "+reqBase] = 100
+	run, err, evs := runOnce(t, context.Background(), q)
+	if err != nil || run.Status != "failed" {
+		t.Fatalf("run %+v %v", run, err)
+	}
+	if got := strings.Count(types(evs), "stage.billed"); got != 1 {
+		t.Fatalf("billed %d times: %s", got, types(evs))
+	}
+	// fal finished it: there is nothing to cancel.
+	if _, cancels := q.counts(); cancels != 0 {
+		t.Fatalf("cancelled %d times", cancels)
+	}
+}
+
+// The job runner moves a stage elsewhere only when its provider could not be reached: fal.ai
+// refusing a call says it answered.
+func TestFalsRefusalsCarryTheirStatus(t *testing.T) {
+	q := newQueue(t)
+	q.fail["GET /v1/models/pricing"], q.code["GET /v1/models/pricing"] = 1, 401
+	p := New("fal", key, []string{"fal-ai/fake-3d"}, nil)
+	p.API, p.Queue = q.URL, q.URL
+	var answered interface{ StatusCode() int }
+	if err := p.Health(context.Background()); !errors.As(err, &answered) || answered.StatusCode() != 401 {
+		t.Fatalf("health %v", err)
 	}
 }
 

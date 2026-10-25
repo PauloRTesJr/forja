@@ -128,16 +128,71 @@ func (p *Provider) call(ctx context.Context, method, path string, body, out any)
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<20))
 	switch {
 	case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden:
-		return errors.New("RunPod refused the API key")
+		return &answered{resp.StatusCode, "RunPod refused the API key"}
 	case resp.StatusCode == http.StatusNotFound:
-		return fmt.Errorf("RunPod has no serverless endpoint %s", p.endpoint)
+		return &answered{resp.StatusCode, fmt.Sprintf("RunPod has no serverless endpoint %s", p.endpoint)}
 	case resp.StatusCode >= 400:
-		return fmt.Errorf("RunPod answered %s: %s", resp.Status, strings.TrimSpace(string(raw)))
+		return &answered{resp.StatusCode, fmt.Sprintf("RunPod answered %s: %s", resp.Status, strings.TrimSpace(string(raw)))}
 	}
 	if out != nil {
 		return json.Unmarshal(raw, out)
 	}
 	return nil
+}
+
+// answered is an error RunPod answered with: an error status, or a job that ran and failed
+// (status 200). The job runner moves a stage to another provider only for a 5xx or no answer,
+// since a job RunPod took has been billed and would only be billed again elsewhere.
+type answered struct {
+	Status int
+	Msg    string
+}
+
+func (e *answered) Error() string   { return e.Msg }
+func (e *answered) StatusCode() int { return e.Status }
+
+func failedJob(format string, args ...any) error {
+	return &answered{http.StatusOK, fmt.Sprintf(format, args...)}
+}
+
+// Waits that tests shorten: the first pause before a failed look at a job is tried again (it
+// doubles), and the longest.
+var (
+	retryBase = time.Second
+	retryMax  = 8 * time.Second
+)
+
+// failures is how many failed looks in a row a job survives.
+const failures = 5
+
+// transient reports a failed look at a job worth trying again: no answer, a rate limit, a
+// server error. The end of ctx is not.
+func transient(ctx context.Context, err error) bool {
+	if err == nil || ctx.Err() != nil {
+		return false
+	}
+	var a *answered
+	if errors.As(err, &a) {
+		return a.Status == http.StatusTooManyRequests || a.Status >= 500
+	}
+	return true
+}
+
+// again runs fn until it succeeds, fails for good, or fails `failures` times in a row.
+func again(ctx context.Context, fn func() error) error {
+	delay := retryBase
+	for n := 1; ; n++ {
+		err := fn()
+		if err == nil || n >= failures || !transient(ctx, err) {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(delay):
+		}
+		delay = min(delay*2, retryMax)
+	}
 }
 
 // Workers is what RunPod's health check says of an endpoint's workers and queue.
@@ -311,15 +366,15 @@ func (p *Provider) Run(ctx context.Context, req engineapi.RunRequest, events cha
 		return nil, err
 	}
 	if len(res.Missing) > 0 {
-		return nil, fmt.Errorf("the worker cannot find %s on the network volume", strings.Join(res.Missing, ", "))
+		return nil, failedJob("the worker cannot find %s on the network volume", strings.Join(res.Missing, ", "))
 	}
 	if res.Run == nil {
-		return nil, errors.New("the worker answered without a run")
+		return nil, failedJob("the worker answered without a run")
 	}
 	for ref, b64 := range res.Artifacts {
 		raw, err := base64.StdEncoding.DecodeString(b64)
 		if err != nil {
-			return nil, fmt.Errorf("output %s: %w", ref, err)
+			return nil, failedJob("output %s: %v", ref, err)
 		}
 		got, err := p.st.Put(bytes.NewReader(raw))
 		if err != nil {
@@ -387,25 +442,37 @@ func finished(status string) bool {
 }
 
 // job submits one queue job and follows it to the end: events go to events, the result into
-// out. Cancelling ctx cancels the job on RunPod.
+// out. A job that does not end here is cancelled on RunPod, whether ctx ended or following it
+// failed: left alone, it would run on, and bill, until RunPod's own timeout.
 func (p *Provider) job(ctx context.Context, input any, events chan<- engineapi.Event, out any) error {
 	var sub jobStatus
 	if err := p.call(ctx, http.MethodPost, "/run", map[string]any{"input": input}, &sub); err != nil {
 		return err
 	}
 	if sub.ID == "" {
-		return errors.New("RunPod accepted the job without an id")
+		return failedJob("RunPod accepted the job without an id")
+	}
+	ended := false
+	defer func() {
+		if !ended {
+			p.cancel(sub.ID)
+		}
+	}()
+	look := func(path string, st *jobStatus) error {
+		err := again(ctx, func() error {
+			*st = jobStatus{}
+			return p.call(ctx, http.MethodGet, path+url.PathEscape(sub.ID), nil, st)
+		})
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		return err
 	}
 	f := &follower{ctx: ctx, events: events}
 	delay := 250 * time.Millisecond
 	for {
 		var st jobStatus
-		err := p.call(ctx, http.MethodGet, "/stream/"+url.PathEscape(sub.ID), nil, &st)
-		if ctx.Err() != nil {
-			p.cancel(sub.ID)
-			return ctx.Err()
-		}
-		if err != nil {
+		if err := look("/stream/", &st); err != nil {
 			return err
 		}
 		for _, s := range st.Stream {
@@ -414,10 +481,11 @@ func (p *Provider) job(ctx context.Context, input any, events chan<- engineapi.E
 			}
 		}
 		if finished(st.Status) {
+			ended = true
 			if f.result == nil {
 				// The aggregated output has every item, for what the stream did not show.
 				var whole jobStatus
-				if err := p.call(ctx, http.MethodGet, "/status/"+url.PathEscape(sub.ID), nil, &whole); err != nil {
+				if err := look("/status/", &whole); err != nil {
 					return err
 				}
 				if err := f.replay(whole.Output); err != nil {
@@ -428,10 +496,13 @@ func (p *Provider) job(ctx context.Context, input any, events chan<- engineapi.E
 					if why == nil || why == "" {
 						why = strings.ToLower(st.Status)
 					}
-					return fmt.Errorf("the RunPod job ended without a result: %v", why)
+					return failedJob("the RunPod job ended without a result: %v", why)
 				}
 			}
-			return json.Unmarshal(f.result, out)
+			if err := json.Unmarshal(f.result, out); err != nil {
+				return failedJob("the RunPod worker's result: %v", err)
+			}
+			return nil
 		}
 		if len(st.Stream) > 0 {
 			delay = 250 * time.Millisecond
@@ -440,7 +511,6 @@ func (p *Provider) job(ctx context.Context, input any, events chan<- engineapi.E
 		}
 		select {
 		case <-ctx.Done():
-			p.cancel(sub.ID)
 			return ctx.Err()
 		case <-time.After(delay):
 		}
@@ -458,7 +528,7 @@ type follower struct {
 func (f *follower) take(it item) error {
 	switch {
 	case it.Error != "":
-		return fmt.Errorf("the RunPod worker failed: %s", it.Error)
+		return failedJob("the RunPod worker failed: %s", it.Error)
 	case it.Event != nil:
 		f.seen++
 		if f.events != nil {
