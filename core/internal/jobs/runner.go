@@ -113,6 +113,8 @@ type active struct {
 	picks map[string]Pick
 	owed  map[string]float64
 	avoid failed
+	// asked is what each provider said it runs, asked once per run of the job. Under mu.
+	asked map[string]*catalog.Entry
 }
 
 // set takes on how a job runs now.
@@ -234,7 +236,7 @@ func (r *Runner) Submit(ctx context.Context, req SubmitRequest) (*library.Job, e
 // start makes a job active and runs it in the background.
 func (r *Runner) start(job *library.Job, prep *prepared, cfg *config.Loaded) *active {
 	runCtx, cancel := context.WithCancel(context.Background())
-	a := &active{cancel: cancel, job: job, avoid: failed{}}
+	a := &active{cancel: cancel, job: job, avoid: failed{}, asked: map[string]*catalog.Entry{}}
 	a.set(prep)
 	r.mu.Lock()
 	r.active[job.ID] = a
@@ -362,7 +364,7 @@ func (r *Runner) setStages(ctx context.Context, j *library.Job, prep *prepared) 
 	for _, s := range prep.preset.Stages {
 		j.Stages = append(j.Stages, library.Stage{
 			ID: s.ID, Use: s.Use, Model: s.Model, Status: library.Queued, Provider: prep.routes[s.ID],
-			Outputs: []library.Output{},
+			ProviderLabel: prep.picks[s.ID].ProviderLabel, Outputs: []library.Output{},
 		})
 		j.EstimateSec += r.db.EstimateSeconds(ctx, s.Use, s.Model, prep.routes[s.ID])
 	}
@@ -391,12 +393,15 @@ func inputs(j *library.Job) map[string]string {
 }
 
 // fingerprints asks each provider the job routes to what it runs, once per job: keys depend on
-// it, so a new adapter or new weights on that provider never reuse outputs cached before.
-func (r *Runner) fingerprints(ctx context.Context, routes map[string]string) planner.Fingerprints {
-	asked := map[string]*catalog.Entry{}
+// it, so a new adapter or new weights on that provider never reuse outputs cached before. The
+// answer serves every plan of the run (looking for a sheet of views, cutting them out, the
+// stages), since each question is a round trip.
+func (r *Runner) fingerprints(ctx context.Context, a *active, routes map[string]string) planner.Fingerprints {
 	return func(s presets.Stage) (planner.Fingerprint, error) {
 		id := routes[s.ID]
-		got, ok := asked[id]
+		a.mu.Lock()
+		got, ok := a.asked[id]
+		a.mu.Unlock()
 		if !ok {
 			var err error
 			if got, err = r.askRuns(ctx, id); err != nil {
@@ -410,7 +415,9 @@ func (r *Runner) fingerprints(ctx context.Context, routes map[string]string) pla
 				}
 				return planner.Fingerprint{}, &stageError{provider: id, stages: on, down: true, err: err}
 			}
-			asked[id] = got
+			a.mu.Lock()
+			a.asked[id] = got
+			a.mu.Unlock()
 		}
 		if s.Model == "" {
 			return planner.Fingerprint{Adapter: got.Stages[s.Use]}, nil
@@ -645,7 +652,7 @@ func (r *Runner) runJob(ctx context.Context, a *active, prep *prepared, cfg *con
 	var plan *planner.Plan
 	err = r.withFallback(ctx, a, cfg, &prep, func(p *prepared) error {
 		var err error
-		if plan, err = r.plan(ctx, p.preset, p.routes, snapshot(a)); err != nil {
+		if plan, err = r.plan(ctx, a, p.preset, p.routes); err != nil {
 			return err
 		}
 		_, err = r.execute(ctx, a, plan)
@@ -712,8 +719,9 @@ func (r *Runner) setStatus(a *active, s library.Status) {
 	r.hub.Publish(EvJobUpdated, snapshot(a))
 }
 
-func (r *Runner) plan(ctx context.Context, preset *presets.Preset, routes map[string]string, job *library.Job) (*planner.Plan, error) {
-	plan, err := planner.Build(preset, inputs(job), job.Seed, r.fingerprints(ctx, routes))
+func (r *Runner) plan(ctx context.Context, a *active, preset *presets.Preset, routes map[string]string) (*planner.Plan, error) {
+	job := snapshot(a)
+	plan, err := planner.Build(preset, inputs(job), job.Seed, r.fingerprints(ctx, a, routes))
 	if err != nil {
 		return nil, err
 	}
@@ -752,7 +760,7 @@ func (r *Runner) inspect(ctx context.Context, a *active, prep *prepared) error {
 	}
 	detect := presets.Stage{ID: "sheet", Use: "views.detect", Inputs: []string{bg.ID}}
 	routes := map[string]string{bg.ID: prep.routes[bg.ID], detect.ID: prep.routes[bg.ID]}
-	plan, err := r.plan(ctx, &presets.Preset{ID: prep.preset.ID, Stages: []presets.Stage{bg, detect}}, routes, snapshot(a))
+	plan, err := r.plan(ctx, a, &presets.Preset{ID: prep.preset.ID, Stages: []presets.Stage{bg, detect}}, routes)
 	if err != nil {
 		return err
 	}
@@ -820,7 +828,7 @@ func (r *Runner) split(ctx context.Context, a *active, prep *prepared) error {
 	cut := presets.Stage{ID: "split", Use: "views.split", Inputs: []string{presets.InputImage, bg.ID},
 		Params: map[string]any{"views": wanted}}
 	routes := map[string]string{bg.ID: where, cut.ID: where}
-	plan, err := r.plan(ctx, &presets.Preset{ID: prep.preset.ID, Stages: []presets.Stage{bg, cut}}, routes, snapshot(a))
+	plan, err := r.plan(ctx, a, &presets.Preset{ID: prep.preset.ID, Stages: []presets.Stage{bg, cut}}, routes)
 	if err != nil {
 		return err
 	}

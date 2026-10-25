@@ -45,6 +45,8 @@ type fakeProvider struct {
 	held int
 	// pngs makes the images it prepares start like PNG files, for a hosted model that checks.
 	pngs bool
+	// infos counts the times it was asked what it runs.
+	infos int
 }
 
 var cpu = "cpu"
@@ -62,6 +64,7 @@ func (f *fakeProvider) Health(context.Context) error { return nil }
 func (f *fakeProvider) Info(context.Context) (*engineapi.Info, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.infos++
 	if f.down {
 		return nil, errors.New("connection refused")
 	}
@@ -263,6 +266,24 @@ func TestTextureRerunHitsTheShapeCache(t *testing.T) {
 	}
 	if last := fp.runs[len(fp.runs)-1]; strings.Join(last, ",") != "paint,bake,lods,export" {
 		t.Fatalf("second run executed %v", last)
+	}
+}
+
+// Asking a provider what it runs is a round trip: a job asks once when it is submitted and
+// once when it starts, not again for each plan it makes (looking for a sheet, then its stages).
+func TestAJobAsksItsProviderWhatItRunsOncePerRun(t *testing.T) {
+	r, fp, _, _, img := setup(t)
+	j, err := r.Submit(context.Background(), SubmitRequest{Input: img, Preset: "mobile-prop"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := wait(t, r, j.ID); got.Status != library.Succeeded || got.Sheet == nil || !got.Sheet.Checked {
+		t.Fatalf("%s %s %+v", got.Status, got.Error, got.Sheet)
+	}
+	fp.mu.Lock()
+	defer fp.mu.Unlock()
+	if fp.infos != 2 {
+		t.Fatalf("asked %d times", fp.infos)
 	}
 }
 

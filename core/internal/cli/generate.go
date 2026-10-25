@@ -175,7 +175,7 @@ func (a *app) showEstimate(est *jobs.Estimate) {
 			case s.Paid && !s.Priced:
 				cost = "price unknown"
 			case s.Paid:
-				cost = money(s.CostUSD, "USD")
+				cost = usd(s.CostUSD)
 			}
 			if s.Measured == "elsewhere" {
 				took += " (measured elsewhere)"
@@ -184,18 +184,21 @@ func (a *app) showEstimate(est *jobs.Estimate) {
 		}
 	})
 	per := "about " + duration(est.Seconds)
-	if len(est.Unmeasured) > 0 {
+	switch {
+	case est.Seconds <= 0:
+		per = "no time measured yet; it shows after the first run"
+	case len(est.Unmeasured) > 0:
 		per += fmt.Sprintf(", not counting %s, which never ran yet", strings.Join(est.Unmeasured, ", "))
 	}
 	a.printf("\nEach image: %s", per)
 	if est.Paid {
-		a.printf("; %s", money(est.CostUSD, "USD"))
+		a.printf("; %s", usd(est.CostUSD))
 	}
 	a.printf(".\n")
 	if est.Images > 1 {
 		a.printf("%d images: about %s", est.Images, duration(est.Seconds*float64(est.Images)))
 		if est.Paid {
-			a.printf("; %s", money(est.CostUSD*float64(est.Images), "USD"))
+			a.printf("; %s", usd(est.CostUSD*float64(est.Images)))
 		}
 		a.printf(".\n")
 	}
@@ -209,6 +212,14 @@ func (a *app) showEstimate(est *jobs.Estimate) {
 	if est.Problem != "" {
 		a.printf("Would be refused: %s\n", est.Problem)
 	}
+}
+
+// usd is an expected cost: a stage billed by the second can cost less than a cent.
+func usd(amount float64) string {
+	if amount > 0 && amount < 0.01 {
+		return "under $0.01"
+	}
+	return money(amount, "USD")
 }
 
 // duration reads seconds as a person would say them; "-" when unknown.

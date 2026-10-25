@@ -184,8 +184,12 @@ func TestAStageThisComputerCannotRunGoesToOneThatCan(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := wait(t, r, j.ID); got.Status != library.Succeeded || providers(got)["paint"] != "lan" {
+	got := wait(t, r, j.ID)
+	if got.Status != library.Succeeded || providers(got)["paint"] != "lan" {
 		t.Fatalf("%s %s %v", got.Status, got.Error, providers(got))
+	}
+	if s := stage(got, "paint"); s.ProviderLabel != "Studio PC" {
+		t.Fatalf("paint runs on %q", s.ProviderLabel)
 	}
 }
 

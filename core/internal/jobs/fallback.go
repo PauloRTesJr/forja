@@ -53,9 +53,9 @@ func (r *Runner) fallback(ctx context.Context, a *active, cfg *config.Loaded, pr
 		for _, s := range snapshot(a).Stages {
 			done[s.ID] = s.Status == library.Succeeded
 		}
-		for id, p := range prep.routes {
-			if p == se.provider && !done[id] && !slices.Contains(leaving, id) {
-				leaving = append(leaving, id)
+		for _, s := range prep.preset.Stages {
+			if prep.routes[s.ID] == se.provider && !done[s.ID] && !slices.Contains(leaving, s.ID) {
+				leaving = append(leaving, s.ID)
 			}
 		}
 	}
@@ -81,7 +81,8 @@ func (r *Runner) fallback(ctx context.Context, a *active, cfg *config.Loaded, pr
 		r.restage(ctx, j, next)
 		for _, m := range moves {
 			if st := stage(j, m.stage); st != nil {
-				st.Fallbacks = append(st.Fallbacks, library.Fallback{From: se.provider, To: m.to, Reason: reason})
+				st.Fallbacks = append(st.Fallbacks, library.Fallback{From: se.provider, To: m.to, Reason: reason,
+					FromLabel: r.label(cfg, se.provider), ToLabel: r.label(cfg, m.to)})
 			}
 		}
 	})

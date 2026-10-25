@@ -56,13 +56,17 @@ type Stage struct {
 	Note string `json:"note,omitempty"`
 	// Fallbacks are the providers the stage left after failing there, oldest first.
 	Fallbacks []Fallback `json:"fallbacks,omitempty"`
+	// ProviderLabel names Provider for people, as it was called when the job ran.
+	ProviderLabel string `json:"provider_label,omitempty"`
 }
 
 // Fallback is a stage moving to another provider after a failure there.
 type Fallback struct {
-	From   string `json:"from"`
-	To     string `json:"to"`
-	Reason string `json:"reason"`
+	From      string `json:"from"`
+	To        string `json:"to"`
+	Reason    string `json:"reason"`
+	FromLabel string `json:"from_label,omitempty"`
+	ToLabel   string `json:"to_label,omitempty"`
 }
 
 type Job struct {
