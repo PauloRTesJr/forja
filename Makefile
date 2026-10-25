@@ -60,7 +60,12 @@ notes: ## Print the newest tag's release notes; a stable release also lists its 
 		$(if $(findstring -,$(VERSION)),,--ignore-tags 'v.*-(alpha|beta|rc)\.')
 
 dist: core ## Build this OS's desktop installers into apps/desktop/release (unsigned without a certificate)
+ifeq ($(shell uname -s),Darwin)
+	$(MAKE) core-all
+	cd apps/desktop && pnpm build && pnpm dist:mac
+else
 	cd apps/desktop && pnpm build && pnpm exec electron-builder --publish never
+endif
 
 hooks: ## Optional: run the fast checks before each commit (.pre-commit-config.yaml)
 	uv tool run pre-commit install
