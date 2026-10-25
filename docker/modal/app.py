@@ -4,7 +4,7 @@ The gateway answers health checks and moves artifacts by hash on its own, so a c
 it like any remote engine and pays for GPU seconds only while stages run. Deploy it from the
 repository root with your own Modal account:
 
-    modal secret create forja-engine FORJA_ENGINE_TOKEN=<a long random token>
+    modal secret create forja-engine FORJA_ENGINE_TOKEN=<a long random token, 16 characters or more>
     modal deploy docker/modal/app.py
 
 Then add it in Forja (Settings, or `forja providers add modal <gateway url>`) with that
@@ -122,4 +122,5 @@ def gateway() -> Any:
         reload=_quietly(artifacts.reload),
         commit=_quietly(artifacts.commit),
     )
-    return create_gateway(Path("/artifacts/store"), os.environ["FORJA_ENGINE_TOKEN"], board, backend)
+    # Never None here: that serves without a token. create_gateway refuses an empty or short one.
+    return create_gateway(Path("/artifacts/store"), os.environ.get("FORJA_ENGINE_TOKEN", ""), board, backend)

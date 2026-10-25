@@ -157,6 +157,8 @@ modal secret create forja-engine FORJA_ENGINE_TOKEN=<a long random token>
 modal deploy docker/modal/app.py
 ```
 
+The token must be at least 16 characters: the gateway refuses to start without one, or with a shorter one, since anyone who has it can spend your GPU time. A random one, such as `openssl rand -hex 24`, is best.
+
 The image builds on Modal from `docker/engine/Dockerfile`; nothing is pushed to a registry. The app, `forja-engine`, has:
 
 - a gateway on 1 CPU and 1 GB of memory, taking up to 32 requests at once;
