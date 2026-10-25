@@ -6,7 +6,8 @@ Korea; separate terms above 1M monthly active users). Upstream code is fetched a
 time and never committed to Forja.
 
 Paint's output is base color only, with constant roughness and metallic (docs/decisions.md, 6).
-Upstream re-unwraps UVs with xatlas, so the input mesh's UVs are replaced.
+Upstream unwraps UVs with xatlas; a mesh that already has UVs (a preset's UV stage, such as
+Blender's Smart UV Project) keeps them.
 """
 
 from __future__ import annotations
@@ -53,8 +54,24 @@ def rotate_y(mesh: trimesh.Trimesh, degrees: float) -> None:
         mesh.apply_transform(trimesh.transformations.rotation_matrix(math.radians(degrees), [0, 1, 0]))
 
 
+def keep_uvs(wrap: Any) -> Any:
+    """Upstream's unwrap, skipped for a mesh that brings its own UVs."""
+    if getattr(wrap, "keeps_uvs", False):
+        return wrap
+
+    def unwrap(mesh: Any) -> Any:
+        uv = getattr(getattr(mesh, "visual", None), "uv", None)
+        if uv is not None and len(uv) == len(mesh.vertices):
+            return mesh
+        return wrap(mesh)
+
+    unwrap.keeps_uvs = True  # type: ignore[attr-defined]
+    return unwrap
+
+
 class Hunyuan3D2Paint(Adapter):
-    version = "1"
+    # 2: keeps the UVs of a mesh that has them instead of unwrapping it again.
+    version = "2"
 
     def __init__(self) -> None:
         self.pipe: Any = None
@@ -67,11 +84,14 @@ class Hunyuan3D2Paint(Adapter):
 
     def load(self, device: Device, dtype: str = "fp16") -> None:
         import torch
+        from hy3dgen.texgen import pipelines
         from hy3dgen.texgen.pipelines import Hunyuan3DPaintPipeline, Hunyuan3DTexGenConfig
 
         if self.weights_dir is None:
             raise RuntimeError("hunyuan3d2: no weights folder; run forja models install")
         self.torch = torch
+        # The pipeline calls the module's mesh_uv_wrap on every mesh it paints.
+        pipelines.mesh_uv_wrap = keep_uvs(pipelines.mesh_uv_wrap)
         # Built from local pinned weights so from_pretrained never reaches the network.
         config = Hunyuan3DTexGenConfig(
             str(self.weights_dir / DELIGHT), str(self.weights_dir / PAINT_TURBO), PAINT_TURBO

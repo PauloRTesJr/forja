@@ -47,6 +47,8 @@ type fakeProvider struct {
 	pngs bool
 	// infos counts the times it was asked what it runs.
 	infos int
+	// unavailable are the built-ins it says it cannot run here, with why.
+	unavailable map[string]string
 }
 
 var cpu = "cpu"
@@ -72,7 +74,7 @@ func (f *fakeProvider) Info(context.Context) (*engineapi.Info, error) {
 	for k, v := range f.stages {
 		stages[k] = v
 	}
-	return &engineapi.Info{Stages: stages}, nil
+	return &engineapi.Info{Stages: stages, Unavailable: f.unavailable}, nil
 }
 
 func (f *fakeProvider) Models(context.Context) ([]engineapi.Model, error) {
@@ -491,6 +493,57 @@ func TestOptionalStagesRunOnlyWhenSwitchedOn(t *testing.T) {
 	}
 	if got := fp.executed(n); got != "match,bake,lods,export" {
 		t.Fatalf("switching match on ran %q", got)
+	}
+}
+
+// blenderBox fakes another computer's engine, one that has Blender.
+type blenderBox struct{ *fakeProvider }
+
+func (b *blenderBox) ID() string          { return "box" }
+func (b *blenderBox) Kind() provider.Kind { return provider.KindEngine }
+func (b *blenderBox) Info(context.Context) (*engineapi.Info, error) {
+	return &engineapi.Info{Stages: map[string]string{"mesh.remesh": "1+blender-5.2.1", "mesh.uv.smart": "1+blender-5.2.1"}}, nil
+}
+func (b *blenderBox) Models(context.Context) ([]engineapi.Model, error) { return nil, nil }
+
+func TestBlenderStagesRunWhereBlenderIsAndAreRefusedWhereNoneIs(t *testing.T) {
+	r, fp, _, _, img := setup(t)
+	ctx := context.Background()
+	why := "Blender 4.2 or newer was not found on the computer that runs the engine"
+	fp.set(func(f *fakeProvider) {
+		f.unavailable = map[string]string{"mesh.remesh": why, "mesh.uv.smart": why}
+	})
+	on := map[string]any{"remesh.enabled": true, "uv.enabled": true}
+	_, err := r.Submit(ctx, SubmitRequest{Input: img, Preset: "environment-piece", Overrides: on})
+	if err == nil || !strings.Contains(err.Error(), "no provider can run mesh.remesh: "+why) {
+		t.Fatalf("got %v", err)
+	}
+	all, _ := r.Presets("")
+	off, err := r.Unavailable(ctx, "", all["environment-piece"])
+	if err != nil || off["remesh"] != why || off["uv"] != why || off["match"] != "" {
+		t.Fatalf("unavailable %v, %v", off, err)
+	}
+
+	r.providers.Add(&blenderBox{fp})
+	project := t.TempDir()
+	os.WriteFile(filepath.Join(project, "forja.toml"), []byte("[routing]\npriority = [\"local\", \"box\"]\n"), 0o644)
+	j, err := r.Submit(ctx, SubmitRequest{Input: img, Preset: "environment-piece", Project: project, Overrides: on})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := stageIDs(j); got != "bg,frame,shape,cleanup,remesh,uv,paint,bake,lods,export" {
+		t.Fatalf("stages %s", got)
+	}
+	for _, s := range j.Stages {
+		if want := map[bool]string{true: "box", false: LocalProvider}[s.Use == "mesh.remesh" || s.Use == "mesh.uv.smart"]; s.Provider != want {
+			t.Fatalf("stage %s runs on %q, want %q", s.ID, s.Provider, want)
+		}
+	}
+	if got := wait(t, r, j.ID); got.Status != library.Succeeded {
+		t.Fatalf("%s: %s", got.Status, got.Error)
+	}
+	if got := fp.spec("remesh").Params["target_tris"]; fmt.Sprint(got) != "15000" {
+		t.Fatalf("remesh budget %v, want the decimation's 15000", got)
 	}
 }
 

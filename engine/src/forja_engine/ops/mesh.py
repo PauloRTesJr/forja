@@ -16,18 +16,33 @@ from numpy.typing import NDArray
 from PIL import Image, ImageDraw
 
 from forja_engine.ops import skin as skin_ops
+from forja_engine.ops import tangents as tangent_ops
 
 TANGENTS = "tangents"  # Trimesh.metadata key: (n, 4) per-vertex tangents written as TANGENT
 
 
-def load(path: Path) -> trimesh.Trimesh:
-    mesh = trimesh.load(path, file_type="glb", force="mesh", process=False)
+def load(path: Path, keep_normals: bool = False) -> trimesh.Trimesh:
+    """The GLB's geometry as one mesh. Flattening recomputes the normals; `keep_normals` keeps
+    the file's own when it holds a single untransformed mesh, as a normal-mapped one must."""
+    single = _single(path) if keep_normals else None
+    mesh = single if single is not None else trimesh.load(path, file_type="glb", force="mesh", process=False)
     if not isinstance(mesh, trimesh.Trimesh):
         raise ValueError(f"{path} does not contain a triangle mesh")
     # trimesh reads glTF extras into metadata but not the TANGENT attribute. Cached files from
     # earlier builds still carry tangents in extras; they go stale once a stage edits the mesh.
     mesh.metadata.pop(TANGENTS, None)
     return mesh
+
+
+def _single(path: Path) -> trimesh.Trimesh | None:
+    scene = trimesh.load(path, file_type="glb", process=False)
+    if not isinstance(scene, trimesh.Scene) or len(scene.graph.nodes_geometry) != 1:
+        return None
+    transform, name = scene.graph.get(scene.graph.nodes_geometry[0])
+    geom = scene.geometry.get(name)
+    if not isinstance(geom, trimesh.Trimesh) or not np.allclose(transform, np.eye(4)):
+        return None
+    return geom
 
 
 def save(mesh: trimesh.Trimesh | trimesh.Scene, path: Path) -> Path:
@@ -104,39 +119,12 @@ def _with_tangents(glb: bytes, tangents: dict[str, NDArray[np.float32]]) -> byte
 
 
 def vertex_tangents(mesh: trimesh.Trimesh, uv: NDArray[np.float64]) -> NDArray[np.float32]:
-    """Per-vertex tangents (xyz) and handedness (w) from UV gradients, glTF convention.
+    """Per-vertex MikkTSpace tangents (xyz) and handedness (w), glTF convention (ops/tangents.py).
 
     Tangent follows +u and bitangent = cross(normal, tangent) * w follows +v in trimesh's
     bottom-left UV space, i.e. "up" in the texture image, which is what glTF expects.
     """
-    v = np.asarray(mesh.vertices, dtype=np.float64)
-    f = np.asarray(mesh.faces)
-    n = np.asarray(mesh.vertex_normals, dtype=np.float64)
-    # A vertex with only zero-area faces, or faces that cancel out, has no normal. Any frame
-    # suits it; without one the fallback below divides 0 by 0 and writes NaN.
-    n_len = np.linalg.norm(n, axis=1, keepdims=True)
-    n = np.where(n_len > 1e-12, n / np.maximum(n_len, 1e-12), [[0.0, 0.0, 1.0]])
-    p0, p1, p2 = v[f[:, 0]], v[f[:, 1]], v[f[:, 2]]
-    w0, w1, w2 = uv[f[:, 0]], uv[f[:, 1]], uv[f[:, 2]]
-    e1, e2 = p1 - p0, p2 - p0
-    d1, d2 = w1 - w0, w2 - w0
-    det = d1[:, 0] * d2[:, 1] - d2[:, 0] * d1[:, 1]
-    r = np.where(np.abs(det) > 1e-12, 1.0 / np.where(det == 0, 1, det), 0.0)[:, None]
-    t_face = (e1 * d2[:, 1:2] - e2 * d1[:, 1:2]) * r
-    b_face = (e2 * d1[:, 0:1] - e1 * d2[:, 0:1]) * r
-    t = np.zeros_like(v)
-    b = np.zeros_like(v)
-    for k in range(3):
-        np.add.at(t, f[:, k], t_face)
-        np.add.at(b, f[:, k], b_face)
-    t = t - n * np.sum(n * t, axis=1, keepdims=True)  # Gram-Schmidt against the normal
-    length = np.linalg.norm(t, axis=1, keepdims=True)
-    fallback = np.cross(n, np.where(np.abs(n[:, :1]) < 0.9, [[1.0, 0, 0]], [[0, 1.0, 0]]))
-    t = np.where(
-        length > 1e-12, t / np.maximum(length, 1e-12), fallback / np.linalg.norm(fallback, axis=1)[:, None]
-    )
-    w = np.where(np.sum(np.cross(n, t) * b, axis=1) < 0, -1.0, 1.0)
-    return np.hstack([t, w[:, None]]).astype(np.float32)
+    return tangent_ops.mikktspace(mesh.vertices, mesh.vertex_normals, uv, mesh.faces)
 
 
 def _as_scene(mesh: trimesh.Trimesh | trimesh.Scene) -> trimesh.Scene:

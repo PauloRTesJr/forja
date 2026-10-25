@@ -131,6 +131,53 @@ func TestHeroCharacterRigsBeforeTheLODs(t *testing.T) {
 	}
 }
 
+func TestAQuadRemeshStandsInForDecimationWithItsBudget(t *testing.T) {
+	all, _ := Load()
+	for _, id := range []string{"environment-piece", "hero-character"} {
+		p := all[id]
+		stage := func(p *Preset, id string) *Stage {
+			for i := range p.Stages {
+				if p.Stages[i].ID == id {
+					return &p.Stages[i]
+				}
+			}
+			return nil
+		}
+		off := p.Active()
+		if stage(off, "remesh") != nil || stage(off, "uv") != nil || stage(off, "paint").Inputs[0] != "lowpoly" {
+			t.Fatalf("%s: Blender stages run by default: %+v", id, off.Stages)
+		}
+		on, err := p.WithOverrides(map[string]any{"remesh.enabled": true, "uv.enabled": true, "lowpoly.target_tris": 9000})
+		if err != nil {
+			t.Fatal(err)
+		}
+		a := on.Active()
+		if stage(a, "lowpoly") != nil {
+			t.Fatalf("%s: decimation still runs beside the remesh", id)
+		}
+		if got := stage(a, "remesh").Params["target_tris"]; got != 9000 {
+			t.Fatalf("%s: remesh budget %v, want the decimation's", id, got)
+		}
+		if stage(a, "uv").Inputs[0] != "remesh" || stage(a, "paint").Inputs[0] != "uv" {
+			t.Fatalf("%s: uv reads %v, paint reads %v", id, stage(a, "uv").Inputs, stage(a, "paint").Inputs)
+		}
+		if stage(p, "remesh").Params["target_tris"] != nil {
+			t.Fatalf("%s: the preset itself changed", id)
+		}
+	}
+}
+
+func TestAStageCanOnlyReplaceALaterOneThatAlwaysRuns(t *testing.T) {
+	for _, raw := range []string{
+		"id: x\nstages:\n  - {id: a, use: shape}\n  - {id: b, use: mesh.remesh, optional: {label: B, replaces: a}}\n  - {id: c, use: export}\n",
+		"id: x\nstages:\n  - {id: b, use: mesh.remesh, optional: {label: B, replaces: nope}}\n  - {id: c, use: export}\n",
+	} {
+		if _, err := Parse([]byte(raw), "t"); err == nil {
+			t.Fatalf("accepted %q", raw)
+		}
+	}
+}
+
 func TestOptionalStagesNeedALabel(t *testing.T) {
 	_, err := Parse([]byte("id: x\nstages:\n  - {id: a, use: shape, optional: {default: true}}\n  - {id: b, use: export}\n"), "t")
 	if err == nil {

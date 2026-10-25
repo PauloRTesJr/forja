@@ -57,6 +57,10 @@ type Option struct {
 	Label   string `yaml:"label" json:"label"`
 	Help    string `yaml:"help,omitempty" json:"help,omitempty"`
 	Default bool   `yaml:"default" json:"default"`
+	// Replaces names a later stage this one stands in for while it is on: that stage is left
+	// out, its readers read this one, and this one takes its params under its own, so a quad
+	// remesh in place of decimation keeps the preset's triangle budget.
+	Replaces string `yaml:"replaces,omitempty" json:"replaces,omitempty"`
 }
 
 type Preset struct {
@@ -153,15 +157,34 @@ func (p *Preset) normalize() error {
 	if p.Stages[len(p.Stages)-1].Optional != nil {
 		return errors.New("the last stage cannot be optional")
 	}
+	for i, s := range p.Stages {
+		if s.Optional == nil || s.Optional.Replaces == "" {
+			continue
+		}
+		j := slices.IndexFunc(p.Stages, func(t Stage) bool { return t.ID == s.Optional.Replaces })
+		if j <= i || p.Stages[j].Optional != nil {
+			return fmt.Errorf("stage %s replaces %q, which is not a later stage that always runs", s.ID, s.Optional.Replaces)
+		}
+	}
 	return nil
 }
 
 // Active returns the stages that run: optional stages that are off are dropped, and whatever
-// read them reads their first input instead.
+// read them reads their first input instead. A stage that an optional stage which is on
+// replaces is dropped too, and whatever read it reads the replacement.
 func (p *Preset) Active() *Preset {
 	cp := *p
 	cp.Stages = nil
 	through := map[string]string{}
+	replaced := map[string]Stage{} // replacement id -> the stage it stands in for
+	for _, s := range p.Stages {
+		if s.Optional != nil && !s.Off && s.Optional.Replaces != "" {
+			if i := slices.IndexFunc(p.Stages, func(t Stage) bool { return t.ID == s.Optional.Replaces }); i >= 0 {
+				replaced[s.ID] = p.Stages[i]
+				through[p.Stages[i].ID] = s.ID
+			}
+		}
+	}
 	resolve := func(in string) string {
 		for {
 			next, ok := through[in]
@@ -176,11 +199,24 @@ func (p *Preset) Active() *Preset {
 			through[s.ID] = s.Inputs[0]
 			continue
 		}
+		if _, gone := through[s.ID]; gone {
+			continue // replaced by an optional stage that is on
+		}
 		inputs := make([]string, len(s.Inputs))
 		for i, in := range s.Inputs {
 			inputs[i] = resolve(in)
 		}
 		s.Inputs = inputs
+		if old, ok := replaced[s.ID]; ok {
+			params := cloneMap(old.Params)
+			if params == nil {
+				params = map[string]any{}
+			}
+			for k, v := range s.Params {
+				params[k] = v
+			}
+			s.Params = params
+		}
 		cp.Stages = append(cp.Stages, s)
 	}
 	return &cp

@@ -2,6 +2,8 @@ id: hunyuan3d2-paint
 name: Hunyuan3D-2 Paint (turbo)
 family: hunyuan3d2
 adapter: forja_hunyuan3d2:Hunyuan3D2Paint
+# 2: keeps the UVs of a mesh that has them.
+adapter_version: "2"
 tasks: [texture]
 rank: 10
 # Upstream's paint pipeline takes a list of reference images, as in its multi-view example.

@@ -72,10 +72,21 @@ def test_info_and_models_say_what_each_stage_runs(client):
     """The core keys its cache by these: a new adapter or new weights must not reuse old outputs."""
     info = client.get("/v1/info").json()
     assert info["stages"]["bake"] == BUILTINS[StageType.BAKE].version
-    assert set(info["stages"]) == {str(t) for t in BUILTINS}
+    # Every built-in is either offered or said to be unavailable here (Blender's need Blender).
+    assert set(info["stages"]) | set(info["unavailable"]) == {str(t) for t in BUILTINS}
+    assert not set(info["stages"]) & set(info["unavailable"])
     models = {m["id"]: m for m in client.get("/v1/models").json()}
     assert models["stub-shape"]["adapter_version"] == "1" and models["stub-shape"]["upstream"] == ""
     assert models["triposg"]["weights"]["revision"] and len(models["triposg"]["upstream"]) == 64
+
+
+def test_info_leaves_out_blender_stages_where_there_is_no_blender(client, monkeypatch):
+    from forja_engine import blender
+
+    monkeypatch.setenv(blender.ENV, "/no/such/blender")
+    info = client.get("/v1/info").json()
+    assert "mesh.remesh" not in info["stages"] and "mesh.uv.smart" not in info["stages"]
+    assert "there is no Blender at" in info["unavailable"]["mesh.remesh"]
 
 
 def test_upload_rejects_wrong_hash(client):

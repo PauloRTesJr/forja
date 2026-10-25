@@ -22,8 +22,10 @@ type Pick struct {
 	Provider  string `json:"provider,omitempty"`
 	// ProviderLabel names the provider for people: "This computer", "Studio PC", "fal.ai".
 	ProviderLabel string `json:"provider_label,omitempty"`
-	// Missing is set when the stage needs a model and no provider has one ready.
-	Missing bool `json:"missing,omitempty"`
+	// Missing is set when the stage needs a model and no provider has one ready, or when it is
+	// a built-in no provider can run; Problem then says why (Blender was not found).
+	Missing bool   `json:"missing,omitempty"`
+	Problem string `json:"problem,omitempty"`
 	// Skipped stages are done by the model of an earlier stage, named by By: a hosted model
 	// that returns a textured mesh does the texture stage too (docs/decisions.md, 16).
 	Skipped bool   `json:"skipped,omitempty"`
@@ -38,23 +40,42 @@ type Pick struct {
 	NeedsViews []string `json:"needs_views,omitempty"`
 }
 
-// MissingError is a job that cannot run until models are installed for some stage types.
-type MissingError struct{ Uses []string }
+// MissingError is a job that cannot run until models are installed for some stage types, or
+// until a provider can run some built-in stage (Problems, by stage type).
+type MissingError struct {
+	Uses     []string
+	Problems map[string]string
+}
 
 func (e *MissingError) Error() string {
-	return fmt.Sprintf("no %s model is installed: install one on the Models screen or with `forja models install`",
-		strings.Join(e.Uses, ", "))
+	var parts, models []string
+	for _, use := range e.Uses {
+		if why, ok := e.Problems[use]; ok {
+			parts = append(parts, fmt.Sprintf("no provider can run %s: %s", use, why))
+		} else {
+			models = append(models, use)
+		}
+	}
+	if len(models) > 0 {
+		parts = append(parts, fmt.Sprintf(
+			"no %s model is installed: install one on the Models screen or with `forja models install`",
+			strings.Join(models, ", ")))
+	}
+	return strings.Join(parts, "; ")
 }
 
 func missingError(picks []Pick) error {
-	var uses []string
+	e := &MissingError{Problems: map[string]string{}}
 	for _, p := range picks {
 		if p.Missing && !p.Skipped {
-			uses = append(uses, p.Use)
+			e.Uses = append(e.Uses, p.Use)
+			if p.Problem != "" {
+				e.Problems[p.Use] = p.Problem
+			}
 		}
 	}
-	if len(uses) > 0 {
-		return &MissingError{Uses: uses}
+	if len(e.Uses) > 0 {
+		return e
 	}
 	return nil
 }
@@ -94,6 +115,37 @@ func (r *Runner) Resolve(ctx context.Context, project string, p *presets.Preset,
 		}
 	}
 	return picks, nil
+}
+
+// Unavailable says, for each optional stage of a preset that is off in project, why turning it
+// on would refuse the job: no provider runs it (a Blender stage where no Blender is found) or
+// no model for it is ready. Stages that could run are left out.
+func (r *Runner) Unavailable(ctx context.Context, project string, p *presets.Preset) (map[string]string, error) {
+	cfg, err := r.config(project)
+	if err != nil {
+		return nil, err
+	}
+	if po, ok := cfg.Presets[p.ID]; ok && len(po.Overrides) > 0 {
+		if p, err = p.WithOverrides(po.Overrides); err != nil {
+			return nil, err
+		}
+	}
+	out := map[string]string{}
+	for _, s := range p.Stages {
+		if s.Optional == nil || !s.Off {
+			continue
+		}
+		pick, _, err := r.pick(ctx, cfg, s, nil, nil)
+		if err != nil || !pick.Missing {
+			continue
+		}
+		if pick.Problem != "" {
+			out[s.ID] = pick.Problem
+		} else {
+			out[s.ID] = fmt.Sprintf("no %s model is installed", s.Use)
+		}
+	}
+	return out, nil
 }
 
 // resolve picks a provider and a model for every stage (docs/decisions.md, decisions 12 and
@@ -198,6 +250,7 @@ func (r *Runner) pick(ctx context.Context, cfg *config.Loaded, s presets.Stage, 
 	var firstErr error
 	var silent []string // providers that could not say what they run
 	listed := false     // a free provider lists the pinned model, ready or not
+	problem := ""       // why a provider cannot run the stage (a Blender stage without Blender)
 	for _, id := range ids {
 		p, _ := r.providers.Get(id)
 		pick, ok, has, err := r.on(ctx, cfg, base, id, views)
@@ -211,6 +264,8 @@ func (r *Runner) pick(ctx context.Context, cfg *config.Loaded, s presets.Stage, 
 		}
 		if ok {
 			opts = append(opts, pick)
+		} else if problem == "" {
+			problem = pick.Problem
 		}
 	}
 	paidOK := cfg.Routing.AllowPaidFallback || (base.Model != "" && !listed)
@@ -234,7 +289,7 @@ func (r *Runner) pick(ctx context.Context, cfg *config.Loaded, s presets.Stage, 
 			return base, nil, nil
 		}
 	}
-	base.Missing = true
+	base.Missing, base.Problem = true, problem
 	return base, nil, nil
 }
 
@@ -259,6 +314,7 @@ func (r *Runner) on(ctx context.Context, cfg *config.Loaded, base Pick, id strin
 		pick.NeedsViews = m.Lacks(views)
 		return pick, m.Ready(), true, nil
 	}
+	// Not every provider runs every built-in (a Blender stage needs Blender there).
 	if builtin(e, base.Use) {
 		return pick, true, false, nil
 	}
@@ -267,6 +323,7 @@ func (r *Runner) on(ctx context.Context, cfg *config.Loaded, base Pick, id strin
 		r.describe(cfg, &pick, m)
 		return pick, true, false, nil
 	}
+	pick.Problem = e.Unavailable[base.Use]
 	return pick, false, false, nil
 }
 

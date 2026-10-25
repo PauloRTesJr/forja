@@ -204,19 +204,29 @@ def hunyuan(monkeypatch, fake_torch):
         def __call__(self, mesh, image):
             assert all(i.mode == "RGBA" for i in image)
             log["images"] = len(image)
-            vmap, faces, uvs = xatlas.parametrize(mesh.vertices, mesh.faces)
-            mesh.vertices, mesh.faces = mesh.vertices[vmap], faces
+            mesh = sys.modules["hy3dgen.texgen.pipelines"].mesh_uv_wrap(mesh)  # as upstream does
             tex = Image.new("RGB", (self.config.texture_size,) * 2, (10, 200, 30))
             mat = trimesh.visual.texture.SimpleMaterial(image=tex)
-            mesh.visual = trimesh.visual.TextureVisuals(uv=uvs, image=tex, material=mat)
+            mesh.visual = trimesh.visual.TextureVisuals(uv=mesh.visual.uv, image=tex, material=mat)
             return mesh
+
+    def mesh_uv_wrap(mesh):
+        log["unwrapped"] = log.get("unwrapped", 0) + 1
+        vmap, faces, uvs = xatlas.parametrize(mesh.vertices, mesh.faces)
+        mesh.vertices, mesh.faces = mesh.vertices[vmap], faces
+        mesh.visual = trimesh.visual.TextureVisuals(uv=uvs)
+        return mesh
 
     class MeshRender:
         def __init__(self, default_resolution, texture_size):
             log["renders"].append((default_resolution, texture_size))
 
     install_module(
-        monkeypatch, "hy3dgen.texgen.pipelines", Hunyuan3DPaintPipeline=Pipeline, Hunyuan3DTexGenConfig=Config
+        monkeypatch,
+        "hy3dgen.texgen.pipelines",
+        Hunyuan3DPaintPipeline=Pipeline,
+        Hunyuan3DTexGenConfig=Config,
+        mesh_uv_wrap=mesh_uv_wrap,
     )
     install_module(monkeypatch, "hy3dgen.texgen.differentiable_renderer.mesh_render", MeshRender=MeshRender)
     from forja_hunyuan3d2 import Hunyuan3D2Paint
@@ -250,6 +260,25 @@ def test_hunyuan_paint_writes_pbr_glb(tmp_path, hunyuan):
     assert mat.roughnessFactor == pytest.approx(0.6) and mat.metallicFactor == pytest.approx(0.0)
     assert mat.baseColorTexture.size == (1024, 1024)
     assert log["renders"] == [(2048, 1024)]
+
+
+def test_hunyuan_paint_keeps_the_uvs_of_a_mesh_that_has_them(tmp_path, hunyuan):
+    adapter, log = hunyuan
+    adapter.run(ctx(tmp_path, StageType.TEXTURE, paint_inputs(tmp_path)))
+    assert log["unwrapped"] == 1  # a decimated mesh has none: upstream unwraps it
+    unwrapped = mesh_ops.unwrap(trimesh.creation.box((1.0, 1.0, 0.2)))
+    inputs = [
+        (mesh_ops.save(unwrapped, tmp_path / "uv.glb"), ArtifactKind.MESH_GLB),
+        paint_inputs(tmp_path)[1],
+    ]
+    out = mesh_ops.load(adapter.run(ctx(tmp_path, StageType.TEXTURE, inputs))[0].path)
+    assert log["unwrapped"] == 1
+    assert np.allclose(
+        np.sort(mesh_ops.uvs_of(out), axis=0), np.sort(mesh_ops.uvs_of(unwrapped), axis=0), atol=1e-6
+    )
+    adapter.load(Device.CUDA)  # loading again wraps upstream's unwrap once, not twice
+    adapter.run(ctx(tmp_path, StageType.TEXTURE, paint_inputs(tmp_path)))
+    assert log["unwrapped"] == 2
 
 
 def test_hunyuan_paint_reads_every_view(tmp_path, hunyuan):

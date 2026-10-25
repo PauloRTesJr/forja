@@ -337,7 +337,8 @@ export interface PresetStage {
   use: string
   model?: string
   params?: Record<string, unknown>
-  optional?: { label: string; help?: string; default: boolean }
+  /** `replaces`: the stage it stands in for while on (a quad remesh in place of decimation). */
+  optional?: { label: string; help?: string; default: boolean; replaces?: string }
 }
 
 /** Where one stage of a preset would run right now, and with which model. */
@@ -350,6 +351,8 @@ export interface Pick {
   /** Where it would run, for people: "This computer", "Studio PC", "fal.ai". */
   provider_label?: string
   missing?: boolean
+  /** Why no provider can run this built-in step (Blender was not found). */
+  problem?: string
   /** Done by the model of the stage named in `by` (a hosted model that returns a textured mesh). */
   skipped?: boolean
   by?: string
@@ -371,6 +374,8 @@ export interface Preset {
   plan: Pick[]
   ready: boolean
   error?: string
+  /** Why an optional step that is off could not run if switched on, by stage id. */
+  unavailable?: Record<string, string>
 }
 
 export interface License {

@@ -49,7 +49,10 @@ def test_stub_models_conform(name, tmp_path):
 
 @pytest.mark.parametrize("task", list(BUILTINS), ids=str)
 def test_builtin_stages_keep_the_contract_too(task, tmp_path):
-    assert_conforms(BUILTINS[task], work_dir=tmp_path)
+    # QuadriFlow makes a different mesh on each run for the same seed (see Remesh), so neither a
+    # second run nor one after a reload can match the first byte for byte.
+    skip = ("determinism", "reload") if task == StageType.MESH_REMESH else ()
+    assert_conforms(BUILTINS[task], work_dir=tmp_path, skip=skip)
 
 
 # --- the suite catches broken adapters ----------------------------------------------------

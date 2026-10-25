@@ -1,6 +1,6 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useEffectEvent, useRef, useState, type DragEvent } from 'react'
-import { Composer } from '../components/Composer'
+import { Composer, optionalOverrides } from '../components/Composer'
 import { Corners, DropSigil } from '../components/icons'
 import { Confirm, isPreparing, Preparing } from '../components/Prepare'
 import { ScreenHead } from '../components/ScreenHead'
@@ -65,7 +65,6 @@ export function Generate() {
   // A single image waiting for its other views, when the shape model reads them.
   const [draft, setDraft] = useState<Draft | null>(null)
   const current = presets.data?.find((p) => p.id === preset)
-  const optional = current?.stages.filter((s) => s.optional) ?? []
   const isOn = (stage: string, fallback: boolean): boolean => options[`${preset}.${stage}`] ?? fallback
   const blocked = current !== undefined && !current.ready
   // Once shown, setup stays until it is finished or skipped: its last step, the test run,
@@ -73,7 +72,7 @@ export function Generate() {
   const [setupOpen, setSetupOpen] = useState(false)
   if (blocked && !current?.error && !setupOpen) setSetupOpen(true)
 
-  const overrides = Object.fromEntries(optional.map((s) => [`${s.id}.enabled`, isOn(s.id, s.optional!.default)]))
+  const overrides = current ? optionalOverrides(current, isOn) : {}
   // What one image would take and cost as the recipe stands, before anything is queued. The
   // last answer stays while the next loads, so the line changes in place.
   const draftViews = draft ? SIDE_VIEWS.filter((v) => draft.views[v]) : []

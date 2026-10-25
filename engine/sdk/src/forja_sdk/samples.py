@@ -97,6 +97,8 @@ def inputs_for(task: StageType | str, folder: Path) -> list[StageInput] | None:
         StageType.MESH_LODS: lambda: [painted()],
         StageType.EXPORT: lambda: [painted()],
         StageType.RIG: lambda: [painted()],
+        StageType.MESH_REMESH: lambda: [mesh()],
+        StageType.MESH_UV_SMART: lambda: [mesh()],
     }
     try:
         recipe = recipes.get(StageType(task))

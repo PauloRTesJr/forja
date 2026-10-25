@@ -76,6 +76,30 @@ func must[T any](v T, err error) T {
 	return v
 }
 
+func TestBlenderSwitchesSayWhyTheyCannotRunAndRefuseTheJob(t *testing.T) {
+	h := newHarness(t)
+	img := h.image("chest.png")
+	r := h.cli("", "generate", img, "--preset", "hero-character", "--dry-run")
+	for _, want := range []string{
+		"Quad remesh with Blender (remesh.enabled)",
+		"remesh cannot be turned on now: Blender 4.2 or newer was not found",
+		"uv cannot be turned on now: Blender 4.2 or newer was not found",
+	} {
+		if !strings.Contains(r.out, want) {
+			t.Fatalf("dry run lacks %q:\n%s", want, r.out)
+		}
+	}
+	var plan api.PresetView
+	h.okJSON(&plan, "presets", "show", "hero-character")
+	if plan.Unavailable["remesh"] == "" || plan.Unavailable["match"] != "" {
+		t.Fatalf("unavailable %v", plan.Unavailable)
+	}
+	r = h.cli("", "generate", img, "--preset", "hero-character", "--with", "remesh")
+	if r.code == 0 || !strings.Contains(r.err, "no provider can run mesh.remesh: Blender 4.2 or newer was not found") {
+		t.Fatalf("exit %d: %s", r.code, r.err)
+	}
+}
+
 func TestADryRunShowsThePlanAndQueuesNothing(t *testing.T) {
 	h := newHarness(t)
 	img := h.image("chest.png")

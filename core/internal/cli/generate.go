@@ -304,6 +304,9 @@ func (a *app) showPlan(p *api.PresetView) {
 				state = "on"
 			}
 			optional[s.ID] = fmt.Sprintf("optional, %s by default", state)
+			if s.Optional.Replaces != "" {
+				optional[s.ID] += ", in place of " + s.Optional.Replaces
+			}
 		}
 	}
 	cost, currency := 0.0, ""
@@ -312,6 +315,8 @@ func (a *app) showPlan(p *api.PresetView) {
 		for _, pick := range p.Plan {
 			model, note := orDash(pick.ModelName, pick.Model), optional[pick.Stage]
 			switch {
+			case pick.Missing && pick.Problem != "":
+				model, note = "-", "cannot run: "+pick.Problem
 			case pick.Missing:
 				model, note = "none ready", "install one: forja models ls --all"
 			case pick.Skipped:
@@ -332,8 +337,14 @@ func (a *app) showPlan(p *api.PresetView) {
 		}
 	})
 	for _, s := range p.Stages {
-		if s.Optional != nil && s.Optional.Help != "" {
+		if s.Optional == nil {
+			continue
+		}
+		if s.Optional.Help != "" {
 			a.printf("\n%s (%s.enabled): %s\n", s.Optional.Label, s.ID, s.Optional.Help)
+		}
+		if why := p.Unavailable[s.ID]; why != "" {
+			a.printf("%s cannot be turned on now: %s\n", s.ID, why)
 		}
 	}
 	if cost > 0 {

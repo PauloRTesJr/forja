@@ -18,9 +18,11 @@ import (
 // Entry is one provider's answer.
 type Entry struct {
 	Stages map[string]string `json:"stages"`
-	Models []engineapi.Model `json:"models"`
-	System map[string]any    `json:"system,omitempty"`
-	At     time.Time         `json:"at"`
+	// Unavailable is why the provider runs no built-in of a stage type it knows.
+	Unavailable map[string]string `json:"unavailable,omitempty"`
+	Models      []engineapi.Model `json:"models"`
+	System      map[string]any    `json:"system,omitempty"`
+	At          time.Time         `json:"at"`
 	// Live marks answers given in this session. Only those may key the stage cache
 	// (docs/decisions.md, decision 11); remembered ones only describe what is installed.
 	Live bool `json:"-"`
@@ -91,7 +93,8 @@ func (c *Catalog) Ask(ctx context.Context, id string) (*Entry, error) {
 	if err != nil {
 		return nil, fmt.Errorf("provider %s did not list its models: %w", id, err)
 	}
-	e := &Entry{Stages: info.Stages, Models: models, System: info.System, At: time.Now(), Live: true}
+	e := &Entry{Stages: info.Stages, Unavailable: info.Unavailable, Models: models, System: info.System,
+		At: time.Now(), Live: true}
 	c.mu.Lock()
 	prev := c.last[id]
 	c.last[id] = e

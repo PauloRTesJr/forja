@@ -79,13 +79,13 @@
           "separate license above 1M monthly active users"
         ]
       },
-      "adapter_version": "1",
+      "adapter_version": "2",
       "vram_gb": 12.5,
       "disk_gb": 23.1,
       "rank": 10,
       "stub": false,
       "manifest": "engine/src/forja_engine/manifests/hunyuan3d2-paint.yaml",
-      "sha256": "e45dcde467df046afdb0f03b4875afa60f073bdd84ee651c669c87d493eaa1c9"
+      "sha256": "21ff9fe4077f6fd937cb177e1f328051bfb4217f2361cb7c2aa869d806655e82"
     },
     {
       "id": "skintokens",
