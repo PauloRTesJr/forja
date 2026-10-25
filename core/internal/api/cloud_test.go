@@ -237,3 +237,22 @@ func TestARunPodPodIsAPaidEngine(t *testing.T) {
 		t.Fatalf("saved %+v", pc)
 	}
 }
+
+func TestARunPodPodWithoutARateIsPricedByTheTable(t *testing.T) {
+	secrets.InMemory()
+	pod := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(engineapi.Info{Version: "0.1.0", APIVersion: engineapi.APIVersion})
+	}))
+	defer pod.Close()
+	ts, _, _ := server(t)
+	body := map[string]any{"kind": "engine", "vendor": "runpod", "url": pod.URL, "token": "pod-fake-token"}
+	var added AddedProvider
+	if code := call(t, ts, "POST", "/v1/providers", body, &added); code != 201 {
+		t.Fatalf("add %d %+v", code, added)
+	}
+	cfg, _ := config.Load("", nil)
+	// $0.34 an hour from the built-in table: a rented pod never counts as free.
+	if rate, entry := cfg.Rate(cfg.Providers[0].ID); entry != "runpod-pod-4090" || rate < 9.4e-5 || rate > 9.5e-5 {
+		t.Fatalf("rate %v from %q", rate, entry)
+	}
+}

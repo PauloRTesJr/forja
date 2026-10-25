@@ -258,6 +258,11 @@ func (s *Server) providerAdd(w http.ResponseWriter, r *http.Request) {
 	pc := config.Provider{ID: id, Label: label, Kind: string(provider.KindEngine), URL: u,
 		Secret: providers.SecretName(id), Fingerprint: fingerprint,
 		Vendor: body.Vendor, Paid: body.Vendor != "", PriceUSDPerSecond: math.Round(body.PricePerHour/3600*1e10) / 1e10}
+	if pc.Vendor == runpod.Vendor && pc.PriceUSDPerSecond == 0 {
+		// No rate given: the price table's pod entry, which the user can edit, so a rented pod
+		// never counts as free against the spending limits.
+		pc.Price = "runpod-pod-4090"
+	}
 	if err := secrets.Set(pc.Secret, token); err != nil {
 		problem(w, 500, "could not store the token in "+secrets.Store()+": "+err.Error())
 		return
