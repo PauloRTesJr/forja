@@ -1,4 +1,4 @@
-# syntax=docker/dockerfile:1.7
+# syntax=docker/dockerfile:1.7@sha256:a57df69d0ea827fb7266491f2813635de6f17269be881f696fbfdf2d83dda33e
 #
 # forja-engine, one image per CUDA line, with no weights inside. Build from the repository root:
 #
@@ -15,13 +15,20 @@
 
 ARG CUDA=cu124
 
-FROM ubuntu:22.04 AS base-cpu
+# Base images are pinned by digest (the multi-arch index), so a retagged image cannot change
+# what is built; the tag beside each says what it is. To move one, take the new tag's digest
+# from `docker buildx imagetools inspect <image:tag>`.
+
+# ubuntu:22.04
+FROM ubuntu@sha256:0a9887931b0e38af2e3487ed39e29436b0535c4f3f52e57745baaf79d1898956 AS base-cpu
 
 # Families compile CUDA extensions against torch when they install (custom_rasterizer, diso),
 # which needs nvcc: the devel image, not the runtime one.
-FROM nvidia/cuda:12.4.1-devel-ubuntu22.04 AS base-cu124
+# nvidia/cuda:12.4.1-devel-ubuntu22.04
+FROM nvidia/cuda@sha256:da6791294b0b04d7e65d87b7451d6f2390b4d36225ab0701ee7dfec5769829f5 AS base-cu124
 
-FROM ghcr.io/astral-sh/uv:0.12.22 AS uv
+# ghcr.io/astral-sh/uv:0.12.22
+FROM ghcr.io/astral-sh/uv@sha256:f513a91fc62fe7c17567eee97230dd198e43edb8a9fbecca843714a4358fe1bc AS uv
 
 FROM base-${CUDA}
 ARG VERSION=0.0.0-dev

@@ -21,6 +21,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -42,6 +43,13 @@ var VolumeEndpoint = func(datacenter string) string {
 	return "https://s3api-" + strings.ToLower(datacenter) + ".runpod.io"
 }
 
+// datacenterID is how RunPod names a datacenter (EU-RO-1, EUR-IS-1, US-KS-2, CA-MTL-1). It
+// becomes part of the S3 host the volume key is sent to, so nothing else may.
+var datacenterID = regexp.MustCompile(`^[A-Z]{2,3}-[A-Z]{2,4}-[0-9]{1,2}$`)
+
+// ValidDatacenter reports whether dc, in any case, is a RunPod datacenter id.
+func ValidDatacenter(dc string) bool { return datacenterID.MatchString(strings.ToUpper(dc)) }
+
 // InlineLimit keeps a job under RunPod's 10 MB payload cap once base64 has grown it by a third.
 const InlineLimit = 7 << 20
 
@@ -58,6 +66,8 @@ type Provider struct {
 	price             float64
 	st                *store.Store
 	vol               *s3.Client
+	// broken says why the provider cannot be used as configured (a volume's datacenter).
+	broken error
 	// API is RunPod's base URL; tests point it at a fake.
 	API  string
 	http *http.Client
@@ -78,7 +88,11 @@ func New(id, endpointID, key string, usdPerSecond float64, vol *Volume, st *stor
 	p := &Provider{id: id, endpoint: endpointID, key: key, price: usdPerSecond, st: st, API: APIBase,
 		http: &http.Client{Transport: &http.Transport{MaxIdleConnsPerHost: 4, IdleConnTimeout: 90 * time.Second}},
 		Poll: 2 * time.Second}
-	if vol != nil && vol.ID != "" {
+	switch {
+	case vol == nil || vol.ID == "":
+	case !ValidDatacenter(vol.Datacenter):
+		p.broken = fmt.Errorf("network volume %s: %q is not a RunPod datacenter such as EU-RO-1", vol.ID, vol.Datacenter)
+	default:
 		p.vol = &s3.Client{Endpoint: VolumeEndpoint(vol.Datacenter), Region: strings.ToUpper(vol.Datacenter),
 			Bucket: vol.ID, AccessKey: vol.AccessKey, Secret: vol.Secret, HTTP: p.http}
 	}
@@ -205,6 +219,9 @@ type Workers struct {
 // Check asks RunPod about the endpoint, which costs nothing and wakes no worker, and tries the
 // volume's S3 key when there is one.
 func (p *Provider) Check(ctx context.Context) (*Workers, error) {
+	if p.broken != nil {
+		return nil, p.broken
+	}
 	var h struct {
 		Jobs struct {
 			InQueue int `json:"inQueue"`
@@ -445,6 +462,9 @@ func finished(status string) bool {
 // out. A job that does not end here is cancelled on RunPod, whether ctx ended or following it
 // failed: left alone, it would run on, and bill, until RunPod's own timeout.
 func (p *Provider) job(ctx context.Context, input any, events chan<- engineapi.Event, out any) error {
+	if p.broken != nil {
+		return p.broken
+	}
 	var sub jobStatus
 	if err := p.call(ctx, http.MethodPost, "/run", map[string]any{"input": input}, &sub); err != nil {
 		return err

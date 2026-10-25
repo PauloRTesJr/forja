@@ -371,6 +371,36 @@ func TestAFailedJobSaysWhy(t *testing.T) {
 	}
 }
 
+// The datacenter names the host the volume's S3 key goes to, so a config edited by hand cannot
+// send it anywhere else.
+func TestAVolumeInNoRunPodDatacenterIsRefused(t *testing.T) {
+	f, _ := newFake(t)
+	old := VolumeEndpoint
+	VolumeEndpoint = func(dc string) string {
+		t.Errorf("asked for the S3 host of %q", dc)
+		return old(dc)
+	}
+	t.Cleanup(func() { VolumeEndpoint = old })
+	st, img := newStore(t)
+	for _, dc := range []string{"evil.example/x", "eu-ro-1.attacker.example", "", "EU-RO-1?x=1"} {
+		p := New("rp", "ep-fake", "rp-fake-key", 0, &Volume{ID: "vol-fake", Datacenter: dc, AccessKey: "user_fake", Secret: "x"}, st)
+		if err := p.Health(context.Background()); err == nil || !strings.Contains(err.Error(), "not a RunPod datacenter") {
+			t.Fatalf("%q: health %v", dc, err)
+		}
+		if _, _, err := collect(t, p, shapeRun(img)); err == nil || !strings.Contains(err.Error(), "not a RunPod datacenter") {
+			t.Fatalf("%q: run %v", dc, err)
+		}
+	}
+	if len(f.jobs) != 0 {
+		t.Fatalf("%d jobs sent", len(f.jobs))
+	}
+	for _, dc := range []string{"EU-RO-1", "eur-is-1", "US-KS-2", "CA-MTL-1"} {
+		if !ValidDatacenter(dc) {
+			t.Fatalf("%q is a RunPod datacenter", dc)
+		}
+	}
+}
+
 func TestHealthNamesAWrongKeyOrEndpoint(t *testing.T) {
 	newFake(t)
 	st, _ := newStore(t)

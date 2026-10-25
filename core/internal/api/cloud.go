@@ -79,6 +79,9 @@ func (s *Server) checkCloud(ctx context.Context, b cloudBody) (*cloud, error) {
 			if region == "" || id == "" || secret == "" {
 				return nil, errors.New("a network volume needs its datacenter and an S3 API key (access key and secret)")
 			}
+			if !runpod.ValidDatacenter(region) {
+				return nil, fmt.Errorf("%q is not a RunPod datacenter: give the volume's, such as EU-RO-1", b.Region)
+			}
 			vol = &runpod.Volume{ID: v, Datacenter: region, AccessKey: id, Secret: secret}
 			c.pc.Volume, c.pc.Region, c.volumeKey = v, region, id+":"+secret
 		}
