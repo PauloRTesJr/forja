@@ -21,7 +21,7 @@ func TestEachKindBuildsItsProvider(t *testing.T) {
 		{config.Provider{ID: "pod", Kind: "engine", Vendor: "runpod", URL: "https://203.0.113.7:7861", Paid: true}, provider.KindEngine, true},
 		{config.Provider{ID: "rp", Kind: "serverless", Vendor: "runpod", EndpointID: "ep"}, provider.KindServerless, true},
 		{config.Provider{ID: "modal", Kind: "serverless", Vendor: "modal", URL: "https://x.modal.run"}, provider.KindServerless, true},
-		{config.Provider{ID: "comfy", Kind: "comfyui", URL: "http://192.168.1.30:8188"}, provider.KindComfyUI, false},
+		{config.Provider{ID: "comfy", Kind: "comfyui", URL: "http://192.0.2.30:8188"}, provider.KindComfyUI, false},
 	} {
 		p, err := BuildWithKey(tc.pc, nil, "fake-key")
 		if err != nil {

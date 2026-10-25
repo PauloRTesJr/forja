@@ -159,7 +159,7 @@ func gatewayURL(addr string) (string, error) {
 	return u.Scheme + "://" + u.Host, nil
 }
 
-// comfyURL turns "192.168.1.30" into ComfyUI's usual http://192.168.1.30:8188. A ComfyUI that
+// comfyURL turns "192.0.2.30" into ComfyUI's usual http://192.0.2.30:8188. A ComfyUI that
 // takes a token needs https, unless it is on this computer: plain http would show the token
 // to anyone on the way.
 func comfyURL(addr string, withToken bool) (string, error) {
@@ -172,7 +172,7 @@ func comfyURL(addr string, withToken bool) (string, error) {
 	}
 	u, err := url.Parse(addr)
 	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
-		return "", fmt.Errorf("%q is not an address like 192.168.1.30:8188", addr)
+		return "", fmt.Errorf("%q is not an address like 192.0.2.30:8188", addr)
 	}
 	if withToken && u.Scheme == "http" && !isLoopback(u.Hostname()) {
 		return "", fmt.Errorf("Forja sends an access token only over https: give the proxy's https address, "+

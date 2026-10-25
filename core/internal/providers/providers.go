@@ -197,7 +197,7 @@ func Kinds() []Kind {
 			Label:       "ComfyUI",
 			Description: "Runs stages as your own ComfyUI workflows, wherever ComfyUI runs. Export each with Export (API) and put {{image}}, {{mesh}}, {{seed}} or {{param:name}} where Forja's inputs go.",
 			Fields: []Field{
-				{Key: "url", Label: "Address", Type: "url", Placeholder: "http://192.168.1.30:8188"},
+				{Key: "url", Label: "Address", Type: "url", Placeholder: "http://192.0.2.30:8188"},
 				{Key: "workflows", Label: "Workflows", Type: "workflows",
 					Help: "One API-format workflow per stage it does: background removal, shape or texture. Forja keeps a copy."},
 				{Key: "token", Label: "Access token", Type: "secret", Optional: true,

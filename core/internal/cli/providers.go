@@ -130,7 +130,7 @@ func (a *app) providersCmd() *cobra.Command {
 			"Before the address, the kind of provider adds a rented GPU or a ComfyUI instead:\n" + vendorHelp() +
 			"For example:\n" +
 			"  forja providers add runpod abc123xyz789 --price 0.00031 < runpod-key.txt\n" +
-			"  forja providers add comfyui 192.168.1.30:8188 --workflow shape=hunyuan-shape.json\n" +
+			"  forja providers add comfyui 192.0.2.30:8188 --workflow shape=hunyuan-shape.json\n" +
 			"Rented GPUs are paid: stages use them when pinned (forja models pin), or when\n" +
 			"routing.allow_paid_fallback is on.",
 		Args: cobra.RangeArgs(1, 2),
