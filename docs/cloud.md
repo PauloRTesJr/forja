@@ -103,7 +103,7 @@ A serverless endpoint runs the engine behind RunPod's job queue. It scales to ze
 
    | Variable | What it does |
    |---|---|
-   | `FORJA_DATA_DIR` | Set it to `/runpod-volume/forja`, so environments, weights and the artifact store live on the volume and outlive workers. The engine image itself sets `/data`, which goes away with each worker |
+   | `FORJA_DATA_DIR` | Not needed with a network volume: the worker keeps environments, weights and the artifact store in `/runpod-volume/forja`, where the core's S3 transfers look, whatever this says. Without a volume it is where they go (the image sets `/data`, which goes away with each worker) |
    | `FORJA_MODELS` | Models each worker needs, comma separated; installed on the volume once, before the worker takes its first job |
    | `FORJA_ENGINE_ARGS` | More engine flags, such as `--fit-mode quality-first` on a 24 GB GPU or larger. A baked image sets this variable itself, to `--envs /opt/forja/baked/envs --models /opt/forja/baked/models`: setting it on the endpoint replaces that, so repeat those flags in your value |
 
@@ -144,7 +144,7 @@ A pod is a rented GPU that runs, and bills, until you stop it. It runs the plain
    forja providers add runpod-pod 192.0.2.10:40123 --price-per-hour 0.34 < pod-token.txt
    ```
 
-Forja pins the pod's certificate as it does any engine's ([check it](#add-it-and-check-its-certificate)). The price per hour is counted by the second, for the time the pod spends on your runs. A pod added without a price has none: give it one, or set `price = "runpod-pod-4090"` in its `[[providers]]` entry to use the price table's pod entry. Stop the pod in the RunPod console when you are done; Forja does not stop it.
+Forja pins the pod's certificate as it does any engine's ([check it](#add-it-and-check-its-certificate)). The price per hour is counted by the second, for the time the pod spends on your runs. A pod added without a price is priced by the price table's `runpod-pod-4090` entry, $0.34 an hour, which you can edit; Forja writes `price = "runpod-pod-4090"` in its `[[providers]]` entry. Stop the pod in the RunPod console when you are done; Forja does not stop it.
 
 ## Modal
 

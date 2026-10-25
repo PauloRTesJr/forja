@@ -104,10 +104,14 @@ def test_the_runpod_handler_reports_errors_as_items(monkeypatch, engine):
 
 
 def test_the_runpod_worker_keeps_its_data_on_the_network_volume(monkeypatch, tmp_path):
-    monkeypatch.delenv("FORJA_DATA_DIR", raising=False)
+    # The engine image sets FORJA_DATA_DIR=/data; the volume must still win, where the core's
+    # S3 transfers look for the store.
+    monkeypatch.setenv("FORJA_DATA_DIR", "/data")
     monkeypatch.setattr(runpod, "VOLUME", tmp_path)
     assert runpod.data_dir() == tmp_path / "forja"
     monkeypatch.setattr(runpod, "VOLUME", tmp_path / "none")
+    assert runpod.data_dir() == Path("/data")
+    monkeypatch.delenv("FORJA_DATA_DIR")
     assert runpod.data_dir() == Path("/data")
 
 

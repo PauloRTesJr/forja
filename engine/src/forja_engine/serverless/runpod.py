@@ -26,10 +26,14 @@ _worker: Worker | None = None
 
 
 def data_dir() -> Path:
-    """Envs, weights and the store: on the network volume when there is one, so they outlive workers."""
-    if env := os.environ.get("FORJA_DATA_DIR"):
-        return Path(env)
-    return VOLUME / "forja" if VOLUME.is_dir() else Path("/data")
+    """Envs, weights and the store: on the network volume when there is one, so they outlive workers.
+
+    The volume wins over FORJA_DATA_DIR, which the engine image always sets to /data: the core
+    moves artifacts through the volume's S3 API at forja/store/objects/ and must find them there.
+    """
+    if VOLUME.is_dir():
+        return VOLUME / "forja"
+    return Path(os.environ.get("FORJA_DATA_DIR") or "/data")
 
 
 def worker() -> Worker:
