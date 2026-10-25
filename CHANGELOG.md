@@ -53,6 +53,8 @@ App, core and engine share one version.
 - engine: quad remesh and Smart UV Project stages through Blender
 - engine: Hunyuan3D-2 Paint keeps the UVs a mesh brings
 - quad remesh and Smart UV Project switches for environment and hero presets
+- install what a blocked optional step needs, beside its switch
+- simplify instead when QuadriFlow cannot remesh a shape, and say so
 
 ### Fixes
 
@@ -90,6 +92,9 @@ App, core and engine share one version.
 - engine: a model package can neither replace a model nor name a path outside its folder
 - check a RunPod volume's datacenter, and pin the engine images' bases by digest
 - security: a pod's engine token needs 16 characters, as the Modal gateway's does
+- engine: type-check the Blender lookup on every OS, and skip its stages' contract without Blender
+- engine: merge sliver edges before QuadriFlow so dense shapes remesh
+- engine: treat a failed QuadriFlow solve as a refusal, not a crash
 
 ### Performance
 
@@ -98,6 +103,7 @@ App, core and engine share one version.
 ### Refactoring
 
 - core: list the API's routes and export its response types
+- **Breaking:** remove the stage cache so every job runs every stage
 
 ### Documentation
 
@@ -144,6 +150,10 @@ App, core and engine share one version.
 - engine: wait for the core to list the installed model in the M7 gate
 - engine: reject model manifests without license metadata
 - generate a GLB end to end with the stub models
+
+### Other
+
+- use the documentation address range for ComfyUI examples
 
 ## 0.1.0 (2026-10-23)
 
