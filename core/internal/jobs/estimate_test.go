@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"forja/internal/engineapi"
 	"forja/internal/provider"
 )
 
@@ -66,6 +67,27 @@ func TestAnEstimatePricesTimeOnAProviderBilledByTheSecond(t *testing.T) {
 	for _, s := range est.Stages {
 		if s.Stage == "shape" && (s.Measured != "elsewhere" || math.Abs(s.CostUSD-0.031) > 1e-9) {
 			t.Fatalf("shape %+v", s)
+		}
+	}
+}
+
+func TestARentedEngineStampingItsRateOnItsModelsIsNotChargedTwice(t *testing.T) {
+	r, _, _, st, _ := setup(t)
+	cloud := newEngine(st, "cloud", provider.KindServerless, true)
+	cloud.with(func(e *engine) {
+		e.shape.Price = &engineapi.Price{Amount: 0.00031, Unit: "second", Currency: "USD"}
+	})
+	r.providers.Add(cloud)
+	ctx := context.Background()
+	project := withProject(t, "[routing.stages]\nshape = \"cloud\"\n"+rented)
+	_ = r.db.RecordTiming(ctx, "shape", "stub-shape", LocalProvider, 100)
+	est, err := r.Estimate(ctx, EstimateRequest{Preset: "draft", Project: project})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range est.Stages {
+		if s.Stage == "shape" && math.Abs(s.CostUSD-0.031) > 1e-9 {
+			t.Fatalf("100 s at $0.00031/s should cost $0.031, got %+v", s)
 		}
 	}
 }

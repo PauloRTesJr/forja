@@ -53,7 +53,9 @@ func (r *Runner) chargeOf(ctx context.Context, cfg *config.Loaded, p Pick) charg
 	case p.Price.Unit == engineapi.PerCall:
 		c.PerCall = p.Price.Amount
 	case p.Price.Unit == config.PerSecond || p.Price.Unit == config.PerHour:
-		c.Rate += config.Price{USD: p.Price.Amount, Per: p.Price.Unit}.PerSecondUSD()
+		// A price by time is the provider's time: rented engines stamp their models with their
+		// own rate, so it replaces the provider's rate instead of adding to it.
+		c.Rate = config.Price{USD: p.Price.Amount, Per: p.Price.Unit}.PerSecondUSD()
 	default:
 		c.Unpriced = true
 	}
