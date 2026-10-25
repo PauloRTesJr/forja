@@ -191,7 +191,9 @@ def fetch_verified(url: str, sha256: str, cache: Path, log: Log) -> Path:
 
 def extract_tarball(archive: Path, dest: Path) -> Path:
     """Extract a GitHub codeload tarball, dropping its single top-level folder."""
-    if dest.is_dir() and (dest / ".forja-extracted").is_file():
+    marker = dest / ".forja-extracted"
+    # A marker beside nothing else means the source was cleaned away since: extract it again.
+    if marker.is_file() and marker.read_text() == archive.name and any(p != marker for p in dest.iterdir()):
         return dest
     tmp = dest.with_name(dest.name + ".tmp")
     shutil.rmtree(tmp, ignore_errors=True)
@@ -203,7 +205,7 @@ def extract_tarball(archive: Path, dest: Path) -> Path:
     shutil.rmtree(dest, ignore_errors=True)
     shutil.move(str(root), dest)
     shutil.rmtree(tmp, ignore_errors=True)
-    (dest / ".forja-extracted").write_text(archive.name)
+    marker.write_text(archive.name)
     return dest
 
 
@@ -285,11 +287,12 @@ class Installer:
             )
         started = time.monotonic()
         build_env = dict(fam.env)
+        builds = fam.builds()
         env_dir = self.envs_dir / fam.name
         python = families.interpreter(env_dir)
 
         def checks() -> None:
-            if fam.build and (backend := fam.torch_backend.get(lane, "")).startswith("cu"):
+            if builds and (backend := fam.torch_backend.get(lane, "")).startswith("cu"):
                 try:
                     build_env.update(toolchain.build_env(backend, self.log))
                 except toolchain.ToolchainError as e:
@@ -302,7 +305,7 @@ class Installer:
             self.upstream(fam, env_dir, python)
 
         def build() -> None:
-            for spec in fam.build:
+            for spec in builds:
                 target = spec.replace("{upstream}", str(env_dir / "upstream"))
                 _run(
                     [uv_binary(), "pip", "install", "--python", python, "--no-build-isolation", target],
@@ -320,7 +323,7 @@ class Installer:
         self._step("checks", checks)
         self._step("environment", environment)
         self._step("upstream", upstream if fam.upstream else None)
-        self._step("build", build if fam.build else None)
+        self._step("build", build if builds else None)
         self._step("weights", fetch if weights and manifest.weights else None)
         self._step("smoke", smoke)
         self._record(env_dir, manifest, lane)

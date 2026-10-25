@@ -63,6 +63,19 @@ class Family:
     def requirements(self, lane: str) -> Path:
         return self.root / "requirements" / f"{lane}.txt"
 
+    def builds(self, environment: dict[str, str] | None = None) -> tuple[str, ...]:
+        """The build entries for this machine: an entry may end in an environment marker
+        ("flash-attn==2.7.4 ; sys_platform == 'linux'") when it exists for some OSes only.
+        `environment` overrides marker variables, as for another machine."""
+        from packaging.markers import Marker
+
+        out = []
+        for spec in self.build:
+            _, sep, marker = spec.partition(";")
+            if not sep or Marker(marker.strip()).evaluate(environment):
+                out.append(spec)
+        return tuple(out)
+
 
 def load(name: str) -> Family:
     root = families_dir() / name

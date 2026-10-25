@@ -1,0 +1,19 @@
+# UniRig (SIGGRAPH 2025), VAST-AI-Research: a skeleton for any mesh, then skin weights for it.
+# MIT; its tree also carries the Michelangelo shape encoder under GPL-3.0. Fetched at install
+# time, never committed here.
+name: unirig
+python: "3.11"
+lanes: [cuda]
+torch_backend: { cuda: cu124 }
+upstream:
+  url: https://codeload.github.com/VAST-AI-Research/UniRig/tar.gz/6793c6640ff01c8fb389f3993434124bb43d2933
+  sha256: ebdda5907b520b6ccfa0524f5050c7141475d203289052e9c39024fae039c1a1
+  license: MIT (bundles Michelangelo, GPL-3.0)
+  pythonpath: ["."]
+# flash-attn has Linux wheels only (its build fetches the one for this torch). Elsewhere the
+# adapter runs the same attention on PyTorch's kernels (forja_engine/flash_compat.py).
+build:
+  - "flash-attn==2.7.4.post1 ; sys_platform == 'linux'"
+# Upstream's package is named "src"; importing its model and system modules proves spconv,
+# torch-scatter, torch-cluster and flash-attn (or the stand-ins) all load.
+smoke: "import torch, spconv.pytorch, torch_scatter, torch_cluster, forja_engine.flash_compat as f; f.install(); import src.model.parse, src.system.parse"

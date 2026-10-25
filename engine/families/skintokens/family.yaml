@@ -1,0 +1,17 @@
+# SkinTokens / TokenRig (MIT), VAST-AI-Research: UniRig's successor, skeleton and skin weights
+# as one autoregressive sequence. Fetched at install time, never committed here.
+name: skintokens
+python: "3.11"
+lanes: [cuda]
+# Upstream's tested build: torch 2.7.0 on CUDA 12.8 (NVIDIA driver 570 or newer).
+torch_backend: { cuda: cu128 }
+upstream:
+  url: https://codeload.github.com/VAST-AI-Research/SkinTokens/tar.gz/273b691d35989d71cd17ff2895fdc735097b92d1
+  sha256: f886ce830f8f6ed5a3eabebb9399244812ac17a44d5b51fe8853c381a214e334
+  license: MIT
+  pythonpath: ["."]
+# flash-attn has Linux wheels only (its build fetches the one for this torch). Elsewhere the
+# adapter runs the same attention on PyTorch's kernels (forja_engine/flash_compat.py).
+build:
+  - "flash-attn==2.8.3 ; sys_platform == 'linux'"
+smoke: "import torch, forja_engine.flash_compat as f; f.install(); import src.model.tokenrig, src.data.dataset"

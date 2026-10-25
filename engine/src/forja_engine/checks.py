@@ -341,7 +341,7 @@ def for_models(manifests: list[Manifest], models_dir: Path, lane: str | None = N
     if lane == "cuda":
         on_cuda = [m for m in here if m.id in cuda] or here
         out.append(check_driver(on_cuda, cuda or {"": "cu124"}))
-    builders = [m for m in here if m.id in cuda and fams[m.family].build]
+    builders = [m for m in here if m.id in cuda and fams[m.family].builds()]
     if builders:
         want = max(toolchain.torch_cuda(cuda[m.id]) for m in builders)
         out.append(check_cuda(builders, want))

@@ -90,13 +90,22 @@ def template(mesh: trimesh.Trimesh) -> Skeleton:
     # How far the hands reach sideways, in heights: about 0.3 hanging down, 1.0 in a T-pose.
     spread = float(np.clip((2 * half_span - 0.3) / 0.7, 0.0, 1.0))
     names, parents, heads = [], [], []
+    # Hanging arms are the outermost parts of a figure: the hands sit just inside its width,
+    # a little above the lowest point out there (the fingertips).
+    hang = float(np.clip(half_span - 0.03, 0.12, 0.27))
+    v = np.asarray(mesh.vertices, dtype=np.float64)
+    outer = np.abs(v[:, 0] - cx) > 0.8 * half_span * height
+    tips = float((v[outer, 1].min() - lo[1]) / height) if outer.any() else 0.49
+    hand_y = float(np.clip(tips + 0.08, 0.35, 0.75))
     for name, parent, x, y, z in TEMPLATE:
         if name.endswith(("LowerArm", "Hand")):
             sign = 1.0 if name.startswith("Left") else -1.0
+            reach = hang if name.endswith("Hand") else (0.10 + hang) / 2
+            down = hand_y if name.endswith("Hand") else (0.81 + hand_y) / 2
             hand = max(half_span - 0.05, 0.27)
-            straight = sign * (hand if name.endswith("Hand") else (0.10 + hand) / 2)
-            x = (1 - spread) * x + spread * straight
-            y = (1 - spread) * y + spread * 0.81
+            straight = hand if name.endswith("Hand") else (0.10 + hand) / 2
+            x = sign * ((1 - spread) * reach + spread * straight)
+            y = (1 - spread) * down + spread * 0.81
         names.append(name)
         parents.append(names.index(parent) if parent else -1)
         heads.append((cx + x * height, lo[1] + y * height, cz + z * height))
@@ -115,13 +124,17 @@ def chain(mesh: trimesh.Trimesh, bones: int = 4) -> Skeleton:
 
 
 def _segments(skeleton: Skeleton) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.int64]]:
-    """Each bone as a segment from its joint to each child; a leaf as a point."""
+    """Each bone as a segment from its joint to each child. A leaf (a hand, the head) reaches
+    on past its joint, half as far again as its parent bone, as the body part it moves does."""
+    h = skeleton.heads
     starts, ends, owners = [], [], []
     for j in range(len(skeleton)):
         kids = skeleton.children(j)
-        for c in kids or [j]:
-            starts.append(skeleton.heads[j])
-            ends.append(skeleton.heads[c])
+        p = skeleton.parents[j]
+        tips = [h[c] for c in kids] or [h[j] + 0.5 * (h[j] - h[p]) if p >= 0 else h[j]]
+        for tip in tips:
+            starts.append(h[j])
+            ends.append(tip)
             owners.append(j)
     return np.array(starts), np.array(ends), np.array(owners)
 
