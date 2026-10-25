@@ -3349,3 +3349,34 @@ button.view-slot:disabled {
   font-size: 15px;
   font-style: italic;
 }
+
+/* Adding a cloud GPU or ComfyUI: a workflow per stage type, and what trying the settings found. */
+.workflow-picks {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.workflow-pick {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.workflow-pick > strong {
+  flex: none;
+  width: 150px;
+  font-weight: 500;
+}
+.workflow-pick > .mono {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.probe {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  animation: enter-up var(--dur-2) var(--ease-out) both;
+}

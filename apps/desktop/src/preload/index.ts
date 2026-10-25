@@ -19,6 +19,8 @@ const bridge = {
   pickImages: (): Promise<string[]> => ipcRenderer.invoke('dialog:pickImages'),
   /** Asks for a folder, such as where to export several assets. */
   pickFolder: (): Promise<string | null> => ipcRenderer.invoke('dialog:pickFolder'),
+  /** Asks for one file of a type, such as a ComfyUI workflow (`label`, `['json']`). */
+  pickFile: (label: string, extensions: string[]): Promise<string | null> => ipcRenderer.invoke('dialog:pickFile', label, extensions),
   /** Asks where to save one file of a format, suggesting `name` plus its extension. */
   pickSavePath: (name: string, ext: string, label: string): Promise<string | null> =>
     ipcRenderer.invoke('dialog:saveFile', name, ext, label),

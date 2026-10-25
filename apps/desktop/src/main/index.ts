@@ -65,6 +65,13 @@ ipcMain.handle('dialog:pickFolder', async () => {
   const res = await dialog.showOpenDialog(win!, { properties: ['openDirectory', 'createDirectory'] })
   return res.canceled ? null : res.filePaths[0]
 })
+ipcMain.handle('dialog:pickFile', async (_e, label: string, extensions: string[]) => {
+  const res = await dialog.showOpenDialog(win!, {
+    properties: ['openFile'],
+    filters: [{ name: String(label), extensions: (Array.isArray(extensions) ? extensions : []).map(String) }],
+  })
+  return res.canceled ? null : res.filePaths[0]
+})
 ipcMain.handle('dialog:saveFile', async (_e, name: string, ext: string, label: string) => {
   const extension = String(ext).replace(/^\./, '')
   const res = await dialog.showSaveDialog(win!, {
