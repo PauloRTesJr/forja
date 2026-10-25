@@ -105,7 +105,14 @@ func start(opts Options, base *config.Loaded, dataDir string) (*Core, error) {
 
 	hub := events.NewHub()
 	cat := catalog.New(providers, db,
-		func(id string) bool { return id == jobs.LocalProvider && !eng.Running() },
+		func(id string) bool {
+			if id == jobs.LocalProvider {
+				return !eng.Running()
+			}
+			p, _ := providers.Get(id)
+			sleeper, ok := p.(provider.Sleeper)
+			return ok && sleeper.Asleep()
+		},
 		func(id string) { hub.Publish(api.EvModelsChanged, map[string]string{"provider": id}) })
 	// Models installed while the engine was stopped show up as soon as it runs again.
 	eng.Started = func() {

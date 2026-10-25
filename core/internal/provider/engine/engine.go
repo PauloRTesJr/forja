@@ -28,6 +28,7 @@ type Provider struct {
 	id       string
 	kind     provider.Kind
 	paid     bool
+	price    float64
 	shared   bool
 	endpoint Endpoint
 	store    *store.Store
@@ -123,8 +124,17 @@ func (p *Provider) Info(ctx context.Context) (*engineapi.Info, error) {
 func (p *Provider) Models(ctx context.Context) ([]engineapi.Model, error) {
 	var models []engineapi.Model
 	_, err := p.do(ctx, http.MethodGet, "/v1/models", nil, &models)
+	if p.price > 0 {
+		for i := range models {
+			models[i].Price = &engineapi.Price{Amount: p.price, Unit: "second", Currency: "USD"}
+		}
+	}
 	return models, err
 }
+
+// Price sets what the engine's machine costs per second (a rented pod, a Modal GPU), which its
+// models then carry.
+func (p *Provider) Price(usdPerSecond float64) { p.price = usdPerSecond }
 
 func (p *Provider) HasArtifact(ctx context.Context, ref string) (bool, error) {
 	resp, err := p.do(ctx, http.MethodHead, "/v1/artifacts/"+ref, nil, nil)
@@ -185,9 +195,14 @@ func (p *Provider) Run(ctx context.Context, req engineapi.RunRequest, events cha
 	}
 	cursor := 0
 	for attempt := 0; ; attempt++ {
+		before, opened := cursor, time.Now()
 		done, err := p.stream(ctx, run.ID, &cursor, events)
 		if done {
 			break
+		}
+		if errors.Is(err, io.ErrUnexpectedEOF) && (cursor > before || time.Since(opened) > 5*time.Second) {
+			// A gateway that closes long requests (Modal) ends streams that worked; resume.
+			attempt = 0
 		}
 		if ctx.Err() != nil {
 			cancelCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

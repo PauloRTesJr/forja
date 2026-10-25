@@ -81,6 +81,13 @@ type Provider struct {
 	Paid              bool    `toml:"paid" json:"paid"`
 	// Models are the hub models the user added (endpoint ids), for kind = "api" providers.
 	Models []string `toml:"models" json:"models,omitempty"`
+	// Volume and Region name a RunPod endpoint's network volume and its datacenter (EU-RO-1),
+	// whose S3 API moves artifacts by hash; the volume's S3 key is in the keychain.
+	Volume string `toml:"volume" json:"volume,omitempty"`
+	Region string `toml:"region" json:"region,omitempty"`
+	// Workflows maps stage types to ComfyUI workflow files (API format), relative to the config
+	// folder, for kind = "comfyui" providers.
+	Workflows map[string]string `toml:"workflows" json:"workflows,omitempty"`
 }
 
 type Project struct {
