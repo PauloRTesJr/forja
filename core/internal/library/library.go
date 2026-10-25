@@ -1,5 +1,5 @@
-// Package library is the core's durable state: jobs, their stages, the stage cache index,
-// and generated assets. SQLite in WAL mode, pure Go (no cgo).
+// Package library is the core's durable state: jobs, their stages and generated assets.
+// SQLite in WAL mode, pure Go (no cgo).
 package library
 
 import (
@@ -36,7 +36,7 @@ type Output struct {
 	Kind    string `json:"kind"`
 	Preview bool   `json:"preview,omitempty"`
 	// Note is what the stage said about the output for the person, such as a stand-in made when
-	// it could not do what it was asked. The stage cache keeps it with the output.
+	// it could not do what it was asked.
 	Note string `json:"note,omitempty"`
 }
 
@@ -45,8 +45,6 @@ type Stage struct {
 	Use      string   `json:"use"`
 	Model    string   `json:"model,omitempty"`
 	Status   Status   `json:"status"`
-	Key      string   `json:"key"`
-	Cached   bool     `json:"cached"`
 	Provider string   `json:"provider,omitempty"`
 	Outputs  []Output `json:"outputs"`
 	Seconds  float64  `json:"seconds"`
@@ -191,13 +189,8 @@ CREATE TABLE IF NOT EXISTS jobs (
 	seed INTEGER NOT NULL DEFAULT 42
 );
 CREATE INDEX IF NOT EXISTS jobs_created ON jobs(created_at DESC);
-CREATE TABLE IF NOT EXISTS stage_cache (
-	key TEXT PRIMARY KEY,
-	outputs TEXT NOT NULL,
-	seconds REAL NOT NULL,
-	created_at INTEGER NOT NULL,
-	hits INTEGER NOT NULL DEFAULT 0
-);
+-- Libraries from before decision 37 hold a stage cache no job reads any more.
+DROP TABLE IF EXISTS stage_cache;
 CREATE TABLE IF NOT EXISTS stage_timings (
 	use TEXT NOT NULL,
 	model TEXT NOT NULL,
@@ -375,39 +368,6 @@ func (d *DB) FailUnfinished(ctx context.Context) error {
 	return err
 }
 
-// CacheGet returns the outputs recorded for a stage key.
-func (d *DB) CacheGet(ctx context.Context, key string) ([]Output, bool, error) {
-	var raw string
-	err := d.sql.QueryRowContext(ctx, `SELECT outputs FROM stage_cache WHERE key = ?`, key).Scan(&raw)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, false, nil
-	}
-	if err != nil {
-		return nil, false, err
-	}
-	var outs []Output
-	if err := json.Unmarshal([]byte(raw), &outs); err != nil {
-		return nil, false, err
-	}
-	_, _ = d.sql.ExecContext(ctx, `UPDATE stage_cache SET hits = hits + 1 WHERE key = ?`, key)
-	return outs, true, nil
-}
-
-func (d *DB) CachePut(ctx context.Context, key string, outs []Output, seconds float64) error {
-	raw, _ := json.Marshal(outs)
-	_, err := d.sql.ExecContext(ctx,
-		`INSERT INTO stage_cache (key, outputs, seconds, created_at) VALUES (?, ?, ?, ?)
-		 ON CONFLICT(key) DO UPDATE SET outputs = excluded.outputs`,
-		key, string(raw), seconds, time.Now().UnixMilli())
-	return err
-}
-
-// CacheForget drops a key whose artifact vanished from the object store.
-func (d *DB) CacheForget(ctx context.Context, key string) error {
-	_, err := d.sql.ExecContext(ctx, `DELETE FROM stage_cache WHERE key = ?`, key)
-	return err
-}
-
 func (d *DB) RecordTiming(ctx context.Context, use, model, provider string, seconds float64) error {
 	_, err := d.sql.ExecContext(ctx, `INSERT INTO stage_timings (use, model, provider, seconds, at) VALUES (?, ?, ?, ?, ?)`,
 		use, model, provider, seconds, time.Now().UnixMilli())
@@ -506,7 +466,7 @@ func (d *DB) Assets(ctx context.Context, limit int, before time.Time, query stri
 }
 
 // DeleteAsset removes an asset and the job that made it from the library, and returns what
-// it removed. The store keeps their files, which the stage cache may still use; costs stay
+// it removed. The next sweep removes their files from the store; costs stay
 // in the spending totals, since they were paid.
 func (d *DB) DeleteAsset(ctx context.Context, id string) (*Asset, error) {
 	tx, err := d.sql.BeginTx(ctx, nil)
@@ -530,7 +490,7 @@ func (d *DB) DeleteAsset(ctx context.Context, id string) (*Asset, error) {
 
 // Kept lists the objects the library still shows or needs: every asset's GLB, thumbnail and
 // input, every job's images, and all that an unfinished job references. Stage outputs of
-// finished jobs are not among them: they are the stage cache, which eviction may trim.
+// finished jobs are not among them: once the job ends, a sweep removes them.
 func (d *DB) Kept(ctx context.Context) (map[string]bool, error) {
 	kept := map[string]bool{}
 	keep := func(refs ...string) {
@@ -583,47 +543,6 @@ func (d *DB) Kept(ctx context.Context) (map[string]bool, error) {
 		}
 	}
 	return kept, rows.Err()
-}
-
-// ForgetOutputs drops every stage cache entry with an output among gone, the objects
-// eviction is about to remove, and returns how many it dropped. A hit on such an entry
-// would hand a job outputs that no longer exist.
-func (d *DB) ForgetOutputs(ctx context.Context, gone map[string]bool) (int, error) {
-	tx, err := d.sql.BeginTx(ctx, nil)
-	if err != nil {
-		return 0, err
-	}
-	defer tx.Rollback()
-	rows, err := tx.QueryContext(ctx, `SELECT key, outputs FROM stage_cache`)
-	if err != nil {
-		return 0, err
-	}
-	var stale []string
-	for rows.Next() {
-		var key, raw string
-		if err := rows.Scan(&key, &raw); err != nil {
-			rows.Close()
-			return 0, err
-		}
-		var outs []Output
-		_ = json.Unmarshal([]byte(raw), &outs)
-		for _, o := range outs {
-			if gone[o.Hash] {
-				stale = append(stale, key)
-				break
-			}
-		}
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		return 0, err
-	}
-	for _, key := range stale {
-		if _, err := tx.ExecContext(ctx, `DELETE FROM stage_cache WHERE key = ?`, key); err != nil {
-			return 0, err
-		}
-	}
-	return len(stale), tx.Commit()
 }
 
 // SaveCatalog remembers a provider's latest answer to "what do you run?".

@@ -36,10 +36,9 @@ type Config struct {
 }
 
 type General struct {
-	Language   string `toml:"language" json:"language"`
-	DataDir    string `toml:"data_dir" json:"data_dir"`
-	ModelsDir  string `toml:"models_dir" json:"models_dir"`
-	CacheMaxGB int64  `toml:"cache_max_gb" json:"cache_max_gb"`
+	Language  string `toml:"language" json:"language"`
+	DataDir   string `toml:"data_dir" json:"data_dir"`
+	ModelsDir string `toml:"models_dir" json:"models_dir"`
 }
 
 type Engine struct {

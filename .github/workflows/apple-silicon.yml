@@ -105,15 +105,14 @@ jobs:
       - name: Shape with Hunyuan3D-2mv on the Apple GPU
         if: steps.mv.outputs.ready == 'true'
         run: |
-          # A seed per run, so the stage runs instead of coming from the stage cache.
           core/bin/forja generate engine/tests/fixtures/chest.png --preset draft \
-            --seed $((GITHUB_RUN_ID % 1000000)) --json > "$RUNNER_TEMP/forja-real/jobs.json"
+            --json > "$RUNNER_TEMP/forja-real/jobs.json"
           uv run --no-project python -I - "$RUNNER_TEMP/forja-real/jobs.json" <<'EOF'
           import json, sys
 
           (job,) = json.load(open(sys.argv[1]))
           shape = next(s for s in job["stages"] if s["use"] == "shape")
           assert job["status"] == "succeeded", job.get("error")
-          assert shape["model"] == "hunyuan3d2-mv" and not shape["cached"], shape
+          assert shape["model"] == "hunyuan3d2-mv", shape
           print(f"Hunyuan3D-2mv made the shape on the Apple GPU in {shape['seconds']:.1f} s")
           EOF

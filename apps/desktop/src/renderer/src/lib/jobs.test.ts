@@ -4,7 +4,7 @@ import { applyProgress, jobFraction, phaseState, phasesOf, previewOf, stageTime,
 import { count, roman, seconds, skeletonName, stageLabel, taskNoun } from './format'
 
 const stage = (id: string, status: Stage['status'], extra: Partial<Stage> = {}): Stage => ({
-  id, use: id, status, key: '', cached: false, outputs: [], seconds: 0, step: 0, total: 0, ...extra,
+  id, use: id, status, outputs: [], seconds: 0, step: 0, total: 0, ...extra,
 })
 const job = (id: string, stages: Stage[]): Job => ({
   id, name: id, preset: 'p', input: 'i', priority: 'batch', status: 'running', created_at: '', stages,
@@ -99,13 +99,13 @@ describe('summarize', () => {
     expect(summarize(j)).toEqual({ headline: 'Stopped at Shape', note: 'stage 2 of 2' })
   })
 
-  it('counts time spent and stages reused from cache', () => {
+  it('counts the time every stage took', () => {
     const j = {
-      ...job('a', [stage('shape', 'succeeded', { cached: true, seconds: 30 }), stage('texture', 'succeeded', { seconds: 95 })]),
+      ...job('a', [stage('shape', 'succeeded', { seconds: 30 }), stage('texture', 'succeeded', { seconds: 95 })]),
       status: 'succeeded' as const,
     }
-    expect(summarize(j)).toEqual({ headline: 'Finished in 1 min 35 s', note: '1 of 2 stages reused from cache' })
-    expect(stageTime(j.stages[0]!)).toBe('cached')
+    expect(summarize(j)).toEqual({ headline: 'Finished in 2 min 5 s', note: '2 stages' })
+    expect(stageTime(j.stages[0]!)).toBe('30 s')
     expect(stageTime(stage('x', 'running', { step: 1, total: 4 }))).toBe('25%')
   })
 })

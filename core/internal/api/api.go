@@ -19,7 +19,6 @@ import (
 	"github.com/coder/websocket/wsjson"
 
 	"forja/internal/bench"
-	"forja/internal/cache"
 	"forja/internal/catalog"
 	"forja/internal/config"
 	"forja/internal/events"
@@ -31,6 +30,7 @@ import (
 	"forja/internal/presets"
 	"forja/internal/provider"
 	"forja/internal/store"
+	"forja/internal/sweep"
 )
 
 // EvModelsChanged tells clients that a provider's models changed: re-read models and presets.
@@ -43,7 +43,7 @@ type Server struct {
 	Store     *store.Store
 	Hub       *events.Hub
 	Runner    *jobs.Runner
-	Cache     *cache.Keeper
+	Sweeper   *sweep.Sweeper
 	Providers *provider.Registry
 	Catalog   *catalog.Catalog
 	Installs  *installs.Tracker
@@ -109,8 +109,6 @@ func (s *Server) routes() []route {
 		{"POST /v1/assets/{id}/drag", s.assetDrag},
 		{"GET /v1/export/formats", s.exportFormats},
 		{"POST /v1/export", s.exportAssets},
-		{"GET /v1/cache", s.cacheGet},
-		{"DELETE /v1/cache", s.cacheClear},
 		{"GET /v1/artifacts/{ref}", s.artifactGet},
 		{"PUT /v1/artifacts", s.artifactPut},
 		{"POST /v1/artifacts/import", s.artifactImport},

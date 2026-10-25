@@ -18,7 +18,7 @@ For the conformance suite (`engine/sdk/src/forja_sdk/conformance.py` and `sample
 
 ## 2. The engine
 
-- **Built-in**: a class in `engine/src/forja_engine/adapters/builtin.py`, registered in `BUILTINS`, with `version = "1"`. Its version reaches the core through `GET /v1/info`, which puts it in the cache key. Keep it deterministic, and report progress and check cancellation if it takes more than a moment.
+- **Built-in**: a class in `engine/src/forja_engine/adapters/builtin.py`, registered in `BUILTINS`, with `version = "1"`. `GET /v1/info` reports it under `stages`. Bump it, with a comment saying what changed (`# 2: floaters are dropped by face mask ...`), when the output changes for the same inputs, params and seed: a new algorithm, a fixed bug that changes results, a new default for a parameter read with `ctx.params.get(name, default)`. Keep it deterministic, and report progress and check cancellation if it takes more than a moment.
 - **Model**: nothing in the engine; a model's manifest lists the type in `tasks`.
 
 An engine now accepts a `use` value older engines reject: raise the engine API's minor version, in `engine/src/forja_engine/api/version.py` and `core/internal/engineapi/version.go` together.
@@ -29,7 +29,7 @@ Add the value to the `tasks` enum in `catalog/schema/manifest.schema.json`. `eng
 
 ## 4. The core
 
-- Use it in presets: `core/internal/presets/builtin/*.yaml`. The planner keys any stage type the same way, from its model, params, seed, inputs and what the provider runs ([the stage cache](stage-cache.md)).
+- Use it in presets: `core/internal/presets/builtin/*.yaml`. The planner keys any stage type the same way, from its type, model, params, seed and inputs, so a job runs the same work once ([decision 37](../decisions.md)).
 - A stage type that prepares the reference image, run once per view of the subject like `background-removal` and `framing`, joins `prepares` in `core/internal/presets/presets.go`.
 - Changing what a built-in preset does is a decision: add a row to `docs/decisions.md`.
 

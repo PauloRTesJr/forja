@@ -12,7 +12,7 @@ Every change is judged against four words. When two conflict, the order below de
 
 1. **Fast.** Performance is a feature with a budget, not an intent.
    - The GPU is the bottleneck: everything else exists to keep it fed. CPU stages of one job overlap GPU stages of the next.
-   - Never compute twice: every stage output is memoized by content hash (cache key = stage, adapter version, model revision, input hashes, normalized params, seed).
+   - Never compute twice within a job: a stage whose work (stage type, model, params, seed, inputs) the job already did is not sent again. Nothing carries over between jobs: every job runs from the start (decision 37).
    - Never move bytes twice: content-addressed artifacts; file paths when co-located, uploads only when the remote lacks the hash.
    - Measure first: an optimization lands with a `forja bench` number showing the gain. Budgets are in the spec, section 10; a >10% regression fails CI.
    - Hot paths stay allocation-light: stream files, hash in parallel (BLAKE3), prepared SQLite statements, no polling loops.
@@ -40,10 +40,10 @@ Three processes; each owns exactly one thing.
 | Process | Language | Owns | Never does |
 |---|---|---|---|
 | `apps/desktop` | Electron, TypeScript, React, three.js | View state, rendering | Business state, hashing, file I/O, inference |
-| `core` (`forja`) | Go | Jobs, plan, routing, config, secrets, SQLite library, object store, **the stage cache index** | Inference |
-| `engine` (`forja-engine`) | Python | Running stage batches on its devices: scheduling, VRAM, model workers, artifact store by hash | Durable job state, memoization decisions |
+| `core` (`forja`) | Go | Jobs, plan, routing, config, secrets, SQLite library, object store | Inference |
+| `engine` (`forja-engine`) | Python | Running stage batches on its devices: scheduling, VRAM, model workers, artifact store by hash | Durable job state, deciding what runs |
 
-- The engine is an **executor**: it receives stage batches, runs them, stores outputs by hash, and forgets the batch. The core decides what is cached and asks `HEAD /v1/artifacts/{hash}` to find outputs a remote engine already holds.
+- The engine is an **executor**: it receives stage batches, runs them, stores outputs by hash, and forgets the batch. The core asks `HEAD /v1/artifacts/{hash}` to upload only the inputs a remote engine lacks.
 - Model workers are separate processes, one per model family, each in its own uv virtual environment. Upstream code with a restrictive license is fetched at install time (pinned commit plus hash), never committed here.
 - The UI reaches the core only through the Electron main process (custom `forja://` protocol and IPC bridge), which talks to the core over the local socket.
 
@@ -53,7 +53,7 @@ Three processes; each owns exactly one thing.
 - Each change keeps all three test suites green: `make test`. CI-equivalent checks: `make check`.
 - Every feature lives in both the desktop app and the `forja` CLI, through one core endpoint (decision 18). Adding, changing or removing a feature changes the core, the app and the CLI together, in the same change. Steps: [`.claude/skills/feature-parity/SKILL.md`](.claude/skills/feature-parity/SKILL.md).
 - Real models live in **model families** (`engine/families/<name>/`): `family.yaml` pins the Python version, lanes, upstream source (URL + sha256) and CUDA builds; `requirements/<lane>.txt` lists dependencies per torch lane; `src/forja_<name>/` is the adapter. `forja models install <id>` builds `<data>/envs/<family>` with uv and fetches weights pinned in the model's manifest (`engine/src/forja_engine/manifests/`). Pin every new upstream commit, weight revision and file hash; adapter tests run against fake upstream modules (`engine/tests/test_families.py`).
-- When an adapter's output changes for the same inputs, bump its `version` (for a model, also `adapter_version` in its manifest). The cache key includes it, so the bump is what retires stale cached outputs.
+- When an adapter's output changes for the same inputs, bump its `version` (for a model, also `adapter_version` in its manifest): it says which behavior made an output, in `/v1/info`, benchmarks and the SDK's conformance suite.
 - Stub models (`engine/src/forja_engine/adapters/stub/`) are deterministic and CPU-only; they stand in for real models in tests, and on machines without a GPU when `models.stubs = true`. Presets never name them (decision 12). Keep them deterministic for a fixed seed.
 - The engine API (`/v1`) is a contract shared by the core, remote engines and serverless handlers. Changing it means bumping the API version in `engine/src/forja_engine/api/version.py` and `core/internal/engineapi/version.go` together.
 - Write comments only for the *why* a reader cannot see in the code.

@@ -935,11 +935,6 @@ h1 {
   fill: var(--accent);
   stroke: var(--accent-hi);
 }
-/* After .succeeded: a cached stage is also succeeded, and reads as reused, not recomputed. */
-:is(.star-slot, .stage-list li).cached .star path {
-  fill: #5e4e36;
-  stroke: var(--accent);
-}
 :is(.star-slot, .stage-list li).running .star path {
   fill: var(--live);
   stroke: #f6b98a;
@@ -1019,10 +1014,6 @@ h1 {
 }
 .stage-list li:is(.queued, .cancelled) :is(.stage-name, .stage-time) {
   color: var(--text-3);
-}
-.stage-list li.cached .stage-time {
-  font-style: italic;
-  color: #a89a84;
 }
 .stage-list li.running :is(.stage-name, .stage-time) {
   color: var(--live-hi);
@@ -2579,20 +2570,6 @@ select.input {
 }
 .hardware {
   grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-}
-.cache-meter {
-  margin-bottom: 12px;
-}
-.cache-meter b small {
-  color: var(--text-3);
-  font-size: 14px;
-  font-weight: 500;
-}
-.cache-meter .bar {
-  margin-top: 10px;
-}
-.cache-meter .bar > i {
-  background: var(--accent);
 }
 .provider-list {
   display: flex;

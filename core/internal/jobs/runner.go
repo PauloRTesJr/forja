@@ -1,5 +1,5 @@
-// Package jobs owns a job from submission to export: plan, cache lookups, routing,
-// provider runs, cache records and the finished asset.
+// Package jobs owns a job from submission to export: plan, routing, provider runs and the
+// finished asset. Every job runs every one of its stages (docs/decisions.md, 37).
 package jobs
 
 import (
@@ -86,7 +86,7 @@ type Runner struct {
 	// Bounds the jobs looking for a sheet of views, which runs before a job takes a slot.
 	looking chan struct{}
 
-	// catalog is what each provider runs: it keys stages and picks models.
+	// catalog is what each provider runs: it picks models.
 	catalog *catalog.Catalog
 
 	mu     sync.Mutex
@@ -94,8 +94,8 @@ type Runner struct {
 	// claimed are waiting jobs being answered or cancelled, so only one of those happens.
 	claimed map[string]bool
 
-	// gate keeps eviction away from running jobs: each run holds it shared, and WhenIdle
-	// takes it only when no run does.
+	// gate keeps sweeps of the store away from running jobs: each run holds it shared, and
+	// WhenIdle takes it only when no run does.
 	gate sync.RWMutex
 	// OnIdle, when set, is called after the last running job ends.
 	OnIdle func()
@@ -115,17 +115,16 @@ type active struct {
 	picks map[string]Pick
 	owed  map[string]float64
 	avoid failed
-	// asked is what each provider said it runs, asked once per run of the job. Under mu.
-	asked map[string]*catalog.Entry
+	// ran are the outputs of the stages this run of the job ran, by key, so it does the same
+	// work once: the background removal it ran while looking for a sheet of views serves its
+	// own stages. Only the job's run goroutine touches it.
+	ran map[string][]library.Output
 }
 
 // measured is what a benchmark's sample keeps beside its job. Only the job's own run
 // goroutine touches it.
 type measured struct {
-	start time.Time
-	// ran are the outputs of the stages it ran, by key: they stand in for the stage cache,
-	// which a sample never reads or writes.
-	ran     map[string][]library.Output
+	start   time.Time
 	metrics map[string]*engineapi.StageMetrics
 	// engine is the time spent inside provider runs; queued the wait for a slot.
 	engine, queued time.Duration
@@ -146,7 +145,7 @@ type Sample struct {
 	Stats map[string]any
 }
 
-// Overhead is the core's own share of the job: planning, cache lookups, moving artifacts,
+// Overhead is the core's own share of the job: planning, moving artifacts,
 // reading the result and saving state, everything but inference and waiting for a slot.
 func (s Sample) Overhead() time.Duration { return s.Wall - s.Engine - s.Queued }
 
@@ -177,7 +176,7 @@ func NewRunner(db *library.DB, st *store.Store, hub *events.Hub, providers *prov
 func (r *Runner) Config(project string) (*config.Loaded, error) { return r.config(project) }
 
 // WhenIdle runs fn only while no job runs, holding off jobs that start meanwhile, and says
-// whether it ran. Eviction uses it so it never removes what a running job reads.
+// whether it ran. Sweeps of the store use it so they never remove what a running job reads.
 func (r *Runner) WhenIdle(fn func()) bool {
 	if !r.gate.TryLock() {
 		return false
@@ -211,13 +210,11 @@ func (r *Runner) Submit(ctx context.Context, req SubmitRequest) (*library.Job, e
 	return snapshot(a), nil
 }
 
-// Measure runs a job as a benchmark's sample. Every stage runs: the job neither reads nor
-// writes the stage cache, and reuses only what it ran itself (the background removal it ran
-// while looking for a sheet of views). The engine measures each stage, and no asset is made.
+// Measure runs a job as a benchmark's sample. The engine measures each stage, and no asset
+// is made.
 // The channel receives the sample once the job ends.
 func (r *Runner) Measure(ctx context.Context, req SubmitRequest) (*library.Job, <-chan Sample, error) {
-	m := &measured{start: time.Now(), ran: map[string][]library.Output{},
-		metrics: map[string]*engineapi.StageMetrics{}, done: make(chan Sample, 1)}
+	m := &measured{start: time.Now(), metrics: map[string]*engineapi.StageMetrics{}, done: make(chan Sample, 1)}
 	a, err := r.submit(ctx, req, m)
 	if err != nil {
 		return nil, nil, err
@@ -225,8 +222,8 @@ func (r *Runner) Measure(ctx context.Context, req SubmitRequest) (*library.Job, 
 	return snapshot(a), m.done, nil
 }
 
-// Hold keeps eviction away until release, as a running job does: between a benchmark's
-// samples, none may wait for an eviction to finish.
+// Hold keeps sweeps of the store away until release, as a running job does: between a
+// benchmark's samples, none may wait for a sweep to finish.
 func (r *Runner) Hold() (release func()) {
 	r.gate.RLock()
 	var once sync.Once
@@ -305,7 +302,7 @@ func (r *Runner) submit(ctx context.Context, req SubmitRequest, m *measured) (*a
 // start makes a job active and runs it in the background.
 func (r *Runner) start(job *library.Job, prep *prepared, cfg *config.Loaded, m *measured) *active {
 	runCtx, cancel := context.WithCancel(context.Background())
-	a := &active{cancel: cancel, job: job, measured: m, avoid: failed{}, asked: map[string]*catalog.Entry{}}
+	a := &active{cancel: cancel, job: job, measured: m, avoid: failed{}, ran: map[string][]library.Output{}}
 	a.set(prep)
 	r.mu.Lock()
 	r.active[job.ID] = a
@@ -459,58 +456,6 @@ func inputs(j *library.Job) map[string]string {
 		}
 	}
 	return in
-}
-
-// fingerprints asks each provider the job routes to what it runs, once per job: keys depend on
-// it, so a new adapter or new weights on that provider never reuse outputs cached before. The
-// answer serves every plan of the run (looking for a sheet of views, cutting them out, the
-// stages), since each question is a round trip.
-func (r *Runner) fingerprints(ctx context.Context, a *active, routes map[string]string) planner.Fingerprints {
-	return func(s presets.Stage) (planner.Fingerprint, error) {
-		id := routes[s.ID]
-		a.mu.Lock()
-		got, ok := a.asked[id]
-		a.mu.Unlock()
-		if !ok {
-			var err error
-			if got, err = r.askRuns(ctx, id); err != nil {
-				// Nothing ran there yet in this job (it would have answered), so every stage it
-				// was to run may move.
-				var on []string
-				for stage, p := range routes {
-					if p == id {
-						on = append(on, stage)
-					}
-				}
-				return planner.Fingerprint{}, &stageError{provider: id, stages: on, down: true, err: err}
-			}
-			a.mu.Lock()
-			a.asked[id] = got
-			a.mu.Unlock()
-		}
-		if s.Model == "" {
-			return planner.Fingerprint{Adapter: got.Stages[s.Use]}, nil
-		}
-		m, ok := got.Model(s.Model)
-		if !ok {
-			return planner.Fingerprint{}, fmt.Errorf("provider %s has no model %q", id, s.Model)
-		}
-		return planner.Fingerprint{Adapter: m.AdapterVersion, Weights: m.Weights.Revision, Upstream: m.Upstream}, nil
-	}
-}
-
-// askRuns asks a provider what it runs. One that cannot answer now (a LAN box that is off) is
-// keyed by its last answer in this session, so a job whose stages are all cached still finishes.
-func (r *Runner) askRuns(ctx context.Context, id string) (*catalog.Entry, error) {
-	e, err := r.catalog.Ask(ctx, id)
-	if err == nil {
-		return e, nil
-	}
-	if last, ok := r.catalog.Live(id); ok && ctx.Err() == nil {
-		r.log.Warn("keying stages with the provider's last answer", "provider", id, "err", err)
-		return last, nil
-	}
-	return nil, err
 }
 
 func (r *Runner) Cancel(id string) bool {
@@ -736,11 +681,10 @@ func (r *Runner) runJob(ctx context.Context, a *active, prep *prepared, cfg *con
 		a.set(prep)
 		r.hub.Publish(EvJobUpdated, snapshot(a))
 	}
-	// Keyed here, not at submit: asking a provider what it runs may start the local engine.
 	var plan *planner.Plan
 	err = r.withFallback(ctx, a, cfg, &prep, func(p *prepared) error {
 		var err error
-		if plan, err = r.plan(ctx, a, p.preset, p.routes); err != nil {
+		if plan, err = r.plan(a, p.preset, p.routes); err != nil {
 			return err
 		}
 		_, err = r.execute(ctx, a, plan)
@@ -811,9 +755,9 @@ func (r *Runner) setStatus(a *active, s library.Status) {
 	r.hub.Publish(EvJobUpdated, snapshot(a))
 }
 
-func (r *Runner) plan(ctx context.Context, a *active, preset *presets.Preset, routes map[string]string) (*planner.Plan, error) {
+func (r *Runner) plan(a *active, preset *presets.Preset, routes map[string]string) (*planner.Plan, error) {
 	job := snapshot(a)
-	plan, err := planner.Build(preset, inputs(job), job.Seed, r.fingerprints(ctx, a, routes))
+	plan, err := planner.Build(preset, inputs(job), job.Seed)
 	if err != nil {
 		return nil, err
 	}
@@ -843,7 +787,7 @@ func (r *Runner) sheetStage(ctx context.Context, prep *prepared) (presets.Stage,
 }
 
 // inspect looks for several views of one subject in the job's image. It runs the job's own
-// background removal (so the job then finds it cached) and views.detect on the cut-out.
+// background removal (which its stages then reuse) and views.detect on the cut-out.
 func (r *Runner) inspect(ctx context.Context, a *active, prep *prepared) error {
 	bg, ok := r.sheetStage(ctx, prep)
 	if !ok {
@@ -852,7 +796,7 @@ func (r *Runner) inspect(ctx context.Context, a *active, prep *prepared) error {
 	}
 	detect := presets.Stage{ID: "sheet", Use: "views.detect", Inputs: []string{bg.ID}}
 	routes := map[string]string{bg.ID: prep.routes[bg.ID], detect.ID: prep.routes[bg.ID]}
-	plan, err := r.plan(ctx, a, &presets.Preset{ID: prep.preset.ID, Stages: []presets.Stage{bg, detect}}, routes)
+	plan, err := r.plan(a, &presets.Preset{ID: prep.preset.ID, Stages: []presets.Stage{bg, detect}}, routes)
 	if err != nil {
 		return err
 	}
@@ -908,21 +852,27 @@ func (r *Runner) split(ctx context.Context, a *active, prep *prepared) error {
 	if !ok {
 		return fmt.Errorf("provider %s cannot cut views out of a sheet; update its engine", prep.routes[prep.preset.Stages[0].ID])
 	}
-	chosen := snapshot(a).Sheet.Chosen
+	sheet := snapshot(a).Sheet
+	chosen := sheet.Chosen
 	wanted := make([]map[string]any, len(chosen))
 	for i, p := range chosen {
 		wanted[i] = map[string]any{"view": p.View, "box": p.Box[:]}
 	}
-	// The sheet's cut-out, cached while looking for the views. Under another id it leaves the
-	// job's own background removal alone: that one will read the front once it is cut out.
+	// The sheet's cut-out, as when looking for the views. Under another id it leaves the job's
+	// own background removal alone: that one will read the front once it is cut out.
 	where := prep.routes[bg.ID]
 	bg.ID = "sheet-bg"
 	cut := presets.Stage{ID: "split", Use: "views.split", Inputs: []string{presets.InputImage, bg.ID},
 		Params: map[string]any{"views": wanted}}
 	routes := map[string]string{bg.ID: where, cut.ID: where}
-	plan, err := r.plan(ctx, a, &presets.Preset{ID: prep.preset.ID, Stages: []presets.Stage{bg, cut}}, routes)
+	plan, err := r.plan(a, &presets.Preset{ID: prep.preset.ID, Stages: []presets.Stage{bg, cut}}, routes)
 	if err != nil {
 		return err
+	}
+	// A job that waited for the user's answer is in a new run, which ran nothing yet; the
+	// cut-out it made while looking is on the job, and the library kept it while it waited.
+	if sheet.Cutout != "" && r.store.Has(sheet.Cutout) {
+		a.ran[plan.Stages[0].Key] = []library.Output{{Hash: sheet.Cutout, Kind: "image/png"}}
 	}
 	outs, err := r.execute(ctx, a, plan)
 	if err != nil {
@@ -939,7 +889,7 @@ func (r *Runner) split(ctx context.Context, a *active, prep *prepared) error {
 	return nil
 }
 
-// ended lets eviction in once the last running job is gone.
+// ended lets sweeps in once the last running job is gone.
 func (r *Runner) ended() {
 	r.gate.RUnlock()
 	if r.OnIdle != nil && !r.Busy() {
@@ -996,9 +946,9 @@ func stage(j *library.Job, id string) *library.Stage {
 	return nil
 }
 
-// execute resolves cache hits, then runs the remaining stages in batches of consecutive
-// stages that share a provider, so intermediates stay on that provider. It returns every
-// stage's outputs.
+// execute takes the stages this run of the job already ran, then runs the rest in batches of
+// consecutive stages that share a provider, so intermediates stay on that provider. It returns
+// every stage's outputs.
 func (r *Runner) execute(ctx context.Context, a *active, plan *planner.Plan) (map[string][]library.Output, error) {
 	outputs := map[string]string{} // input name or stage id -> primary output ref
 	for name, ref := range plan.Inputs {
@@ -1007,35 +957,15 @@ func (r *Runner) execute(ctx context.Context, a *active, plan *planner.Plan) (ma
 	all := map[string][]library.Output{}
 	var pending []int
 	for i, s := range plan.Stages {
-		outs, hit, err := r.cached(ctx, a, s.Key)
-		if err != nil {
-			return nil, err
-		}
-		if hit && len(outs) > 0 && r.store.Has(outs[0].Hash) {
-			for _, o := range outs {
-				r.store.Touch(o.Hash) // used now: eviction removes the least recently used
-			}
+		if outs, ok := a.ran[s.Key]; ok && r.store.Has(outs[0].Hash) {
 			outputs[s.ID], all[s.ID] = outs[0].Hash, outs
 			r.update(a, func(j *library.Job) {
-				st := stage(j, s.ID)
-				if st == nil {
-					return
+				if st := stage(j, s.ID); st != nil {
+					st.Status, st.Outputs = library.Succeeded, outs
 				}
-				// Run earlier in this job (while looking for a sheet), not cached before it.
-				ranHere := st.Status == library.Succeeded && st.Key == s.Key
-				st.Status, st.Key, st.Outputs = library.Succeeded, s.Key, outs
-				st.Cached = st.Cached || !ranHere
 			})
 			continue
 		}
-		if hit && a.measured == nil {
-			_ = r.db.CacheForget(ctx, s.Key)
-		}
-		r.update(a, func(j *library.Job) {
-			if st := stage(j, s.ID); st != nil {
-				st.Key = s.Key
-			}
-		})
 		pending = append(pending, i)
 	}
 	r.hub.Publish(EvJobUpdated, snapshot(a))
@@ -1052,16 +982,6 @@ func (r *Runner) execute(ctx context.Context, a *active, plan *planner.Plan) (ma
 		start = end
 	}
 	return all, nil
-}
-
-// cached is what the stage cache recorded for key. A benchmark's sample sees only what it ran
-// itself, so each of its stages is measured.
-func (r *Runner) cached(ctx context.Context, a *active, key string) ([]library.Output, bool, error) {
-	if a.measured != nil {
-		outs, ok := a.measured.ran[key]
-		return outs, ok, nil
-	}
-	return r.db.CacheGet(ctx, key)
 }
 
 func (r *Runner) runBatch(ctx context.Context, a *active, plan *planner.Plan, idx []int, outputs map[string]string,
@@ -1205,11 +1125,7 @@ func (r *Runner) runBatch(ctx context.Context, a *active, plan *planner.Plan, id
 		}
 		if st.Status == "succeeded" && len(outs) > 0 {
 			outputs[s.ID], all[s.ID] = outs[0].Hash, outs
-			if a.measured != nil {
-				a.measured.ran[s.Key] = outs
-			} else {
-				_ = r.db.CachePut(ctx, s.Key, outs, seconds)
-			}
+			a.ran[s.Key] = outs
 			_ = r.db.RecordTiming(ctx, s.Use, s.Model, p.ID(), seconds)
 		}
 	}

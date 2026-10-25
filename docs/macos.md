@@ -93,6 +93,6 @@ The release workflow builds the DMGs on a GitHub-hosted Mac with the same variab
 
 1. runs the engine tests on the Apple GPU (`pytest -m mps`) and the whole engine suite, on a native arm64 Python that detects the `mps` lane;
 2. builds the core and runs a Draft job end to end with the stub models;
-3. with the `real_model` input (on by default), generates a shape with Hunyuan3D-2mv on the Apple GPU, if it is installed in the runner's own data folder (`FORJA_CI_DATA_DIR` in the runner's `.env`, else `~/forja-ci`), and checks that the stage ran on `mps` and did not come from the cache.
+3. with the `real_model` input (on by default), generates a shape with Hunyuan3D-2mv on the Apple GPU, if it is installed in the runner's own data folder (`FORJA_CI_DATA_DIR` in the runner's `.env`, else `~/forja-ci`), and checks that the stage ran on `mps`.
 
 Hunyuan3D-2mv stays experimental on Macs until this passes ([decision 26](decisions.md)).

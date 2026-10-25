@@ -27,7 +27,7 @@ Every change keeps all three green.
 | Suite | Run it alone | What it covers |
 |---|---|---|
 | Engine (Python) | `cd engine && uv run pytest` | Stages, scheduler, API, installs, families against fake upstream modules, the SDK and catalog rules, the adapter template |
-| Core (Go) | `cd core && go test ./...` | Config, planner, cache, jobs, the API, every CLI command against a fake engine |
+| Core (Go) | `cd core && go test ./...` | Config, planner, jobs, the API, every CLI command against a fake engine |
 | Desktop (TypeScript) | `cd apps/desktop && pnpm test` | The renderer's logic |
 
 Tests never need a GPU. Real models are replaced by stub models (`engine/src/forja_engine/adapters/stub/`): deterministic CPU stand-ins. Keep them deterministic for a fixed seed.
@@ -59,7 +59,7 @@ Then run `core/bin/forja daemon` in one terminal and commands in another. `forja
 ## Rules that catch people out
 
 - **Both clients.** Every feature is in the desktop app and the `forja` CLI, through one core endpoint (decision 18). Add, change or remove all three in the same change. The steps are in [.claude/skills/feature-parity/SKILL.md](.claude/skills/feature-parity/SKILL.md); a test fails when an endpoint has no command.
-- **Cache keys.** When an adapter's output changes for the same inputs, bump its `version`, and for a model also `adapter_version` in its manifest. See [the stage cache](docs/contributing/stage-cache.md).
+- **Adapter versions.** When an adapter's output changes for the same inputs, bump its `version`, and for a model also `adapter_version` in its manifest ([adding a model](docs/contributing/adding-a-model.md)).
 - **The engine API.** `/v1` is shared by the core, remote engines and serverless handlers. Changing it means bumping the version in `engine/src/forja_engine/api/version.py` and `core/internal/engineapi/version.go` together.
 - **Defaults.** Hardcoded settings live in `core/internal/config/defaults.go` and nowhere else.
 - **Portability.** Build paths with `filepath`, `pathlib` or `path`, never by joining strings. The core stays pure Go (no cgo).

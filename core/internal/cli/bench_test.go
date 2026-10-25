@@ -36,8 +36,7 @@ images:
 
 func TestBenchMeasuresEveryStageOfASuiteThenComparesRuns(t *testing.T) {
 	h := newHarness(t)
-	img := h.image("chest.png")
-	h.ok("generate", img, "--preset", "draft") // the stage cache now holds every draft stage
+	h.image("chest.png") // the suite's image
 	h.eng.set(func(e *fakeEngine) { e.ran, e.measured = nil, nil })
 	suite := h.suite("suite.yaml", testSuite)
 	out := filepath.Join(h.dir, "results")
@@ -54,7 +53,7 @@ func TestBenchMeasuresEveryStageOfASuiteThenComparesRuns(t *testing.T) {
 		res.Device.ID != "test-gpu" || len(res.Skipped) != 1 || !strings.Contains(res.Skipped[0].Reason, "not there") {
 		t.Fatalf("result %+v", res)
 	}
-	// A warm-up job, then the measured one: each ran every stage, none from the cache.
+	// A warm-up job, then the measured one: each ran every stage.
 	h.eng.set(func(e *fakeEngine) {
 		if n := strings.Count(strings.Join(e.ran, ","), "shape"); n != 2 || slices.Contains(e.measured, false) {
 			t.Errorf("the engine ran %v (measured %v)", e.ran, e.measured)
@@ -80,10 +79,10 @@ func TestBenchMeasuresEveryStageOfASuiteThenComparesRuns(t *testing.T) {
 		sum.CoreOverhead.N != 1 || sum.CoreOverheadBudgetMS != 200 || len(sum.Devices) != 1 || sum.Devices[0].Device != "cuda:0" {
 		t.Fatalf("summary %+v", sum)
 	}
-	// Samples make no asset: the library holds only what generate made.
+	// Samples make no asset.
 	var assets []*library.Asset
 	h.okJSON(&assets, "assets", "ls")
-	if len(assets) != 1 {
+	if len(assets) != 0 {
 		t.Fatalf("%d assets", len(assets))
 	}
 

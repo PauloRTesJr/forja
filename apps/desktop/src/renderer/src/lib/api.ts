@@ -42,8 +42,6 @@ export interface Stage {
   use: string
   model?: string
   status: Status
-  key: string
-  cached: boolean
   provider?: string
   outputs: Output[]
   seconds: number
@@ -154,23 +152,6 @@ export const exportAssets = (ids: string[], format: string, path: string): Promi
 export const openInBlender = (id: string): Promise<Blender> => api('POST', `/v1/assets/${id}/blender`)
 /** Removes an asset, and the job that made it, from the library; exported files stay. */
 export const deleteAsset = (id: string): Promise<void> => api('DELETE', `/v1/assets/${id}`)
-
-/** How the object store's bytes divide: what the library keeps, and the trimmable cache. */
-export interface CacheUsage {
-  objects: number
-  bytes: number
-  /** Assets, their images and unfinished jobs: never trimmed. */
-  library_bytes: number
-  /** Stage outputs a new job can reuse, trimmed least recently used first. */
-  cache_bytes: number
-  /** general.cache_max_gb in bytes; 0 means no limit. */
-  limit_bytes: number
-}
-
-export const fetchCache = (): Promise<CacheUsage> => api('GET', '/v1/cache')
-/** Removes every reusable stage output now; refused while jobs run. */
-export const clearCache = (): Promise<{ freed: { objects: number; bytes: number; entries: number }; usage: CacheUsage }> =>
-  api('DELETE', '/v1/cache')
 
 /** Median, 90th percentile and maximum of `n` values. */
 export interface Spread {

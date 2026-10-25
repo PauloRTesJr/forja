@@ -24,8 +24,8 @@ type Entry struct {
 	Models      []engineapi.Model `json:"models"`
 	System      map[string]any    `json:"system,omitempty"`
 	At          time.Time         `json:"at"`
-	// Live marks answers given in this session. Only those may key the stage cache
-	// (docs/decisions.md, decision 11); remembered ones only describe what is installed.
+	// Live marks answers given in this session; remembered ones only describe what is
+	// installed until the provider answers again.
 	Live bool `json:"-"`
 }
 
@@ -125,14 +125,6 @@ func (c *Catalog) Get(ctx context.Context, id string) (*Entry, error) {
 		return last, nil
 	}
 	return e, err
-}
-
-// Live returns this session's last answer, for keying stages while the provider is down.
-func (c *Catalog) Live(id string) (*Entry, bool) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	e, ok := c.last[id]
-	return e, ok && e.Live
 }
 
 // Last returns the remembered answer, from this session or an earlier one.

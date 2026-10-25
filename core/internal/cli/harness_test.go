@@ -21,7 +21,6 @@ import (
 	"time"
 
 	"forja/internal/api"
-	"forja/internal/cache"
 	"forja/internal/catalog"
 	"forja/internal/config"
 	"forja/internal/engineapi"
@@ -35,6 +34,7 @@ import (
 	"forja/internal/provider"
 	"forja/internal/secrets"
 	"forja/internal/store"
+	"forja/internal/sweep"
 )
 
 // fakeEngine is this computer's engine: it installs models at once and "runs" every stage by
@@ -318,13 +318,13 @@ func newHarness(t *testing.T) *harness {
 	cat := catalog.New(reg, db, nil, func(id string) { hub.Publish(api.EvModelsChanged, map[string]string{"provider": id}) })
 	cfg := func(project string) (*config.Loaded, error) { return config.Load(project, nil) }
 	runner := jobs.NewRunner(db, st, hub, reg, cat, cfg, log, "test", 4)
-	keeper := cache.New(db, st, runner, cache.Limit(cfg), hub, log)
-	runner.OnIdle = keeper.Nudge
-	keeper.Start()
+	sweeper := sweep.New(db, st, runner, log)
+	runner.OnIdle = sweeper.Nudge
+	sweeper.Start()
 	h := &harness{t: t, dir: dir, store: st, eng: eng, reg: reg, stopped: make(chan struct{})}
 	s := &api.Server{
 		Version: "test", DataDir: filepath.Join(dir, "data"), DB: db, Store: st, Hub: hub, Providers: reg, Catalog: cat,
-		Log: log, Config: cfg, Runner: runner, Cache: keeper, Installs: installs.New(reg, cat, hub, log),
+		Log: log, Config: cfg, Runner: runner, Sweeper: sweeper, Installs: installs.New(reg, cat, hub, log),
 		Engine:   localengine.New(func() (*config.Loaded, error) { return config.Load("", nil) }, st.Root, dir, log),
 		Shutdown: func() { h.stopOnce.Do(func() { close(h.stopped) }) },
 	}
@@ -340,7 +340,7 @@ func newHarness(t *testing.T) *harness {
 			time.Sleep(5 * time.Millisecond)
 		}
 		_ = srv.Close()
-		keeper.Close()
+		sweeper.Close()
 		db.Close()
 	})
 	return h

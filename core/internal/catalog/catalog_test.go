@@ -56,7 +56,7 @@ func TestABuiltInStageThatBecomesRunnableIsAChange(t *testing.T) {
 }
 func (f *fake) Models(context.Context) ([]engineapi.Model, error) { return f.models, nil }
 
-func TestAnswersSurviveARestartButDoNotKeyStages(t *testing.T) {
+func TestAnswersSurviveARestart(t *testing.T) {
 	store := memStore{}
 	f := &fake{models: []engineapi.Model{{ID: "triposg"}}}
 	reg := provider.NewRegistry()
@@ -66,15 +66,12 @@ func TestAnswersSurviveARestartButDoNotKeyStages(t *testing.T) {
 	if _, err := c.Ask(context.Background(), "local"); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := c.Live("local"); !ok || changes != 1 {
-		t.Fatalf("live = %v, changes = %d", ok, changes)
+	if changes != 1 {
+		t.Fatalf("changes = %d", changes)
 	}
 
 	idle := true
 	restarted := New(reg, store, func(string) bool { return idle }, nil)
-	if _, ok := restarted.Live("local"); ok {
-		t.Fatal("an answer from an earlier session counts as live")
-	}
 	e, err := restarted.Get(context.Background(), "local")
 	if err != nil || len(e.Models) != 1 || f.asked != 1 {
 		t.Fatalf("idle provider: models %v, asked %d, err %v", e, f.asked, err)

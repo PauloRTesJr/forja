@@ -28,7 +28,6 @@ forja daemon stop     # stop it and its engine
 | `forja hubs ls / connect / search / add / rm` | Model hubs ([hubs](hubs.md)) |
 | `forja prices ls / set / rm`, `forja spend` | The price table, and what paid providers cost today and this month ([routing](routing.md#the-price-table)) |
 | `forja bench`, `bench ls / show / report / cancel / compare` | Benchmarks: measure a suite of images, compare two runs ([bench](bench.md)) |
-| `forja cache`, `cache clear` | The stage cache ([library](library.md#the-cache)) |
 | `forja config show / get / set / unset / edit / path` | Settings ([configuration](configuration.md)) |
 | `forja secret set / rm` | Store a key in the OS keychain, read from stdin |
 | `forja engine serve / unload` | Run an engine for other machines by hand; free GPU memory now |

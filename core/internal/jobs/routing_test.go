@@ -376,11 +376,6 @@ func TestAStageThatRunsOutOfMemoryMovesAlone(t *testing.T) {
 	if got := local.stagesRun(); got != "bg,sheet,frame,shape,cleanup,lowpoly,bake,lods,export" {
 		t.Fatalf("this computer ran %q", got)
 	}
-	for _, s := range got.Stages {
-		if s.Use == "shape" && s.Cached {
-			t.Fatal("the shape this job made shows as cached")
-		}
-	}
 }
 
 func TestAFailureNeverEscalatesToAPaidProviderUnlessAllowed(t *testing.T) {

@@ -13,7 +13,7 @@
 - [Cloud GPUs](cloud.md): the engine's Docker image, RunPod serverless and pods, Modal, ComfyUI workflows.
 - [Model hubs (fal.ai)](hubs.md): hosted models and their prices.
 - [Routing, estimates and spending](routing.md): which provider runs a stage, fallback, estimates before queueing, the price table, spending limits.
-- [Library, export and Blender](library.md): exporting to other formats, Open in Blender, dragging assets out, exporting into a project, the cache.
+- [Library, export and Blender](library.md): exporting to other formats, Open in Blender, dragging assets out, exporting into a project, what stays on disk.
 - [Benchmarks](bench.md): `forja bench`, suites, what is measured, comparing runs, the CI gate.
 - [The forja command line](cli.md): every command, scripting, exit codes.
 - [Configuration](configuration.md): the layers, the settings, the files.
@@ -22,8 +22,7 @@
 
 - [CONTRIBUTING.md](../CONTRIBUTING.md): setup, the test suites, commits and sign-off, pull requests.
 - [Architecture](contributing/architecture.md): the three processes and what each owns.
-- [The stage cache](contributing/stage-cache.md): the cache key, and when to bump a version.
-- [Adding a model](contributing/adding-a-model.md): model packages, families, manifests, the pinning rules.
+- [Adding a model](contributing/adding-a-model.md): model packages, families, manifests, the pinning rules, when to bump a version.
 - [The adapter SDK](contributing/adapter-sdk.md): `forja-engine-sdk`, its types and the conformance suite.
 - [Adding a stage type](contributing/adding-a-stage-type.md)
 - [Adding a provider](contributing/adding-a-provider.md)

@@ -41,6 +41,6 @@ Larger texture models that paint full PBR materials need more than 24 GB and are
 
 ## Disk and memory
 
-Plan for the models' disk (environment and weights): about 4 GB for BiRefNet, 12.5 GB for TripoSG, 5 GB for Hunyuan3D-2mv (which shares Hunyuan3D-2 Paint's environment), 23 GB for Hunyuan3D-2 Paint, 10.7 GB for UniRig and 8.1 GB for SkinTokens. Offload keeps part of a model in system RAM, so leave room for it there. The stage cache is capped at 50 GB by default ([library](library.md#the-cache)).
+Plan for the models' disk (environment and weights): about 4 GB for BiRefNet, 12.5 GB for TripoSG, 5 GB for Hunyuan3D-2mv (which shares Hunyuan3D-2 Paint's environment), 23 GB for Hunyuan3D-2 Paint, 10.7 GB for UniRig and 8.1 GB for SkinTokens. Offload keeps part of a model in system RAM, so leave room for it there.
 
 Quad remesh and Smart UV Project run in Blender, on the CPU of the computer that runs the engine, not on the GPU ([remesh](remesh.md#blender)).

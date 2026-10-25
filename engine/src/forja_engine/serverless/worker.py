@@ -124,7 +124,7 @@ class Worker:
         self._last_run: str | None = None
 
     def describe(self) -> dict[str, Any]:
-        """What this worker runs, as /v1/info and /v1/models say; the core keys its cache by it."""
+        """What this worker runs, as /v1/info and /v1/models say."""
         info = _check(self.engine.request("GET", "/v1/info"), "describing the engine").json()
         models = _check(self.engine.request("GET", "/v1/models"), "listing models").json()
         return {"info": info, "models": models}

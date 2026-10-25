@@ -28,8 +28,8 @@ def load(path: Path, keep_normals: bool = False) -> trimesh.Trimesh:
     mesh = single if single is not None else trimesh.load(path, file_type="glb", force="mesh", process=False)
     if not isinstance(mesh, trimesh.Trimesh):
         raise ValueError(f"{path} does not contain a triangle mesh")
-    # trimesh reads glTF extras into metadata but not the TANGENT attribute. Cached files from
-    # earlier builds still carry tangents in extras; they go stale once a stage edits the mesh.
+    # trimesh reads glTF extras into metadata but not the TANGENT attribute. Files from earlier
+    # builds still carry tangents in extras; they go stale once a stage edits the mesh.
     mesh.metadata.pop(TANGENTS, None)
     return mesh
 

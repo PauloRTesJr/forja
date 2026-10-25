@@ -1,7 +1,6 @@
 package planner
 
 import (
-	"errors"
 	"slices"
 	"strings"
 	"testing"
@@ -11,10 +10,7 @@ import (
 
 const img = "blake3:0000000000000000000000000000000000000000000000000000000000000001"
 
-// same reports one fixed fingerprint for every stage, like a provider that never changes.
-func same(presets.Stage) (Fingerprint, error) { return Fingerprint{Adapter: "1"}, nil }
-
-func plan(t *testing.T, overrides map[string]any, fp Fingerprints) *Plan {
+func plan(t *testing.T, overrides map[string]any) *Plan {
 	t.Helper()
 	all, _ := presets.Load()
 	p, err := all["mobile-prop"].WithOverrides(overrides)
@@ -22,7 +18,7 @@ func plan(t *testing.T, overrides map[string]any, fp Fingerprints) *Plan {
 	if err != nil {
 		t.Fatal(err)
 	}
-	pl, err := Build(p, map[string]string{presets.InputImage: img}, 42, fp)
+	pl, err := Build(p, map[string]string{presets.InputImage: img}, 42)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,66 +48,13 @@ func expectChanged(t *testing.T, got map[string]bool, want ...string) {
 }
 
 func TestTextureOnlyChangeKeepsShapeKeys(t *testing.T) {
-	a := plan(t, nil, same)
-	b := plan(t, map[string]any{"paint.resolution": 2048}, same)
+	a := plan(t, nil)
+	b := plan(t, map[string]any{"paint.resolution": 2048})
 	expectChanged(t, changed(a, b), "paint", "bake", "lods", "export")
 }
 
 func TestKeysAreDeterministic(t *testing.T) {
-	expectChanged(t, changed(plan(t, nil, same), plan(t, nil, same)))
-}
-
-func TestNewAdapterVersionRekeysThatStageAndWhatFollows(t *testing.T) {
-	bumped := func(s presets.Stage) (Fingerprint, error) {
-		if s.Use == "mesh.decimate" {
-			return Fingerprint{Adapter: "2"}, nil
-		}
-		return same(s)
-	}
-	expectChanged(t, changed(plan(t, nil, same), plan(t, nil, bumped)),
-		"lowpoly", "paint", "bake", "lods", "export")
-}
-
-func TestNewWeightsOrUpstreamRekeyTheModelStage(t *testing.T) {
-	for _, fp := range []Fingerprint{{Adapter: "1", Weights: "rev2"}, {Adapter: "1", Upstream: "sha2"}} {
-		other := func(s presets.Stage) (Fingerprint, error) {
-			if s.ID == "shape" {
-				return fp, nil
-			}
-			return same(s)
-		}
-		expectChanged(t, changed(plan(t, nil, same), plan(t, nil, other)),
-			"shape", "cleanup", "lowpoly", "paint", "bake", "lods", "export")
-	}
-}
-
-func TestAStageThatCannotBeFingerprintedFailsTheBuild(t *testing.T) {
-	all, _ := presets.Load()
-	broken := func(s presets.Stage) (Fingerprint, error) {
-		if s.ID == "paint" {
-			return Fingerprint{}, errors.New("provider local has no model stub-paint")
-		}
-		return same(s)
-	}
-	if _, err := Build(all["mobile-prop"].Active(), map[string]string{presets.InputImage: img}, 42, broken); err == nil {
-		t.Fatal("expected an error")
-	}
-}
-
-// Keys recorded before jobs could carry views: a job without them must hit the same cache.
-func TestKeysWithoutViewsAreTheOnesCachedBefore(t *testing.T) {
-	want := map[string]string{
-		"bg": "stage:f1bf59b117a99b0d619662a05bf179ba", "frame": "stage:6610a7fdfe70ef593770199c261bcfdd",
-		"shape": "stage:c2feed8117db82eb65a582be2babdf98", "cleanup": "stage:b2a99c42d680dd704549b049cd3f2905",
-		"lowpoly": "stage:6304b8e48c9c09f9349c5c5a8abed897", "paint": "stage:a32432f3b6dddd906de5f3dacd42b2d1",
-		"bake": "stage:6822c2b65ef5d81e936f1383c578d914", "lods": "stage:2c5805f2a063807a3a51c729738b9946",
-		"export": "stage:975438e15178795e82c216bd0dc926e2",
-	}
-	for _, s := range plan(t, nil, same).Stages {
-		if s.Key != want[s.ID] {
-			t.Errorf("stage %s: key %s, was %s", s.ID, s.Key, want[s.ID])
-		}
-	}
+	expectChanged(t, changed(plan(t, nil), plan(t, nil)))
 }
 
 const left = "blake3:0000000000000000000000000000000000000000000000000000000000000002"
@@ -127,7 +70,7 @@ func viewPlan(t *testing.T, view string, readers ...string) *Plan {
 		return nil
 	}
 	p := all["mobile-prop"].Active().WithViews([]string{"left"}, reads)
-	pl, err := Build(p, map[string]string{presets.InputImage: img, presets.InputView("left"): view}, 42, same)
+	pl, err := Build(p, map[string]string{presets.InputImage: img, presets.InputView("left"): view}, 42)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -157,7 +100,7 @@ func TestASideViewIsPreparedLikeTheFrontAndReachesItsReaders(t *testing.T) {
 		t.Fatalf("paint %+v", s)
 	}
 	// The front's own stages keep their keys; a different side view rekeys only what reads it.
-	front := plan(t, nil, same)
+	front := plan(t, nil)
 	if byID["bg"].Key != front.Stages[0].Key || byID["frame"].Key != front.Stages[1].Key {
 		t.Fatal("the front's preparation was rekeyed")
 	}

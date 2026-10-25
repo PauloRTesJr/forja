@@ -229,7 +229,7 @@ A token goes only over https: a ComfyUI that takes one needs its proxy's `https:
 forja providers add comfyui https://comfy.example.com --workflow shape=hunyuan-shape.json --token-stdin < token.txt
 ```
 
-Forja checks each workflow (the API format, known placeholders, the inputs its stage needs) and asks ComfyUI's `/system_stats`, then copies each workflow beside `config.toml`, to `comfyui/<provider id>/<stage type>.json`. To change a workflow, edit that copy; the core reads it when it starts. A workflow is keyed by its content, so an edited workflow never reuses results cached from the old one.
+Forja checks each workflow (the API format, known placeholders, the inputs its stage needs) and asks ComfyUI's `/system_stats`, then copies each workflow beside `config.toml`, to `comfyui/<provider id>/<stage type>.json`. To change a workflow, edit that copy; the core reads it when it starts.
 
 ### Use it
 

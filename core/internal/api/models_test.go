@@ -15,7 +15,6 @@ import (
 	"testing"
 	"time"
 
-	"forja/internal/cache"
 	"forja/internal/catalog"
 	"forja/internal/config"
 	"forja/internal/engineapi"
@@ -27,6 +26,7 @@ import (
 	"forja/internal/provider"
 	"forja/internal/secrets"
 	"forja/internal/store"
+	"forja/internal/sweep"
 )
 
 // fakeEngine fakes a local engine that installs models instantly.
@@ -123,7 +123,7 @@ func newServer(t *testing.T) (*httptest.Server, *Server, *fakeEngine) {
 	runner := jobs.NewRunner(db, st, hub, reg, cat, cfg, log, "test", 2)
 	s := &Server{
 		DB: db, Store: st, Hub: hub, Providers: reg, Catalog: cat, Log: log, Config: cfg, Runner: runner,
-		Cache:    cache.New(db, st, runner, func() int64 { return 0 }, hub, log),
+		Sweeper:  sweep.New(db, st, runner, log),
 		Installs: installs.New(reg, cat, hub, log),
 		Engine:   localengine.New(func() (*config.Loaded, error) { return config.Load("", nil) }, st.Root, dir, log),
 	}

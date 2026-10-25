@@ -405,7 +405,7 @@ def test_hunyuan_mv_needs_a_front_and_stops_when_cancelled(tmp_path, hunyuan_mv)
 
 
 def test_every_manifest_mirrors_its_adapter_version():
-    """The core keys the cache by a manifest's adapter_version, so it must follow the class."""
+    """The core reads a model's adapter_version from its manifest, so it must follow the class."""
     for m in Registry.load().models.values():
         module, _, name = m.adapter.partition(":")
         version = getattr(importlib.import_module(module), name).version

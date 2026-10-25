@@ -124,7 +124,7 @@ func (r *Runner) restage(ctx context.Context, j *library.Job, prep *prepared) {
 		}
 		s.Fallbacks = o.Fallbacks
 		if o.Status == library.Succeeded && o.Provider == s.Provider && o.Model == s.Model {
-			s.Status, s.Key, s.Cached, s.Outputs, s.Seconds, s.PeakVRAM = o.Status, o.Key, o.Cached, o.Outputs, o.Seconds, o.PeakVRAM
+			s.Status, s.Outputs, s.Seconds, s.PeakVRAM = o.Status, o.Outputs, o.Seconds, o.PeakVRAM
 		}
 	}
 }

@@ -169,9 +169,7 @@ export function AssetDetail({ id }: { id: string }) {
                     <tr key={s.id} style={{ animationDelay: `${i * 25}ms` }}>
                       <td>{stageLabel(s.use)}</td>
                       <td className="muted">{s.model ?? 'built-in'}</td>
-                      <td style={{ textAlign: 'right' }} className={s.cached ? 'muted' : ''}>
-                        {s.cached ? 'cached' : seconds(s.seconds)}
-                      </td>
+                      <td style={{ textAlign: 'right' }}>{seconds(s.seconds)}</td>
                     </tr>
                   ))}
                 </tbody>

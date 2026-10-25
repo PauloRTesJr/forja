@@ -82,9 +82,6 @@ func TestDeletingAnAssetRemovesTheJobThatMadeItAndNothingElse(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := db.CachePut(ctx, "key", []Output{{Hash: "blake3:bb", Kind: "mesh/glb"}}, 1); err != nil {
-		t.Fatal(err)
-	}
 	gone, err := db.DeleteAsset(ctx, "a1")
 	if err != nil || gone.JobID != "j1" {
 		t.Fatalf("deleted %+v, %v", gone, err)
@@ -100,10 +97,6 @@ func TestDeletingAnAssetRemovesTheJobThatMadeItAndNothingElse(t *testing.T) {
 	}
 	if _, err := db.Job(ctx, "j2"); err != nil {
 		t.Fatalf("another job went too: %v", err)
-	}
-	// The same GLB was cached; another job with the same inputs reuses it.
-	if outs, ok, err := db.CacheGet(ctx, "key"); err != nil || !ok || outs[0].Hash != "blake3:bb" {
-		t.Fatalf("the stage cache lost %v (%v, %v)", outs, ok, err)
 	}
 	if _, err := db.DeleteAsset(ctx, "a1"); err != ErrNotFound {
 		t.Fatalf("deleting it twice: %v", err)

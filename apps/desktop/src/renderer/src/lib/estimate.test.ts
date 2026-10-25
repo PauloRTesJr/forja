@@ -78,7 +78,7 @@ describe('describeMoves', () => {
   it('words the stages that moved together in one sentence', () => {
     const down = { from: 'lan', to: 'local', reason: 'could not be reached', from_label: 'Studio PC', to_label: 'This computer' }
     const s = (id: string, use: string, fallbacks?: Fallback[]): Stage => ({
-      id, use, status: 'succeeded', key: '', cached: false, outputs: [], seconds: 0, step: 0, total: 0, fallbacks,
+      id, use, status: 'succeeded', outputs: [], seconds: 0, step: 0, total: 0, fallbacks,
     })
     const stages = [
       s('bg', 'background-removal', [down]),
@@ -96,7 +96,7 @@ describe('describeMoves', () => {
 describe('describeNotes', () => {
   it('words what each stage said about its outputs and leaves out the rest', () => {
     const s = (id: string, use: string, note?: string): Stage => ({
-      id, use, status: 'succeeded', key: '', cached: true, seconds: 0, step: 0, total: 0,
+      id, use, status: 'succeeded', seconds: 0, step: 0, total: 0,
       outputs: [{ hash: `blake3:${id}`, kind: 'mesh/glb', note }],
     })
     const simplified = 'QuadriFlow could not remesh this shape, so it was simplified the usual way instead: triangles, not quads'

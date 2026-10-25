@@ -41,8 +41,8 @@ class Manifest:
     adapter: str  # "module:Class"
     tasks: tuple[StageType, ...]
     license: License
-    # Mirrors the adapter class's `version`, so the core can key the cache without importing
-    # code that lives in another environment. tests/test_families.py keeps the two equal.
+    # Mirrors the adapter class's `version`, so the core can tell it without importing code
+    # that lives in another environment. tests/test_families.py keeps the two equal.
     adapter_version: str = "1"
     requirements: dict[str, Any] = field(default_factory=dict)
     params: dict[str, Any] = field(default_factory=dict)

@@ -152,9 +152,8 @@ def create_app(cfg: EngineConfig) -> FastAPI:
             "api_version": API_VERSION,
             "system": detect(cfg.store_root).to_json(),
             "fit_mode": cfg.fit_mode,
-            # Built-in stage versions; the core puts them in the cache key (model versions are
-            # in /v1/models). Stages this engine cannot run here are left out, with the reason
-            # in "unavailable" (API 1.7).
+            # Built-in stage versions (model versions are in /v1/models). Stages this engine
+            # cannot run here are left out, with the reason in "unavailable" (API 1.7).
             "stages": stages,
             "unavailable": unavailable,
             "lanes": {

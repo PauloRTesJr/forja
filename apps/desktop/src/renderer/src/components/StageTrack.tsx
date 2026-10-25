@@ -5,7 +5,7 @@ import { stageName } from '../lib/format'
 import { phaseState, phasesOf, stageFraction, stageTime } from '../lib/jobs'
 import { Star } from './icons'
 
-const starClass = (s: Stage): string => `star-slot ${s.status} ${s.cached ? 'cached' : ''}`
+const starClass = (s: Stage): string => `star-slot ${s.status}`
 
 /** The pipeline as phases; each phase's rule fills with transform only as its stages finish. */
 export function StageTrack({ stages }: { stages: Stage[] }) {
@@ -28,7 +28,7 @@ export function StageTrack({ stages }: { stages: Stage[] }) {
             </div>
             <div className="phase-stars">
               {p.stages.map((s) => (
-                <span key={s.id} className={starClass(s)} title={`${stageName(s)}: ${s.cached ? 'cached' : s.status}`}>
+                <span key={s.id} className={starClass(s)} title={`${stageName(s)}: ${s.status}`}>
                   <Star />
                 </span>
               ))}
@@ -47,7 +47,7 @@ export function StageList({ stages }: { stages: Stage[] }) {
       {stages.map((s) => {
         const where = whereItRan(s)
         return (
-          <li key={s.id} className={`${s.status} ${s.cached ? 'cached' : ''}`}>
+          <li key={s.id} className={s.status}>
             <Star size={13} />
             <span className="stage-name">{stageName(s)}</span>
             <span className="stage-model" title={where}>

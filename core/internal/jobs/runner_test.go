@@ -46,8 +46,6 @@ type fakeProvider struct {
 	held int
 	// pngs makes the images it prepares start like PNG files, for a hosted model that checks.
 	pngs bool
-	// infos counts the times it was asked what it runs.
-	infos int
 	// unavailable are the built-ins it says it cannot run here, with why.
 	unavailable map[string]string
 	// notes are what a stage type says about its first output, such as a stand-in it made.
@@ -69,7 +67,6 @@ func (f *fakeProvider) Health(context.Context) error { return nil }
 func (f *fakeProvider) Info(context.Context) (*engineapi.Info, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.infos++
 	if f.down {
 		return nil, errors.New("connection refused")
 	}
@@ -250,70 +247,43 @@ func wait(t *testing.T, r *Runner, id string) *library.Job {
 	return nil
 }
 
-func TestTextureRerunHitsTheShapeCache(t *testing.T) {
+// Nothing carries over from one job to the next: the same image again runs every stage again.
+func TestTheSameJobAgainRunsEveryStage(t *testing.T) {
 	r, fp, _, _, img := setup(t)
 	ctx := context.Background()
-	j1, err := r.Submit(ctx, SubmitRequest{Input: img, Preset: "mobile-prop", Name: "chest.png"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := wait(t, r, j1.ID); got.Status != library.Succeeded || got.AssetID == "" {
-		t.Fatalf("job 1: %s %s", got.Status, got.Error)
-	}
-	j2, _ := r.Submit(ctx, SubmitRequest{Input: img, Preset: "mobile-prop",
-		Overrides: map[string]any{"paint.resolution": 2048}})
-	got := wait(t, r, j2.ID)
-	cached := 0
-	for _, s := range got.Stages {
-		if s.Cached {
-			cached++
-		}
-	}
-	if cached != 5 {
-		t.Fatalf("expected the 5 pre-texture stages cached, got %d", cached)
-	}
-	if last := fp.runs[len(fp.runs)-1]; strings.Join(last, ",") != "paint,bake,lods,export" {
-		t.Fatalf("second run executed %v", last)
-	}
-}
-
-// A stage that made a stand-in says so on its output, and a cache hit on that output says it again.
-func TestAnOutputsNoteStaysWithItThroughTheCache(t *testing.T) {
-	r, fp, _, _, img := setup(t)
-	fp.set(func(f *fakeProvider) { f.notes = map[string]string{"mesh.decimate": "simplified instead"} })
-	for run := range 2 {
-		j, err := r.Submit(context.Background(), SubmitRequest{Input: img, Preset: "mobile-prop"})
+	var ran []string
+	for range 2 {
+		n := fp.count()
+		j, err := r.Submit(ctx, SubmitRequest{Input: img, Preset: "mobile-prop", Name: "chest.png"})
 		if err != nil {
 			t.Fatal(err)
 		}
-		got := wait(t, r, j.ID)
-		for _, s := range got.Stages {
-			want := []string(nil)
-			if s.Use == "mesh.decimate" {
-				want = []string{"simplified instead"}
-			}
-			if !slices.Equal(s.OutputNotes(), want) || s.Cached != (run == 1) {
-				t.Fatalf("run %d, stage %s: notes %q, cached %v", run, s.ID, s.OutputNotes(), s.Cached)
-			}
+		if got := wait(t, r, j.ID); got.Status != library.Succeeded || got.AssetID == "" {
+			t.Fatalf("job: %s %s", got.Status, got.Error)
 		}
+		ran = append(ran, fp.runsSince(n))
+	}
+	if ran[0] != "bg,sheet|frame,shape,cleanup,lowpoly,paint,bake,lods,export" || ran[1] != ran[0] {
+		t.Fatalf("the provider ran %q", ran)
 	}
 }
 
-// Asking a provider what it runs is a round trip: a job asks once when it is submitted and
-// once when it starts, not again for each plan it makes (looking for a sheet, then its stages).
-func TestAJobAsksItsProviderWhatItRunsOncePerRun(t *testing.T) {
+// A stage that made a stand-in says so on its output, and the job keeps that note.
+func TestAnOutputsNoteStaysWithIt(t *testing.T) {
 	r, fp, _, _, img := setup(t)
+	fp.set(func(f *fakeProvider) { f.notes = map[string]string{"mesh.decimate": "simplified instead"} })
 	j, err := r.Submit(context.Background(), SubmitRequest{Input: img, Preset: "mobile-prop"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := wait(t, r, j.ID); got.Status != library.Succeeded || got.Sheet == nil || !got.Sheet.Checked {
-		t.Fatalf("%s %s %+v", got.Status, got.Error, got.Sheet)
-	}
-	fp.mu.Lock()
-	defer fp.mu.Unlock()
-	if fp.infos != 2 {
-		t.Fatalf("asked %d times", fp.infos)
+	for _, s := range wait(t, r, j.ID).Stages {
+		want := []string(nil)
+		if s.Use == "mesh.decimate" {
+			want = []string{"simplified instead"}
+		}
+		if !slices.Equal(s.OutputNotes(), want) {
+			t.Fatalf("stage %s: notes %q", s.ID, s.OutputNotes())
+		}
 	}
 }
 
@@ -362,63 +332,6 @@ func (f *fakeProvider) executed(before int) string {
 		return ""
 	}
 	return strings.Join(f.runs[len(f.runs)-1], ",")
-}
-
-func TestNewVersionsOnTheProviderRecomputeFromTheStageThatChanged(t *testing.T) {
-	r, fp, _, _, img := setup(t)
-	ctx := context.Background()
-	submit := func() *library.Job {
-		t.Helper()
-		j, err := r.Submit(ctx, SubmitRequest{Input: img, Preset: "mobile-prop"})
-		if err != nil {
-			t.Fatal(err)
-		}
-		got := wait(t, r, j.ID)
-		if got.Status != library.Succeeded {
-			t.Fatalf("%s: %s", got.Status, got.Error)
-		}
-		return got
-	}
-	first := submit()
-	fp.set(func(f *fakeProvider) { f.stages["bake"] = "2" })
-	n := fp.count()
-	submit()
-	if got := fp.executed(n); got != "bake,lods,export" {
-		t.Fatalf("after a new bake version the provider ran %q", got)
-	}
-	fp.set(func(f *fakeProvider) { f.shape.Weights.Revision = "next" })
-	n = fp.count()
-	submit()
-	if got := fp.executed(n); got != "shape,cleanup,lowpoly,paint,bake,lods,export" {
-		t.Fatalf("after new shape weights the provider ran %q", got)
-	}
-	if first.Stages[0].Key == "" {
-		t.Fatal("keys are not recorded on the job")
-	}
-}
-
-func TestAnUnreachableProviderKeysWithItsLastAnswer(t *testing.T) {
-	r, fp, _, _, img := setup(t)
-	ctx := context.Background()
-	fp.set(func(f *fakeProvider) { f.down = true })
-	if _, err := r.Submit(ctx, SubmitRequest{Input: img, Preset: "mobile-prop"}); err == nil ||
-		!strings.Contains(err.Error(), "did not say what it runs") {
-		t.Fatalf("with no answer ever: %v", err)
-	}
-	fp.set(func(f *fakeProvider) { f.down = false })
-	j, _ := r.Submit(ctx, SubmitRequest{Input: img, Preset: "mobile-prop"})
-	if got := wait(t, r, j.ID); got.Status != library.Succeeded {
-		t.Fatalf("first answered job: %s %s", got.Status, got.Error)
-	}
-	fp.set(func(f *fakeProvider) { f.down = true })
-	n := fp.count()
-	j, _ = r.Submit(ctx, SubmitRequest{Input: img, Preset: "mobile-prop"})
-	if got := wait(t, r, j.ID); got.Status != library.Succeeded {
-		t.Fatalf("fully cached job while the provider is down: %s %s", got.Status, got.Error)
-	}
-	if got := fp.executed(n); got != "" {
-		t.Fatalf("a fully cached job ran %q", got)
-	}
 }
 
 // stageModels maps stage id to the model a submitted job uses.
@@ -519,7 +432,7 @@ func TestOptionalStagesRunOnlyWhenSwitchedOn(t *testing.T) {
 	if got := wait(t, r, j.ID); got.Status != library.Succeeded {
 		t.Fatalf("%s: %s", got.Status, got.Error)
 	}
-	if got := fp.executed(n); got != "match,bake,lods,export" {
+	if got := fp.executed(n); got != "frame,shape,cleanup,lowpoly,paint,match,bake,lods,export" {
 		t.Fatalf("switching match on ran %q", got)
 	}
 }
@@ -657,7 +570,7 @@ func TestSpendingLimitsRefuseJobsThatWouldPassThem(t *testing.T) {
 	limit := func(budget string) {
 		os.WriteFile(filepath.Join(project, "forja.toml"), []byte(pins+"[routing.budget_usd]\n"+budget+"\n"), 0o644)
 	}
-	// Each seed is a new shape, so each job pays; a cached one would cost nothing.
+	// Each job runs its hosted shape stage, so each job pays.
 	submit := func(seed int) error {
 		j, err := r.Submit(context.Background(), SubmitRequest{Input: img, Preset: "draft", Project: project, Seed: &seed})
 		if err == nil {
@@ -680,8 +593,8 @@ func TestSpendingLimitsRefuseJobsThatWouldPassThem(t *testing.T) {
 	}
 }
 
-func TestEvictionWaitsForRunningJobsAndHearsWhenTheLastEnds(t *testing.T) {
-	r, fp, _, st, img := setup(t)
+func TestSweepsWaitForRunningJobsAndHearWhenTheLastEnds(t *testing.T) {
+	r, fp, _, _, img := setup(t)
 	idle := make(chan struct{}, 4)
 	r.OnIdle = func() { idle <- struct{}{} }
 	hold := make(chan struct{})
@@ -702,7 +615,7 @@ func TestEvictionWaitsForRunningJobsAndHearsWhenTheLastEnds(t *testing.T) {
 			t.Fatal("the job never reached its shape")
 		}
 	}
-	if r.WhenIdle(func() { t.Error("eviction ran while a job built its shape") }) {
+	if r.WhenIdle(func() { t.Error("a sweep ran while a job built its shape") }) {
 		t.Fatal("WhenIdle ran during a job")
 	}
 	close(hold)
@@ -718,24 +631,6 @@ func TestEvictionWaitsForRunningJobsAndHearsWhenTheLastEnds(t *testing.T) {
 	if !r.WhenIdle(func() { ran = true }) || !ran {
 		t.Fatal("WhenIdle did not run once the job ended")
 	}
-
-	// A cache hit marks what it reuses as just used, so eviction keeps it longest.
-	var shape string
-	for _, s := range wait(t, r, j1.ID).Stages {
-		if s.Use == "shape" {
-			shape = s.Outputs[0].Hash
-		}
-	}
-	p, _ := st.Path(shape)
-	old := time.Now().Add(-48 * time.Hour)
-	if err := os.Chtimes(p, old, old); err != nil {
-		t.Fatal(err)
-	}
-	j2, _ := r.Submit(ctx, SubmitRequest{Input: img, Preset: "mobile-prop", Overrides: map[string]any{"paint.resolution": 2048}})
-	wait(t, r, j2.ID)
-	if info, _ := os.Stat(p); time.Since(info.ModTime()) > time.Minute {
-		t.Fatalf("the reused shape still looks used at %s", info.ModTime())
-	}
 }
 
 // runsSince lists the provider's runs after the first before, "|" between runs.
@@ -749,7 +644,7 @@ func (f *fakeProvider) runsSince(before int) string {
 	return strings.Join(runs, "|")
 }
 
-func TestASampleRunsEveryStageAndLeavesTheCacheAlone(t *testing.T) {
+func TestASampleMeasuresEveryStage(t *testing.T) {
 	r, fp, _, _, img := setup(t)
 	ctx := context.Background()
 	measure := func() Sample {
@@ -778,24 +673,6 @@ func TestASampleRunsEveryStageAndLeavesTheCacheAlone(t *testing.T) {
 	if s.Job.AssetID != "" || s.Engine <= 0 || s.Overhead() <= 0 || s.Overhead() >= s.Wall {
 		t.Fatalf("sample %+v, overhead %s", s, s.Overhead())
 	}
-	for _, st := range s.Job.Stages {
-		if st.Cached {
-			t.Fatalf("stage %s came from the cache", st.ID)
-		}
-	}
-	// It wrote nothing to the stage cache: a normal job runs everything as well.
-	j, _ := r.Submit(ctx, SubmitRequest{Input: img, Preset: "draft"})
-	for _, st := range wait(t, r, j.ID).Stages {
-		if st.Cached {
-			t.Fatalf("a normal job found %s cached by the sample", st.ID)
-		}
-	}
-	// And it reads nothing from it: with every stage cached now, a sample runs them all again.
-	before = fp.count()
-	measure()
-	if got := fp.runsSince(before); got != "bg,sheet|frame,shape,cleanup,export" {
-		t.Fatalf("the second sample ran %s", got)
-	}
 
 	for deadline := time.Now().Add(5 * time.Second); !r.WhenIdle(func() {}); time.Sleep(5 * time.Millisecond) {
 		if time.Now().After(deadline) {
@@ -804,11 +681,11 @@ func TestASampleRunsEveryStageAndLeavesTheCacheAlone(t *testing.T) {
 	}
 	release := r.Hold()
 	if r.WhenIdle(func() {}) {
-		t.Fatal("eviction ran while a benchmark held the runner")
+		t.Fatal("a sweep ran while a benchmark held the runner")
 	}
 	release()
 	release()
 	if !r.WhenIdle(func() {}) {
-		t.Fatal("eviction stayed away after the benchmark let go")
+		t.Fatal("sweeps stayed away after the benchmark let go")
 	}
 }

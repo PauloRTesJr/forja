@@ -45,7 +45,7 @@ function JobRow({ job, index }: { job: Job; index: number }) {
   const shown = open ?? job.status === 'running'
   const done = !isActive(job)
   const { headline, note } = summarize(job)
-  const ran = job.stages.reduce((t, s) => t + (s.cached ? 0 : s.seconds), 0)
+  const ran = job.stages.reduce((t, s) => t + s.seconds, 0)
   const error = job.stages.find((s) => s.status === 'failed')?.error ?? job.error
   // A stage that moved to another provider after a failure says so, even while collapsed.
   const moves = describeMoves(job.stages)

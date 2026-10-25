@@ -4,7 +4,7 @@
 
 ## What a run does
 
-- Each image goes through each preset the suite names. Every stage runs: a benchmark job neither reads nor writes the stage cache, reuses only outputs it made itself, and adds no asset to the library.
+- Each image goes through each preset the suite names. Every stage runs, as in any job: a job reuses only outputs it made itself in that run. A benchmark job adds no asset to the library.
 - Jobs are queued at batch priority, so jobs you start yourself, from the app or the CLI, go first. One benchmark runs at a time; a second one is refused until the first ends.
 - Every image uses the suite's seed, or 42.
 - The run measures the device of the provider that runs the first model stage: this computer, or the one routing picks ([routing](routing.md)). The result names it by its GPU, such as `nvidia-geforce-rtx-4070-ti`, or by its CPU when it has no GPU.
@@ -117,7 +117,7 @@ Each sample also records:
 
 - **Image to GLB**: from submitting the job to its GLB, less the time measuring took.
 - **Stages** and **loads**: the stages' own time and their model loads, added up.
-- **Core overhead**: the core's own time, everything but inference and the wait for a job slot: planning, cache lookups, moving artifacts, reading results and saving state.
+- **Core overhead**: the core's own time, everything but inference and the wait for a job slot: planning, moving artifacts, reading results and saving state.
 - **Asset**: the final GLB's triangles, vertices, materials and LODs.
 
 A quality score (CLIP similarity of rendered views, spec section 10) is not computed yet; the field is always `null`.

@@ -45,9 +45,9 @@ class MyShape(Adapter):
 - **`run`** gets a `StageContext`: `ctx.input(ArtifactKind.IMAGE_PNG)` for an input, `ctx.views()` for side views, `ctx.params`, `ctx.seed`, `ctx.out_dir`. Report `ctx.progress(step, total)` and call `ctx.check_cancel()` between steps (diffusion steps, for instance). Write outputs only into `ctx.out_dir` and return them; the first is the one the next stage reads.
 - **`unload`** frees device memory (`torch.cuda.empty_cache()` after dropping the pipeline).
 - **`estimate_vram(params)`** returns peak bytes for those params; the default is `capabilities().vram_bytes`.
-- **`version`** changes whenever outputs change for the same inputs; it is part of the [cache key](stage-cache.md).
+- **`version`** says which adapter behavior made an output. Bump it when outputs change for the same inputs, params and seed: a new algorithm, a fixed bug that changes results, a new default for a parameter read with `ctx.params.get(name, default)`. Bump the manifest's `adapter_version` with it; `engine/tests/test_families.py` fails when the two differ, and so does `forja-sdk test <manifest>`.
 
-An adapter never touches the network, the job graph or the cache, and gives byte-identical outputs for the same inputs, params and seed: seed every generator from `ctx.seed`.
+An adapter never touches the network or the job graph, and gives byte-identical outputs for the same inputs, params and seed: seed every generator from `ctx.seed`.
 
 What each model stage type reads and must return:
 
@@ -118,7 +118,7 @@ Everything an install downloads is pinned, so the same manifest always installs 
 - Weights: a 40-character commit `revision`, never a branch or tag, and a `sha256` for each large file.
 - Upstream code under a restrictive license is fetched at install time and never committed to Forja (decision 9).
 - No `trust_remote_code`. Pickle checkpoints load only through `torch.load(weights_only=True)`; prefer safetensors.
-- A new upstream commit, a new weights revision or a changed adapter each change the cache key; bump `version` and `adapter_version` for the last.
+- A new upstream commit or weights revision is a new pin; an adapter whose outputs change bumps `version` and `adapter_version` together.
 
 ## 5. Test it
 

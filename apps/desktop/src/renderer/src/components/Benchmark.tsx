@@ -35,8 +35,8 @@ export function Benchmark() {
     <div className="section bench">
       <SectionHead>Benchmark</SectionHead>
       <p className="bench-intro">
-        Runs a suite of reference images through its presets with nothing taken from the cache, and measures every stage: its
-        time, model load, memory, GPU use and the mesh it made.
+        Runs a suite of reference images through its presets and measures every stage: its time, model load, memory, GPU use
+        and the mesh it made.
       </p>
       {list.isPending && <div className="skeleton" style={{ height: 132 }} />}
       {list.error && <div className="error">{(list.error as Error).message}</div>}

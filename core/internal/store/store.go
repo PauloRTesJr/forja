@@ -3,8 +3,8 @@
 // Layout: <root>/objects/<2 hex>/<62 hex>, identical to engine/src/forja_engine/store.py,
 // so a co-located engine reads and writes the same files with zero copies.
 //
-// A file's modification time is when it was last stored or used: storing bytes it already
-// holds, and reusing a cached output, touch it. Eviction removes the least recently used.
+// A file's modification time is when it was last stored: storing bytes it already holds
+// touches it. A sweep leaves alone what was stored within the last hour.
 package store
 
 import (

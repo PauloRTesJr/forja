@@ -4,7 +4,7 @@ id: example-extrude
 name: Example extrude (template)
 family: example
 adapter: forja_example:ExampleExtrude
-# Mirrors ExampleExtrude.version; the core keys the stage cache by it.
+# Mirrors ExampleExtrude.version: bump both when the output changes for the same inputs.
 adapter_version: "1"
 tasks: [shape]
 description: Extrudes the cut-out's silhouette into a flat slab; the starting point for a new adapter.

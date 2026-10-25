@@ -502,8 +502,6 @@ func (a *app) stageLines(j *library.Job, seen map[string]string) {
 		switch {
 		case s.Status == library.Running:
 			a.printf("  %-10s %-20s running\n", j.Name, s.ID)
-		case s.Status == library.Succeeded && s.Cached:
-			a.printf("  %-10s %-20s cached\n", j.Name, s.ID)
 		case s.Status == library.Succeeded && s.PeakVRAM > 0:
 			a.printf("  %-10s %-20s done in %.2fs, peak %.1f GB VRAM\n", j.Name, s.ID, s.Seconds,
 				float64(s.PeakVRAM)/(1<<30))

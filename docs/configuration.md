@@ -38,7 +38,6 @@ forja config path                     # where the files are
 | `project.default_preset` | `mobile-prop` | The preset jobs use when none is given |
 | `models.stubs` | false | Allow the deterministic stub models |
 | `blender.path` | empty (found by itself) | Blender's program, for exports and Open in Blender |
-| `general.cache_max_gb` | 50 | Stage cache limit; 0 is none |
 
 Changing an engine setting this way restarts the engine when no job or install is running; otherwise the change applies when it next starts.
 
@@ -48,7 +47,7 @@ These live in `config.toml` (`forja config edit`); the CLI's own commands write 
 
 ```toml
 [general]
-data_dir = "D:/Forja"                 # library, cache, environments and weights
+data_dir = "D:/Forja"                 # library, environments and weights
 
 [engine]
 command = ["forja-engine"]            # how to start the local engine

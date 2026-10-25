@@ -83,8 +83,8 @@ class Remesh(Adapter):
     topology, at most `target_tris` triangles (the budget of the decimation it replaces).
 
     Not deterministic: QuadriFlow in Blender 5.2 makes a different mesh on each run for the same
-    seed, even on one thread. The stage cache keeps the first result, so a job re-run reuses it.
-    When QuadriFlow fails on every try, the stage decimates instead and says so in its output's note.
+    seed, even on one thread. When QuadriFlow fails on every try, the stage decimates instead and
+    says so in its output's note.
     """
 
     blender = True
@@ -393,7 +393,7 @@ def offered() -> tuple[dict[str, str], dict[str, str]]:
     """The built-in stages this engine runs, by adapter version, and why it runs no others.
 
     A Blender-backed stage is offered only where Blender is found, and its version names the
-    Blender too: another Blender makes other quads and UVs, so it must key the cache apart.
+    Blender too: another Blender makes other quads and UVs.
     """
     found: blender.Blender | None = None
     problem: str | None = None

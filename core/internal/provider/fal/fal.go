@@ -464,7 +464,7 @@ func (e *entry) model() engineapi.Model {
 		Params: map[string]any{}, Requires: map[string]any{},
 		Status: "ready", Device: &hosted, RunsOn: &hosted, Fit: "hosted", Rank: rank, Recommended: recommended,
 		Price: e.Price, Thumbnail: e.Thumbnail, AdapterVersion: "1",
-		// The endpoint id names the model version, so it keys cached results like a weight revision.
+		// The endpoint id names the model version, as a weight revision does.
 		Weights:       engineapi.Weights{Repo: "fal.ai", Revision: e.Endpoint},
 		ViewsRequired: e.ViewsRequired,
 	}

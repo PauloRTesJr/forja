@@ -57,17 +57,13 @@ default_preset = "environment-piece"
 
 ## Delete assets
 
-Deleting an asset removes it and the job that made it from the library (`forja assets rm <asset-id>`). Files you exported stay where they are. Its stage outputs stay in the cache, so regenerating it with other settings is fast, until eviction removes them.
+Deleting an asset removes it and the job that made it from the library (`forja assets rm <asset-id>`). Files you exported stay where they are. Its files in the object store go at the next sweep ([what stays on disk](#what-stays-on-disk)).
 
-## The cache
+## What stays on disk
 
-Every stage's output is kept by content and reused: a job that only changes the texture settings reruns only the stages after the shape. The cache is the store's files that no asset, job image or unfinished job uses.
+The object store keeps every asset's GLB, thumbnail and input, every job's input images, and everything an unfinished job uses. A sweep removes the rest: the stage outputs of finished jobs, such as intermediate meshes and textures, and the files of deleted assets.
 
-- `general.cache_max_gb` (Settings, "Cache size limit") caps it: 50 GB by default, 0 for no limit. Past the limit, the core removes the least recently used files down to nine tenths of it.
-- Eviction runs when the core starts, after the last running job ends, and when the limit or the library changes; never while a job runs, and never on files used in the last hour.
-- The library's own files never count against the limit and are never removed.
+- A sweep runs when the core starts, after the last running job ends, and after an asset is deleted. It never runs while a job runs, and it leaves alone anything stored in the last hour.
+- There is no setting, command or button for it.
 
-```sh
-forja cache          # the disk the cache and the library use
-forja cache clear    # remove every reusable stage output now (Settings, "Clear the cache")
-```
+Nothing carries over from one job to the next: running the same image again runs every stage from the start ([decision 37](decisions.md)).

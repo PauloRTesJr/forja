@@ -105,8 +105,7 @@ export interface Summary {
 export function summarize(job: Job): Summary {
   const n = job.stages.length
   const done = job.stages.filter((s) => s.status === 'succeeded').length
-  const cached = job.stages.filter((s) => s.cached).length
-  const ran = job.stages.reduce((t, s) => t + (s.cached ? 0 : s.seconds), 0)
+  const ran = job.stages.reduce((t, s) => t + s.seconds, 0)
   const at = (s: Stage): string => `stage ${job.stages.indexOf(s) + 1} of ${n}`
   switch (job.status) {
     case 'running': {
@@ -124,10 +123,7 @@ export function summarize(job: Job): Summary {
       return { headline: 'Several views found', note: `${views} views of one subject · check them to go on` }
     }
     case 'succeeded':
-      return {
-        headline: ran > 0 ? `Finished in ${seconds(ran)}` : 'Finished from cache',
-        note: cached ? `${cached} of ${n} stages reused from cache` : `${n} stages`,
-      }
+      return { headline: `Finished in ${seconds(ran)}`, note: `${n} stages` }
     case 'failed': {
       const s = job.stages.find((x) => x.status === 'failed')
       return s ? { headline: `Stopped at ${stageLabel(s.use)}`, note: at(s) } : { headline: 'Failed', note: `${done} of ${n} stages done` }
@@ -141,7 +137,7 @@ export function summarize(job: Job): Summary {
 export function stageTime(s: Stage): string {
   switch (s.status) {
     case 'succeeded':
-      return s.cached ? 'cached' : seconds(s.seconds)
+      return seconds(s.seconds)
     case 'running':
       return s.total > 0 ? `${Math.round((s.step / s.total) * 100)}%` : 'running'
     case 'failed':

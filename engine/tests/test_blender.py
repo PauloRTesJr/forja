@@ -70,7 +70,7 @@ def test_engines_without_blender_do_not_offer_its_stages(monkeypatch):
 
     monkeypatch.setattr(builtin.blender, "find", lambda: blender.Blender("/opt/blender", "5.2.1"))
     stages, unavailable = builtin.offered()
-    # The Blender is part of the version, so a new Blender keys the stage cache apart.
+    # The Blender is part of the version: another Blender makes other quads.
     assert stages["mesh.remesh"] == builtin.Remesh.version + "+blender-5.2.1" and unavailable == {}
 
 

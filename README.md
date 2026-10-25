@@ -11,7 +11,6 @@ What works today:
 - Four presets, from an untextured draft to a 30,000-triangle hero character ([presets](docs/presets.md)).
 - Local models: BiRefNet (background removal), TripoSG and Hunyuan3D-2mv (shape), Hunyuan3D-2 Paint (texture). Install them from the app or the CLI; each gets its own Python environment ([models](docs/models.md), [hardware](docs/hardware.md)).
 - Side and back views, and turnaround sheets split into views.
-- A stage cache: changing the texture settings reruns only the texture stages.
 - A library that exports to GLB, FBX, OBJ, glTF, USDZ, STL and .blend, opens assets in Blender, and drags them into other apps ([library](docs/library.md)).
 - Sharing a GPU with another computer by a six-digit pairing code ([sharing](docs/sharing.md)), and fal.ai's hosted models with a spending budget ([model hubs](docs/hubs.md)).
 - Rigging a character with UniRig or SkinTokens, with standard humanoid bone names that game engines retarget to, kept through the LODs and the FBX, glTF and .blend exports ([rigging](docs/rigging.md)).

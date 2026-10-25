@@ -52,7 +52,7 @@ jobs:
         run: |
           data=${DATA_DIR:-$HOME/.cache/forja-ci}
           mkdir -p "$data"
-          # A fresh library and store every night, so no stage comes from an earlier run's cache;
+          # A fresh library and store every night, so nothing an earlier night left counts;
           # model environments (envs/, _uv/) and weights (models/) stay.
           rm -rf "$data/store" "$data/logs" "$data"/library.db*
           {

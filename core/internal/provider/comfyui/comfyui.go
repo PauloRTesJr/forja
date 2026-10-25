@@ -12,8 +12,8 @@
 //
 // A value that is only a placeholder takes the value's type (a number stays a number). Inputs
 // upload to ComfyUI once per session by hash, and the file the workflow saves (a GLB for mesh
-// stages, an image for background removal) is downloaded into the core's store. A workflow is
-// keyed by its content, so editing it never reuses results cached from the old one.
+// stages, an image for background removal) is downloaded into the core's store. A workflow's
+// hash is its model revision, so an edited workflow shows as a new one.
 package comfyui
 
 import (
@@ -58,7 +58,7 @@ type Workflow struct {
 	Use   string
 	Name  string
 	Graph map[string]any
-	// Hash keys cached results: a changed workflow is a new model revision.
+	// Hash is the workflow's model revision: a changed workflow is a new one.
 	Hash  string
 	Views []string // views besides the front the workflow reads
 	Mesh  bool

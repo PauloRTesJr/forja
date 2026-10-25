@@ -4,8 +4,7 @@ package config
 func Defaults() map[string]any {
 	return map[string]any{
 		"general": map[string]any{
-			"language":     "en",
-			"cache_max_gb": int64(50),
+			"language": "en",
 		},
 		"engine": map[string]any{
 			"idle_unload_minutes": int64(15),

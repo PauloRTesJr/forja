@@ -31,8 +31,8 @@ Binding beyond loopback requires a token and TLS. Add it from another computer w
 | `ID()`, `Kind()` | The provider's id from config, and its kind (`engine`, `serverless`, `api`, `comfyui`) |
 | `Paid()` | True when it costs money. Paid providers are never an automatic fallback unless `routing.allow_paid_fallback` is on |
 | `Health(ctx)` | Cheap reachability and credential check; shown in the app and `forja providers ls` |
-| `Info(ctx)` | Versions and, under `Stages`, the version of each built-in stage it runs; these enter the [cache key](stage-cache.md) |
-| `Models(ctx)` | The models it can run, as `engineapi.Model`: stage types, status, license, price, and `adapter_version` and `weights.revision` for the cache key |
+| `Info(ctx)` | Versions and, under `Stages`, the version of each built-in stage it runs; they are reported, never part of a stage's key |
+| `Models(ctx)` | The models it can run, as `engineapi.Model`: stage types, status, license, price, `adapter_version` and `weights.revision` |
 | `SharesStore()` | True only when it reads the core's object store directly (the local engine) |
 | `HasArtifact`, `Upload`, `Download` | Move artifacts by content hash; upload only what the remote lacks |
 | `Run(ctx, req, events)` | Execute a stage graph, sending engine events (`stage.progress`, `artifact.ready`, ...) until it ends |

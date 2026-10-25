@@ -1,7 +1,7 @@
 // Applies pushed core events to the query cache. Nothing in the UI polls.
 import { useEffect, useState } from 'react'
 import type { QueryClient } from '@tanstack/react-query'
-import { taskDone, type Asset, type BenchList, type BenchResult, type CacheUsage, type InstallTask, type Job } from './api'
+import { taskDone, type Asset, type BenchList, type BenchResult, type InstallTask, type Job } from './api'
 import { withBench } from './bench'
 import { applyProgress, upsertJob } from './jobs'
 import { withoutAsset } from './selection'
@@ -25,7 +25,6 @@ export const keys = {
   spend: ['spend'] as const,
   catalog: (provider: string, q: string) => ['catalog', provider, q] as const,
   exportFormats: ['exportFormats'] as const,
-  cache: ['cache'] as const,
   bench: ['bench'] as const,
   benchResult: (id: string) => ['bench', id] as const,
   benchCompare: (baseline: string, current: string) => ['benchCompare', baseline, current] as const,
@@ -55,11 +54,10 @@ export function useCoreEvents(qc: QueryClient): boolean {
         case 'job.updated':
         case 'job.finished':
           qc.setQueryData<Job[]>(keys.jobs, (list) => upsertJob(list, ev.data as Job))
-          // A finished job may have run paid stages, and its outputs became cache. Its timings
-          // and costs change what the next one is estimated to take.
+          // A finished job may have run paid stages. Its timings and costs change what the next
+          // one is estimated to take.
           if (ev.type === 'job.finished') {
             void qc.invalidateQueries({ queryKey: keys.spend })
-            void qc.invalidateQueries({ queryKey: keys.cache })
             void qc.invalidateQueries({ queryKey: ['estimate'] })
           }
           break
@@ -79,13 +77,8 @@ export function useCoreEvents(qc: QueryClient): boolean {
           qc.setQueriesData<Asset[]>({ queryKey: ['assets'] }, (list) => withoutAsset(list, d.id))
           qc.setQueryData<Job[]>(keys.jobs, (list) => list?.filter((j) => j.id !== d.job))
           qc.removeQueries({ queryKey: keys.asset(d.id), exact: true })
-          // Its files are cache now.
-          void qc.invalidateQueries({ queryKey: keys.cache })
           break
         }
-        case 'cache.changed':
-          qc.setQueryData(keys.cache, ev.data as CacheUsage)
-          break
         case 'models.changed':
           void qc.invalidateQueries({ queryKey: keys.models })
           void qc.invalidateQueries({ queryKey: keys.presets })
@@ -103,7 +96,6 @@ export function useCoreEvents(qc: QueryClient): boolean {
           break
         case 'settings.changed':
           void qc.invalidateQueries({ queryKey: keys.exportFormats })
-          void qc.invalidateQueries({ queryKey: keys.cache })
           void qc.invalidateQueries({ queryKey: keys.settings })
           void qc.invalidateQueries({ queryKey: keys.config })
           void qc.invalidateQueries({ queryKey: keys.presets })

@@ -35,8 +35,7 @@ func (a *app) benchCmd() *cobra.Command {
 		Use:   "bench",
 		Short: "Measure every stage of a suite of reference images, per preset",
 		Long: "Runs a suite (a YAML file naming images and presets) as ordinary jobs, measured: every stage\n" +
-			"runs, none comes from the cache, and each records its time, model load, peak VRAM and RAM, GPU\n" +
-			"utilization and output stats. The result is kept with the core's data and, with --out, written\n" +
+			"records its time, model load, peak VRAM and RAM, GPU utilization and output stats. The result is kept with the core's data and, with --out, written\n" +
 			"there as " + benchJSON + " and a self-contained " + benchHTML + ". Without --suite, the suite is\n" +
 			"bench/suites/default.yaml in the Forja checkout around the current folder.\n\n" +
 			"Exit codes: 3 when a sample failed, 4 when cancelled.",

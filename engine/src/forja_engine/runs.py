@@ -1,7 +1,7 @@
 """Runs: a stage graph handed over by the core, executed once, then forgotten.
 
-The engine does not memoize. The core sends only stages it has no cached output for and
-passes earlier outputs in as `blake3:` refs.
+The engine does not memoize. The core sends the stages a job has yet to run and passes
+earlier outputs in as `blake3:` refs.
 """
 
 from __future__ import annotations

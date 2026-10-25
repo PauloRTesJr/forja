@@ -72,6 +72,6 @@ forja config set models.stubs=true
 | What | Windows | macOS | Linux |
 |---|---|---|---|
 | Settings (`config.toml`, presets) | `%APPDATA%\forja` | `~/Library/Application Support/forja` | `~/.config/forja` |
-| Library, cache, model environments and weights | `%LOCALAPPDATA%\forja` | `~/Library/Application Support/forja` | `~/.local/share/forja` |
+| Library, model environments and weights | `%LOCALAPPDATA%\forja` | `~/Library/Application Support/forja` | `~/.local/share/forja` |
 
 `general.data_dir` in `config.toml` moves the second folder, weights included (for example, to a larger drive); `forja config path` prints the files in use. The `FORJA_DATA_DIR` and `FORJA_CONFIG_DIR` environment variables override both folders, which is how a development build stays apart from an installed one.

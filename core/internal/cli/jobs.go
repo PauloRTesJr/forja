@@ -150,9 +150,6 @@ func (a *app) showJob(j *library.Job) {
 	a.table("STAGE\tUSE\tMODEL\tPROVIDER\tSTATUS\tSECONDS\tOUTPUT", func(row func(...any)) {
 		for _, s := range j.Stages {
 			status := string(s.Status)
-			if s.Cached {
-				status += " (cached)"
-			}
 			if s.Status == library.Running && s.Total > 0 {
 				status += fmt.Sprintf(" %d/%d", s.Step, s.Total)
 			}
