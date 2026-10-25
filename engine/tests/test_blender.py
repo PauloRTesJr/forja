@@ -119,22 +119,33 @@ def slivered_sphere() -> tuple[np.ndarray, np.ndarray]:
     return vertices, np.array(faces)
 
 
-@needs_blender
-def test_quad_remesh_merges_sliver_edges_instead_of_rebuilding_from_voxels(tmp_path):
-    vertices, faces = slivered_sphere()
-    np.save(tmp_path / "v.npy", vertices.astype(np.float32))
-    np.save(tmp_path / "f.npy", faces.astype(np.int32))
+def run_remesh(tmp_path, vertices, faces, quads: int) -> dict:
+    """blender_script's remesh on a mesh already at the working size, for what it reports."""
+    np.save(tmp_path / "v.npy", np.asarray(vertices, dtype=np.float32))
+    np.save(tmp_path / "f.npy", np.asarray(faces, dtype=np.int32))
     job = {
         "op": "remesh",
         "vertices": str(tmp_path / "v.npy"),
         "faces": str(tmp_path / "f.npy"),
-        "quads": 600,
+        "quads": quads,
         "seed": 7,
         "sharp": False,
         "out_vertices": str(tmp_path / "ov.npy"),
         "out_faces": str(tmp_path / "of.npy"),
     }
-    assert blender.run(job, tmp_path, 300)["voxel"] is False
+    return blender.run(job, tmp_path, 300)
+
+
+@needs_blender
+def test_quad_remesh_merges_sliver_edges_instead_of_rebuilding_from_voxels(tmp_path):
+    assert run_remesh(tmp_path, *slivered_sphere(), quads=600)["voxel"] is False
+
+
+@needs_blender
+def test_quad_remesh_keeps_its_last_run_when_aiming_again_fails(tmp_path):
+    # Asked for 9 quads, QuadriFlow makes the cube of 6; aiming again at 13 makes its solver fail.
+    cube = trimesh.creation.box((blender_mesh._WORK_SIZE,) * 3)
+    assert run_remesh(tmp_path, cube.vertices, cube.faces, quads=9) == {"quads": 6, "voxel": False}
 
 
 @needs_blender

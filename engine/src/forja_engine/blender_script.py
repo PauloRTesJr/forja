@@ -60,16 +60,21 @@ def tidy(ob):
 
 def quadriflow(ob, quads, seed, sharp):
     tidy(ob)
-    res = bpy.ops.object.quadriflow_remesh(
-        mode="FACES",
-        target_faces=max(4, int(quads)),
-        seed=seed,
-        use_preserve_sharp=sharp,
-        use_preserve_boundary=False,
-        use_mesh_symmetry=False,
-        preserve_attributes=False,
-        smooth_normals=False,
-    )
+    try:
+        res = bpy.ops.object.quadriflow_remesh(
+            mode="FACES",
+            target_faces=max(4, int(quads)),
+            seed=seed,
+            use_preserve_sharp=sharp,
+            use_preserve_boundary=False,
+            use_mesh_symmetry=False,
+            preserve_attributes=False,
+            smooth_normals=False,
+        )
+    except RuntimeError:
+        # Its solver fails outright on some face counts ("Remeshing failed") where a nearby count
+        # works, so this is a refusal like any other: the caller tries otherwise or keeps a run.
+        return False
     return "FINISHED" in res
 
 
