@@ -111,9 +111,10 @@ export function summarize(job: Job): Summary {
     case 'running': {
       const s = job.stages.find((x) => x.status === 'running')
       const overall = `${Math.round(jobFraction(job) * 100)}% overall`
-      return s
-        ? { headline: `Running ${stageLabel(s.use)}`, note: `${at(s)} · ${overall}` }
-        : { headline: 'Running', note: `${done} of ${n} stages done · ${overall}` }
+      if (!s) return { headline: 'Running', note: `${done} of ${n} stages done · ${overall}` }
+      // Another computer or a hosted model says where; its own word (a queue place) says more than a count.
+      const where = s.provider && s.provider !== 'local' ? ` on ${s.provider_label || s.provider}` : ''
+      return { headline: `Running ${stageLabel(s.use)}${where}`, note: `${s.note || at(s)} · ${overall}` }
     }
     case 'queued':
       return { headline: 'Waiting to start', note: done ? `${n - done} of ${n} stages left to run` : `${n} stages to run` }

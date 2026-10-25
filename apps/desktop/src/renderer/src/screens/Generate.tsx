@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useEffectEvent, useRef, useState, type DragEvent } from 'react'
 import { Composer } from '../components/Composer'
 import { Corners, DropSigil } from '../components/icons'
@@ -6,7 +6,7 @@ import { Confirm, isPreparing, Preparing } from '../components/Prepare'
 import { ScreenHead } from '../components/ScreenHead'
 import { Setup } from '../components/Setup'
 import { IMAGE, ViewsCard, type Draft } from '../components/ViewsCard'
-import { api, fetchPresets, importImage, submitJobs, uploadImage, type Job, type SubmitBody } from '../lib/api'
+import { api, fetchEstimate, fetchPresets, importImage, submitJobs, uploadImage, type Job, type SubmitBody } from '../lib/api'
 import { keys } from '../lib/events'
 import { needsAnswer, upsertJob } from '../lib/jobs'
 import { transition, useNavigate } from '../lib/nav'
@@ -73,13 +73,24 @@ export function Generate() {
   const [setupOpen, setSetupOpen] = useState(false)
   if (blocked && !current?.error && !setupOpen) setSetupOpen(true)
 
+  const overrides = Object.fromEntries(optional.map((s) => [`${s.id}.enabled`, isOn(s.id, s.optional!.default)]))
+  // What one image would take and cost as the recipe stands, before anything is queued. The
+  // last answer stays while the next loads, so the line changes in place.
+  const draftViews = draft ? SIDE_VIEWS.filter((v) => draft.views[v]) : []
+  const estimate = useQuery({
+    queryKey: keys.estimate(preset, overrides, draftViews),
+    queryFn: () => fetchEstimate({ preset, overrides, views: draftViews, images: 1 }),
+    enabled: current !== undefined && !blocked,
+    placeholderData: keepPreviousData,
+  })
+
   const submit = useMutation({
     mutationFn: (body: Pick<SubmitBody, 'paths' | 'input' | 'name' | 'views'>) =>
       submitJobs({
         ...body,
         preset,
         priority: (body.paths?.length ?? 1) === 1 ? 'interactive' : 'batch',
-        overrides: Object.fromEntries(optional.map((s) => [`${s.id}.enabled`, isOn(s.id, s.optional!.default)])),
+        overrides,
         // An image that turns out to hold several views waits for the user, on this screen.
         sheet: 'ask',
       }),
@@ -268,7 +279,14 @@ export function Generate() {
           {presets.isPending && <div className="skeleton" style={{ height: 320 }} />}
           {presets.error && <div className="error">{(presets.error as Error).message}</div>}
           {presets.data && (
-            <Composer presets={presets.data} preset={preset} onPreset={setPreset} isOn={isOn} onToggle={toggle} />
+            <Composer
+              presets={presets.data}
+              preset={preset}
+              onPreset={setPreset}
+              isOn={isOn}
+              onToggle={toggle}
+              estimate={blocked || estimate.isError ? null : estimate.data}
+            />
           )}
         </div>
       </div>

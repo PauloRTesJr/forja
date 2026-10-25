@@ -76,6 +76,14 @@ describe('summarize', () => {
     expect(summarize(j)).toEqual({ headline: 'Running Texture', note: 'stage 2 of 3 · 50% overall' })
   })
 
+  it('says where a stage runs off this computer, and what its provider says', () => {
+    const j = job('a', [
+      stage('shape', 'running', { provider: 'fal', provider_label: 'fal.ai', note: "Waiting in fal.ai's queue, position 2" }),
+      stage('export', 'queued'),
+    ])
+    expect(summarize(j)).toEqual({ headline: 'Running Shape on fal.ai', note: "Waiting in fal.ai's queue, position 2 · 17% overall" })
+  })
+
   it('names where a failed job stopped', () => {
     const j = { ...job('a', [stage('framing', 'succeeded'), stage('shape', 'failed')]), status: 'failed' as const }
     expect(summarize(j)).toEqual({ headline: 'Stopped at Shape', note: 'stage 2 of 2' })

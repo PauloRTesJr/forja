@@ -16,6 +16,7 @@ import { keys } from '../lib/events'
 import { useToast } from '../lib/toast'
 import { Choices, NumberInput, Row } from './Controls'
 import { ConnectHub } from './Hub'
+import { PriceTable } from './PriceTable'
 import { SectionHead } from './ScreenHead'
 
 /** Where models run: this computer, other computers, and sharing this one's GPU. */
@@ -58,13 +59,20 @@ export function Providers({ settings, onSet }: { settings: Map<string, Setting>;
               onChange={(v) => onSet(s.key, v)}
               options={[
                 { value: 'prefer-local', label: 'This computer first', help: 'Others only for models it cannot run.' },
+                { value: 'fastest', label: 'Fastest', help: 'Where each step ran quickest before.' },
+                { value: 'cheapest', label: 'Cheapest', help: 'Free computers before paid ones, then the lowest price.' },
                 { value: 'offline-only', label: 'Never leave this network', help: 'Only this computer and your own engines.' },
               ]}
             />
           )}
         </Row>
         {paid && (
-          <Row setting={settings.get('routing.allow_paid_fallback')} label="Let paid providers step in" help="When no free provider can run a stage." onReset={onSet}>
+          <Row
+            setting={settings.get('routing.allow_paid_fallback')}
+            label="Let paid providers step in"
+            help="When no free provider can run a stage, or the one it ran on is down or out of memory."
+            onReset={onSet}
+          >
             {(s, locked) => (
               <button className="switch" role="switch" aria-checked={s.value === true} disabled={locked} onClick={() => onSet(s.key, s.value !== true)}>
                 <span className="switch-track" aria-hidden />
@@ -77,7 +85,7 @@ export function Providers({ settings, onSet }: { settings: Map<string, Setting>;
           <>
             {(
               [
-                ['routing.budget_usd.per_job', 'Spending limit per image', 'A job whose paid steps would cost more is refused.'],
+                ['routing.budget_usd.per_job', 'Spending limit per image', 'A job whose paid steps would cost more is refused, or stopped once it would.'],
                 ['routing.budget_usd.per_day', 'Spending limit per day', spend.data ? `Spent today: $${spend.data.today.toFixed(2)}.` : ''],
                 ['routing.budget_usd.per_month', 'Spending limit per month', spend.data ? `Spent this month: $${spend.data.month.toFixed(2)}.` : ''],
               ] as const
@@ -88,6 +96,7 @@ export function Providers({ settings, onSet }: { settings: Map<string, Setting>;
                 )}
               </Row>
             ))}
+            <PriceTable />
           </>
         )}
       </div>
