@@ -42,7 +42,24 @@ def triangles(me):
     return v, f
 
 
+# QuadriFlow refuses a mesh with any edge whose ends are within 1e-4 of each other on every axis,
+# which a voxel rebuild leaves here and there (two in 350,000 faces is enough). The engine scales
+# meshes to 100 units, so merging closer vertices changes nothing anyone could see.
+TIDY = 2e-4
+
+
+def tidy(ob):
+    bm = bmesh.new()
+    bm.from_mesh(ob.data)
+    bmesh.ops.remove_doubles(bm, verts=bm.verts, dist=TIDY)
+    bmesh.ops.dissolve_degenerate(bm, edges=bm.edges, dist=TIDY)
+    bm.to_mesh(ob.data)
+    bm.free()
+    ob.data.update()
+
+
 def quadriflow(ob, quads, seed, sharp):
+    tidy(ob)
     res = bpy.ops.object.quadriflow_remesh(
         mode="FACES",
         target_faces=max(4, int(quads)),
@@ -63,15 +80,25 @@ def remesh(job):
     voxel = False
     if not quadriflow(ob, want, job["seed"], job["sharp"]):
         # QuadriFlow takes only closed, consistently wound meshes: rebuild the surface from voxels
-        # a quarter of a quad's edge wide, which closes holes and drops inner shells.
+        # a quarter of a quad's edge wide, which closes holes and drops inner shells. A coarser
+        # rebuild is tried before giving up: it loses detail the bake brings back.
         area = np.zeros(len(ob.data.polygons), dtype=np.float32)
         ob.data.polygons.foreach_get("area", area)
-        ob.data.remesh_voxel_size = math.sqrt(float(area.sum()) / want) / 4
-        bpy.ops.object.voxel_remesh()
-        base = ob.data.copy()
-        voxel = True
-        if not quadriflow(ob, want, job["seed"], job["sharp"]):
-            return {"error": "QuadriFlow could not remesh this shape, even rebuilt from voxels"}
+        source = ob.data.copy()
+        edge = math.sqrt(float(area.sum()) / want)
+        for fraction in (4, 2, 1):
+            ob.data = source.copy()
+            ob.data.remesh_voxel_size = edge / fraction
+            bpy.ops.object.voxel_remesh()
+            base = ob.data.copy()
+            voxel = True
+            if quadriflow(ob, want, job["seed"], job["sharp"]):
+                break
+        else:
+            return {
+                "error": "QuadriFlow could not remesh this shape, even rebuilt from voxels; "
+                "turn off Quad remesh for this image to use the usual simplification"
+            }
     # QuadriFlow lands near, not on, the face count it is asked for: aim once more from what it made.
     runs = []
     ask = want

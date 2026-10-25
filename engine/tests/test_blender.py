@@ -71,7 +71,7 @@ def test_engines_without_blender_do_not_offer_its_stages(monkeypatch):
     monkeypatch.setattr(builtin.blender, "find", lambda: blender.Blender("/opt/blender", "5.2.1"))
     stages, unavailable = builtin.offered()
     # The Blender is part of the version, so a new Blender keys the stage cache apart.
-    assert stages["mesh.remesh"] == "1+blender-5.2.1" and unavailable == {}
+    assert stages["mesh.remesh"] == builtin.Remesh.version + "+blender-5.2.1" and unavailable == {}
 
 
 def ctx(tmp_path, task, mesh, **params):
@@ -96,6 +96,45 @@ def test_quad_remesh_stays_within_the_triangle_budget(tmp_path):
         assert out.is_watertight
         # Still the sphere: every vertex lies close to the unit surface.
         assert np.abs(np.linalg.norm(out.vertices, axis=1) - 1).max() < 0.05
+
+
+def slivered_sphere() -> tuple[np.ndarray, np.ndarray]:
+    """A closed sphere at the engine's working size with one edge split a hair from its end, the
+    kind of sliver a voxel rebuild leaves: QuadriFlow takes it for a zero-length edge."""
+    sphere = trimesh.creation.icosphere(subdivisions=4, radius=blender_mesh._WORK_SIZE / 2)
+    a, b = (int(i) for i in sphere.faces[0, :2])
+    d = len(sphere.vertices)
+    vertices = np.vstack(
+        [sphere.vertices, sphere.vertices[a] + 1e-5 * (sphere.vertices[b] - sphere.vertices[a])]
+    )
+    faces = []
+    for face in sphere.faces.tolist():
+        for i in range(3):
+            p, q, r = face[i], face[(i + 1) % 3], face[(i + 2) % 3]
+            if {p, q} == {a, b}:
+                faces += [[p, d, r], [d, q, r]]  # split, keeping the winding
+                break
+        else:
+            faces.append(face)
+    return vertices, np.array(faces)
+
+
+@needs_blender
+def test_quad_remesh_merges_sliver_edges_instead_of_rebuilding_from_voxels(tmp_path):
+    vertices, faces = slivered_sphere()
+    np.save(tmp_path / "v.npy", vertices.astype(np.float32))
+    np.save(tmp_path / "f.npy", faces.astype(np.int32))
+    job = {
+        "op": "remesh",
+        "vertices": str(tmp_path / "v.npy"),
+        "faces": str(tmp_path / "f.npy"),
+        "quads": 600,
+        "seed": 7,
+        "sharp": False,
+        "out_vertices": str(tmp_path / "ov.npy"),
+        "out_faces": str(tmp_path / "of.npy"),
+    }
+    assert blender.run(job, tmp_path, 300)["voxel"] is False
 
 
 @needs_blender

@@ -87,6 +87,8 @@ class Remesh(Adapter):
     """
 
     blender = True
+    # 2: sliver edges merged before QuadriFlow, and coarser voxel rebuilds tried before failing.
+    version = "2"
 
     def capabilities(self) -> Capabilities:
         return Capabilities(tasks=(StageType.MESH_REMESH,), devices=CPU)
