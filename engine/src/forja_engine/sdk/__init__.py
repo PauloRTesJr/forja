@@ -1,11 +1,11 @@
-"""Adapter SDK: the contract every model family implements.
+"""The adapter SDK, as the engine and its families import it.
 
-An adapter declares which stage types it serves (`tasks`) and runs one stage at a time.
-It never touches the network, the job graph or the cache: it gets input files, writes
-output files, reports progress, and checks for cancellation between steps.
+The contract lives in the `forja-engine-sdk` distribution (`forja_sdk`, in engine/sdk/), so
+third-party adapters can depend on it without the engine. These are the same objects, not
+copies: `isinstance` checks and `except Cancelled` hold across both import paths.
 """
 
-from forja_engine.sdk.types import (
+from forja_sdk import (
     VIEWS,
     Adapter,
     ArtifactKind,

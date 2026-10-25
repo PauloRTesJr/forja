@@ -1,0 +1,172 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Forja model manifest",
+  "description": "One model: what it is, the adapter that runs it, what it needs, where its pinned weights come from and what its license allows. Manifests are YAML; this schema reads them as JSON.",
+  "type": "object",
+  "required": ["id", "family", "adapter", "tasks", "license"],
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "description": "Unique across every catalog; used in config, the CLI and the cache key.",
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]*$"
+    },
+    "name": { "type": "string", "minLength": 1 },
+    "description": { "description": "One line for the Models screen.", "type": "string" },
+    "family": {
+      "description": "Selects the worker and its virtual environment: engine/families/<family>, a model package's family.yaml, or the engine's own (builtin, stub).",
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9_-]*$"
+    },
+    "adapter": {
+      "description": "module:Class of the forja_sdk.Adapter subclass that runs the model.",
+      "type": "string",
+      "pattern": "^[A-Za-z_][A-Za-z0-9_.]*:[A-Za-z_][A-Za-z0-9_]*$"
+    },
+    "adapter_version": {
+      "description": "Mirrors the adapter class's version; part of the stage cache key. Bump both when outputs change for the same inputs.",
+      "type": "string",
+      "minLength": 1
+    },
+    "tasks": {
+      "description": "The stage types the model serves.",
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "background-removal",
+          "framing",
+          "shape",
+          "mesh.cleanup",
+          "mesh.decimate",
+          "mesh.uv",
+          "texture",
+          "texture.match",
+          "bake",
+          "mesh.lods",
+          "export",
+          "views.detect",
+          "views.split"
+        ]
+      }
+    },
+    "license": {
+      "description": "Every manifest carries license metadata; the catalog check rejects one without it.",
+      "type": "object",
+      "required": ["spdx", "commercial"],
+      "additionalProperties": false,
+      "properties": {
+        "spdx": {
+          "description": "An SPDX identifier, or LicenseRef-<name> for a license SPDX does not list.",
+          "type": "string",
+          "pattern": "^(LicenseRef-[A-Za-z0-9.-]+|[A-Za-z0-9.+-]+)( (AND|OR|WITH) [A-Za-z0-9.+-]+)*$"
+        },
+        "commercial": { "description": "Whether commercial use is allowed.", "type": "boolean" },
+        "restrictions": {
+          "description": "Plain-language limits the Models screen shows: territories, user counts, attribution.",
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "url": {
+          "description": "The license text at a pinned revision.",
+          "type": "string",
+          "pattern": "^https://"
+        }
+      }
+    },
+    "requirements": {
+      "description": "Per backend: whether the model runs there and what it needs.",
+      "type": "object",
+      "propertyNames": { "enum": ["cuda", "mps", "rocm", "cpu"] },
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "status": { "enum": ["supported", "experimental", "unsupported"] },
+          "min_vram_gb": { "type": "number", "minimum": 0 },
+          "dtypes": { "type": "array", "items": { "enum": ["fp32", "fp16", "bf16", "int8", "int4"] } }
+        }
+      }
+    },
+    "params": {
+      "description": "Stage parameters the model reads, with defaults; the app builds its form from them.",
+      "type": "object",
+      "propertyNames": { "pattern": "^[a-z][a-z0-9_]*$" },
+      "additionalProperties": { "$ref": "#/$defs/param" }
+    },
+    "weights": { "$ref": "#/$defs/weights" },
+    "vram_gb": {
+      "description": "Peak VRAM at default params, from the publisher; the engine replaces it with measured peaks.",
+      "type": "number",
+      "minimum": 0
+    },
+    "disk_gb": { "description": "Disk an install takes: environment plus weights.", "type": "number", "minimum": 0 },
+    "rank": {
+      "description": "Orders models for the same stage when a preset leaves the model open; higher first.",
+      "type": "integer"
+    },
+    "stub": {
+      "description": "A deterministic stand-in for tests, picked only with models.stubs = true.",
+      "type": "boolean"
+    },
+    "views": {
+      "description": "The views of the subject the model reads besides the front.",
+      "type": "array",
+      "uniqueItems": true,
+      "contains": { "const": "front" },
+      "items": { "enum": ["front", "left", "back", "right"] }
+    },
+    "python": {
+      "description": "An explicit interpreter, for development only; catalog manifests leave it out.",
+      "type": "string"
+    }
+  },
+  "if": { "not": { "properties": { "stub": { "const": true } }, "required": ["stub"] } },
+  "then": { "properties": { "license": { "required": ["spdx", "commercial", "url"] } } },
+  "$defs": {
+    "param": {
+      "type": "object",
+      "required": ["type", "default"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "enum": ["integer", "number", "boolean", "string"] },
+        "default": {},
+        "minimum": { "type": "number" },
+        "maximum": { "type": "number" },
+        "enum": { "type": "array", "minItems": 1 },
+        "description": { "type": "string" }
+      }
+    },
+    "weights": {
+      "description": "Where install downloads the weights from. Pinned: a commit revision, and sha256 for listed files.",
+      "type": "object",
+      "required": ["repo", "revision"],
+      "additionalProperties": false,
+      "properties": {
+        "hub": { "enum": ["huggingface"] },
+        "repo": { "type": "string", "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$" },
+        "revision": {
+          "description": "A full commit sha, never a branch or tag.",
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "allow": { "type": "array", "items": { "type": "string" } },
+        "ignore": { "type": "array", "items": { "type": "string" } },
+        "files": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["path"],
+            "additionalProperties": false,
+            "properties": {
+              "path": { "type": "string", "minLength": 1 },
+              "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+              "bytes": { "type": "integer", "minimum": 0 }
+            }
+          }
+        }
+      }
+    }
+  }
+}

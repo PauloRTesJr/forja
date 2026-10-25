@@ -344,7 +344,7 @@ def for_models(manifests: list[Manifest], models_dir: Path, lane: str | None = N
     fams: dict[str, families.Family] = {}
     for m in real:
         try:
-            fams[m.family] = families.load(m.family)
+            fams[m.family] = families.load(m.family, m.family_dir)
         except FileNotFoundError:
             continue
     here = []

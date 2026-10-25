@@ -1,0 +1,2 @@
+# Nothing GPU-specific: the example runs on the CPU on every machine.
+-r cpu.txt
