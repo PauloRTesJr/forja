@@ -70,14 +70,47 @@ def test_install_builds_the_family_environment_from_the_package(tmp_path, monkey
     assert Registry.load([TEMPLATE]).bind(envs, tmp_path / "models").models[MODEL].installed
 
 
-def package(root: Path, family: str, manifest_family: str) -> Path:
+def package(root: Path, family: str, manifest_family: str, model: str = "m") -> Path:
     (root / "manifests").mkdir(parents=True)
-    (root / "family.yaml").write_text(f"name: {family}\nlanes: [cpu]\n")
+    (root / "family.yaml").write_text(f"name: '{family}'\nlanes: [cpu]\n")
     (root / "manifests" / "m.yaml").write_text(
-        f"id: m\nfamily: {manifest_family}\nadapter: x:Y\ntasks: [shape]\n"
+        f"id: '{model}'\nfamily: '{manifest_family}'\nadapter: x:Y\ntasks: [shape]\n"
         "license: { spdx: MIT, commercial: true }\n"
     )
     return root
+
+
+# The installer deletes <data>/models/<id> and <data>/envs/<family> on remove, and installs a
+# package's own code under the model's name.
+@pytest.mark.parametrize(
+    ("family", "model", "says"),
+    [
+        ("mine", "triposg", "already defined by the engine"),
+        ("mine", "stub-shape", "already defined by the engine"),
+        ("mine", "../../outside", "not a name like"),
+        ("mine", "a/b", "not a name like"),
+        ("mine", "Big", "not a name like"),
+        ("mine", "a..b", "not a name like"),
+        ("../envs", "m", "not a name like"),
+        ("a.b", "m", "not a name like"),
+    ],
+)
+def test_a_package_cannot_reuse_or_escape_a_name(tmp_path, family, model, says):
+    with pytest.raises(ManifestError, match=says):
+        Registry.load([package(tmp_path / "pkg", family, family, model)])
+
+
+def test_two_folders_cannot_define_the_same_model(tmp_path):
+    loose = tmp_path / "loose"
+    loose.mkdir()
+    (loose / "x.yaml").write_text(
+        "id: birefnet\nfamily: birefnet\nadapter: x:Y\ntasks: [background-removal]\n"
+        "license: { spdx: MIT, commercial: true }\n"
+    )
+    with pytest.raises(ManifestError, match="already defined by the engine"):
+        Registry.load([loose])
+    with pytest.raises(ManifestError, match="already defined by"):
+        Registry.load([package(tmp_path / "a", "mine", "mine"), package(tmp_path / "b", "yours", "yours")])
 
 
 @pytest.mark.parametrize(

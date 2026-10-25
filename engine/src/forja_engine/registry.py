@@ -7,6 +7,7 @@ runs it and to the interpreter of the family's own virtual environment.
 from __future__ import annotations
 
 import importlib
+import re
 import sys
 from dataclasses import dataclass, field, replace
 from functools import cache
@@ -137,13 +138,26 @@ def upstream_pin(family: str, root: Path | None = None) -> str:
     return up.sha256 if up else ""
 
 
+# A model id and a family name each name a folder the installer creates and removes
+# (<data>/models/<id>, <data>/envs/<family>), so neither may reach outside it. As in
+# catalog/schema.
+_MODEL_ID = re.compile(r"[a-z0-9][a-z0-9._-]*")
+_FAMILY = re.compile(r"[a-z0-9][a-z0-9_-]*")
+
+
+def _slug(value: Any, pattern: re.Pattern[str], what: str) -> str:
+    if not isinstance(value, str) or not pattern.fullmatch(value) or ".." in value:
+        raise ValueError(f"{what} {value!r} is not a name like 'my-model' ({pattern.pattern}, no '..')")
+    return value
+
+
 def parse(doc: dict[str, Any], source: str) -> Manifest:
     try:
         lic = doc["license"]
         return Manifest(
-            id=doc["id"],
+            id=_slug(doc["id"], _MODEL_ID, "model id"),
             name=doc.get("name", doc["id"]),
-            family=doc["family"],
+            family=_slug(doc["family"], _FAMILY, "family"),
             adapter=doc["adapter"],
             tasks=tuple(StageType(t) for t in doc["tasks"]),
             license=License(
@@ -175,7 +189,10 @@ def _package(root: Path) -> list[Manifest]:
     package, the same way it does for engine/families.
     """
     doc = yaml.safe_load((root / "family.yaml").read_text(encoding="utf-8")) or {}
-    family = str(doc.get("name", ""))
+    try:
+        family = _slug(doc.get("name", ""), _FAMILY, "family")
+    except ValueError as e:
+        raise ManifestError(f"{root / 'family.yaml'}: {e}") from e
     if family in IN_ENGINE_FAMILIES or (families.families_dir() / family / "family.yaml").is_file():
         raise ManifestError(
             f"{root}: family {family!r} is one of the engine's; give the package its own name"
@@ -218,12 +235,21 @@ class Registry:
         for entry in sorted(builtin_dir.iterdir(), key=lambda e: e.name):
             if entry.name.endswith((".yaml", ".yml")):
                 found.append(parse(yaml.safe_load(entry.read_text()), entry.name))
+        # A manifest from outside the engine never replaces one, bundled or from another folder:
+        # it would run its own code, under a name the user trusts, on install and remove.
+        sources = {m.id: "the engine" for m in found}
         for d in extra_dirs or []:
             if (d / "family.yaml").is_file():
-                found += _package(d)
-                continue
-            for path in sorted(d.glob("*.y*ml")):
-                found.append(parse(yaml.safe_load(path.read_text()), str(path)))
+                extra = _package(d)
+            else:
+                extra = [parse(yaml.safe_load(p.read_text()), str(p)) for p in sorted(d.glob("*.y*ml"))]
+            for m in extra:
+                if m.id in sources:
+                    raise ManifestError(
+                        f"{d}: model {m.id!r} is already defined by {sources[m.id]}; give it its own id"
+                    )
+                sources[m.id] = str(d)
+            found += extra
         return cls(found)
 
     def resolve(self, task: StageType, model: str | None) -> Manifest | None:
