@@ -1,0 +1,271 @@
+# Release pipeline (spec, section 15). A tag vX.Y.Z publishes a stable release; vX.Y.Z-rc.N and
+# vX.Y.Z-beta.N publish prereleases, the beta channel. To cut one: `make version V=X.Y.Z`,
+# commit, tag that commit. A stable tag needs the GPU nightly and the benchmark gate green on
+# its commit (tag a release candidate there first: it runs both), unless the repository has no
+# GPU runner (variable FORJA_GPU_RUNNER).
+#
+# Signing happens only when its secrets exist; otherwise the packages are unsigned:
+#   Windows (Authenticode): WIN_CSC_LINK, WIN_CSC_KEY_PASSWORD
+#   macOS (Developer ID, notarization): CSC_LINK, CSC_KEY_PASSWORD, APPLE_ID,
+#     APPLE_APP_SPECIFIC_PASSWORD, APPLE_TEAM_ID (read by the mac section of electron-builder.yml)
+name: Release
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+      - "v[0-9]+.[0-9]+.[0-9]+-rc.[0-9]+"
+      - "v[0-9]+.[0-9]+.[0-9]+-beta.[0-9]+"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+
+jobs:
+  meta:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
+      channel: ${{ steps.version.outputs.channel }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          version: "0.12.22"
+          enable-cache: "false"
+      - id: version
+        run: |
+          version=${GITHUB_REF_NAME#v}
+          if [ "$(cat VERSION)" != "$version" ]; then
+            echo "::error::$GITHUB_REF_NAME does not match VERSION ($(cat VERSION)): run make version V=$version, commit, and tag that commit."
+            exit 1
+          fi
+          uv run --no-project python scripts/version.py --check
+          echo "version=$version" >>"$GITHUB_OUTPUT"
+          case $version in
+            *-*) printf 'prerelease=true\nchannel=beta\n' >>"$GITHUB_OUTPUT" ;;
+            *) printf 'prerelease=false\nchannel=stable\n' >>"$GITHUB_OUTPUT" ;;
+          esac
+
+  gpu-gates:
+    needs: meta
+    if: needs.meta.outputs.prerelease == 'false'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          GPU_RUNNER: ${{ vars.FORJA_GPU_RUNNER }}
+        run: |
+          if [ "$GPU_RUNNER" != true ]; then
+            echo "::warning::No GPU runner (FORJA_GPU_RUNNER): releasing without the GPU nightly and the benchmark gate."
+            exit 0
+          fi
+          fail=0
+          for wf in gpu-nightly.yml bench-gate.yml; do
+            n=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow "$wf" --commit "$GITHUB_SHA" \
+              --status success --limit 1 --json databaseId --jq length)
+            if [ "$n" = 0 ]; then
+              echo "::error::$wf has not passed on $GITHUB_SHA: tag a release candidate on this commit and let it finish."
+              fail=1
+            fi
+          done
+          exit "$fail"
+
+  core:
+    needs: meta
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        with:
+          python: "false"
+          node: "false"
+      - run: make core-all VERSION="${{ needs.meta.outputs.version }}"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-core
+          path: core/bin/forja-*
+          if-no-files-found: error
+
+  desktop:
+    name: desktop (${{ matrix.os }})
+    needs: meta
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        with:
+          python: "false"
+      - name: Package
+        env:
+          VERSION: ${{ needs.meta.outputs.version }}
+          WIN_CSC_LINK: ${{ runner.os == 'Windows' && secrets.WIN_CSC_LINK || '' }}
+          WIN_CSC_KEY_PASSWORD: ${{ runner.os == 'Windows' && secrets.WIN_CSC_KEY_PASSWORD || '' }}
+          CSC_LINK: ${{ runner.os == 'macOS' && secrets.CSC_LINK || '' }}
+          CSC_KEY_PASSWORD: ${{ runner.os == 'macOS' && secrets.CSC_KEY_PASSWORD || '' }}
+          APPLE_ID: ${{ runner.os == 'macOS' && secrets.APPLE_ID || '' }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ runner.os == 'macOS' && secrets.APPLE_APP_SPECIFIC_PASSWORD || '' }}
+          APPLE_TEAM_ID: ${{ runner.os == 'macOS' && secrets.APPLE_TEAM_ID || '' }}
+        run: |
+          # An empty variable is not a missing one to every tool: unset what has no secret.
+          for v in WIN_CSC_LINK WIN_CSC_KEY_PASSWORD CSC_LINK CSC_KEY_PASSWORD APPLE_ID \
+            APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID; do
+            [ -n "${!v}" ] || unset "$v"
+          done
+          if [ -n "${WIN_CSC_LINK:-}${CSC_LINK:-}" ]; then echo "Signing this build."; else
+            echo "::warning::No signing certificate for $RUNNER_OS: this package is unsigned."
+          fi
+          make dist VERSION="$VERSION"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-desktop-${{ runner.os }}
+          path: |
+            apps/desktop/release/*.exe
+            apps/desktop/release/*.zip
+            apps/desktop/release/*.dmg
+            apps/desktop/release/*.AppImage
+            apps/desktop/release/*.deb
+          if-no-files-found: error
+
+  # The engine image for remote GPUs (spec, section 8), one per torch lane. No weights inside.
+  engine-image:
+    name: engine image (${{ matrix.cuda }})
+    needs: meta
+    strategy:
+      fail-fast: false
+      matrix:
+        cuda: [cu124, cpu]
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - id: image
+        run: |
+          if [ ! -f docker/engine/Dockerfile ]; then
+            echo "::notice::docker/engine/Dockerfile is absent: this release has no engine image."
+            exit 0
+          fi
+          echo "name=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/forja-engine" >>"$GITHUB_OUTPUT"
+      - if: steps.image.outputs.name
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - if: steps.image.outputs.name
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - if: steps.image.outputs.name
+        id: build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: docker/engine/Dockerfile
+          build-args: |
+            VERSION=${{ needs.meta.outputs.version }}
+            CUDA=${{ matrix.cuda }}
+          tags: |
+            ${{ steps.image.outputs.name }}:${{ needs.meta.outputs.version }}-${{ matrix.cuda }}
+            ${{ steps.image.outputs.name }}:${{ needs.meta.outputs.channel == 'stable' && 'latest' || 'beta' }}-${{ matrix.cuda }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          push: true
+          cache-from: type=gha,scope=engine-${{ matrix.cuda }}
+          cache-to: type=gha,mode=max,scope=engine-${{ matrix.cuda }}
+      - if: steps.image.outputs.name
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ steps.image.outputs.name }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
+
+  publish:
+    needs: [meta, gpu-gates, core, desktop, engine-image]
+    if: >-
+      always() && needs.meta.result == 'success' && needs.core.result == 'success' &&
+      needs.desktop.result == 'success' && needs.engine-image.result == 'success' &&
+      (needs.gpu-gates.result == 'success' || needs.gpu-gates.result == 'skipped')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      actions: read
+      attestations: write
+      contents: write
+      id-token: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      VERSION: ${{ needs.meta.outputs.version }}
+      PRERELEASE: ${{ needs.meta.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # the notes come from the history since the previous tag
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          version: "0.12.22"
+          enable-cache: "false"
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: release-*
+          path: dist
+          merge-multiple: true
+
+      - name: Benchmark results (the next baseline)
+        if: needs.meta.outputs.prerelease == 'false' && vars.FORJA_GPU_RUNNER == 'true'
+        run: |
+          id=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow bench-gate.yml --commit "$GITHUB_SHA" \
+            --status success --limit 1 --json databaseId --jq '.[0].databaseId')
+          gh run download "$id" --repo "$GITHUB_REPOSITORY" --name bench-results --dir dist
+
+      - name: Checksums
+        working-directory: dist
+        run: |
+          sha256sum -- * >SHA256SUMS
+          cat SHA256SUMS
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-checksums: dist/SHA256SUMS
+
+      - name: Release notes
+        run: make --no-print-directory notes >"$RUNNER_TEMP/notes.md"
+      - name: Publish
+        run: |
+          flags=(--verify-tag --title "Forja $VERSION" --notes-file "$RUNNER_TEMP/notes.md")
+          if [ "$PRERELEASE" = true ]; then flags+=(--prerelease --latest=false); else flags+=(--latest); fi
+          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" "${flags[@]}" dist/*
