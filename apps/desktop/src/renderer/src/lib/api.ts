@@ -33,6 +33,8 @@ export interface Output {
   hash: string
   kind: string
   preview?: boolean
+  /** What the stage said about this output, such as a stand-in it made when it could not do what it was asked. */
+  note?: string
 }
 
 export interface Stage {

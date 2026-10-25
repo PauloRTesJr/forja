@@ -59,6 +59,11 @@ export function describeMoves(stages: Stage[]): string[] {
   return [...moves.values()].map(({ names, f }) => `${listOf(names)} moved to ${f.to_label || f.to}: ${f.from_label || f.from} ${f.reason}.`)
 }
 
+/** What a job's stages said about their outputs, one sentence each: "Quad remesh: QuadriFlow could not …". */
+export function describeNotes(stages: Stage[]): string[] {
+  return stages.flatMap((s) => s.outputs.flatMap((o) => (o.note ? [`${stageName(s)}: ${o.note}.`] : [])))
+}
+
 /** A price as a person reads it: "$0.34 per hour", "$0.40 per image". */
 export function priceText(p: Pick<PriceRow, 'usd' | 'per'>): string {
   const per = p.per === PER_CALL ? 'image' : p.per.replace(/s$/, '')

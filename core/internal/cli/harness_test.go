@@ -49,6 +49,8 @@ type fakeEngine struct {
 	// ran lists the stages run, in order, and measured whether each run asked to measure.
 	ran      []string
 	measured []bool
+	// notes are what a stage type says about its first output, such as a stand-in it made.
+	notes map[string]string
 }
 
 // fakeMetrics is what an engine measures of a stage: a model's load, memory, and a mesh's stats.
@@ -168,6 +170,9 @@ func (e *fakeEngine) Run(_ context.Context, req engineapi.RunRequest, evs chan<-
 		}
 		if len(outs) > 0 {
 			produced[s.ID] = outs[0].Hash
+			e.mu.Lock()
+			outs[0].Note = e.notes[s.Use]
+			e.mu.Unlock()
 		}
 		secs := 0.01
 		evs <- engineapi.Event{Type: "stage.started", Data: map[string]any{"stage": s.ID}}

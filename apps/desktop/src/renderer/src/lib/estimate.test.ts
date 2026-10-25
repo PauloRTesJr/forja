@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Estimate, Fallback, Stage, StageEstimate } from './api'
-import { describeEstimate, describeMoves, priceText, usd, whereItRan } from './estimate'
+import { describeEstimate, describeMoves, describeNotes, priceText, usd, whereItRan } from './estimate'
 
 const stage = (s: Partial<StageEstimate>): StageEstimate => ({ stage: 's', use: 'shape', priced: true, ...s })
 
@@ -89,6 +89,19 @@ describe('describeMoves', () => {
     expect(describeMoves(stages)).toEqual([
       'Background and Shape moved to This computer: Studio PC could not be reached.',
       'Texture moved to lan: local ran out of memory.',
+    ])
+  })
+})
+
+describe('describeNotes', () => {
+  it('words what each stage said about its outputs and leaves out the rest', () => {
+    const s = (id: string, use: string, note?: string): Stage => ({
+      id, use, status: 'succeeded', key: '', cached: true, seconds: 0, step: 0, total: 0,
+      outputs: [{ hash: `blake3:${id}`, kind: 'mesh/glb', note }],
+    })
+    const simplified = 'QuadriFlow could not remesh this shape, so it was simplified the usual way instead: triangles, not quads'
+    expect(describeNotes([s('shape', 'shape'), s('remesh', 'mesh.remesh', simplified), s('uv', 'mesh.uv.smart', '')])).toEqual([
+      `Quad remesh: ${simplified}.`,
     ])
   })
 })

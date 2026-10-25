@@ -512,6 +512,11 @@ func (a *app) stageLines(j *library.Job, seen map[string]string) {
 		case s.Status == library.Failed:
 			a.printf("  %-10s %-20s failed: %s\n", j.Name, s.ID, s.Error)
 		}
+		if s.Status == library.Succeeded {
+			for _, note := range s.OutputNotes() {
+				a.printf("  %-10s %-20s note: %s\n", j.Name, s.ID, note)
+			}
+		}
 	}
 }
 

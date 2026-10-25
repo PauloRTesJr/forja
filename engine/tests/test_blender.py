@@ -98,6 +98,25 @@ def test_quad_remesh_stays_within_the_triangle_budget(tmp_path):
         assert np.abs(np.linalg.norm(out.vertices, axis=1) - 1).max() < 0.05
 
 
+def test_quad_remesh_falls_back_to_decimation_and_says_so(tmp_path, monkeypatch):
+    def refuses(*args, **kwargs):
+        raise blender.BlenderError(
+            "Blender 5.2.1: QuadriFlow could not remesh this shape, even rebuilt from voxels"
+        )
+
+    monkeypatch.setattr(builtin.blender_mesh, "quad_remesh", refuses)
+    monkeypatch.setattr(builtin.blender, "problem", lambda: None)
+    sphere = trimesh.creation.icosphere(subdivisions=5)
+    [out] = builtin.Remesh().run(ctx(tmp_path, StageType.MESH_REMESH, sphere, target_tris=1200))
+    assert 600 <= len(m.load(out.path).faces) <= 1200
+    assert "simplified the usual way instead" in out.note
+
+    # Without Blender the stage fails as before: a simplification would hide that from routing.
+    monkeypatch.setattr(builtin.blender, "problem", lambda: "Blender 4.2 or newer was not found")
+    with pytest.raises(blender.BlenderError, match="QuadriFlow"):
+        builtin.Remesh().run(ctx(tmp_path, StageType.MESH_REMESH, sphere, target_tris=1200))
+
+
 def slivered_sphere() -> tuple[np.ndarray, np.ndarray]:
     """A closed sphere at the engine's working size with one edge split a hair from its end, the
     kind of sliver a voxel rebuild leaves: QuadriFlow takes it for a zero-length edge."""

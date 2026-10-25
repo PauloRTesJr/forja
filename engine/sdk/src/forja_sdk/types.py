@@ -65,6 +65,9 @@ class StageOutput:
     kind: ArtifactKind
     # True for intermediate results worth showing before the job ends (the untextured mesh).
     preview: bool = False
+    # What the person should know about this output, in a sentence: a stage that could not do
+    # what it was asked and made a stand-in says so here. The job shows it.
+    note: str = ""
 
 
 @dataclass(frozen=True)

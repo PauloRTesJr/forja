@@ -22,6 +22,21 @@ import (
 	"forja/internal/secrets"
 )
 
+// A stage that made a stand-in for what it was asked says so while the job is followed, and in jobs show.
+func TestAStagesNoteOnItsOutputIsPrinted(t *testing.T) {
+	h := newHarness(t)
+	h.eng.set(func(e *fakeEngine) { e.notes = map[string]string{"shape": "made a stand-in"} })
+	img := h.image("chest.png")
+	if out := h.ok("generate", img, "--preset", "draft"); !strings.Contains(out, "shape                note: made a stand-in") {
+		t.Fatalf("generate printed:\n%s", out)
+	}
+	var jobsList []*library.Job
+	h.okJSON(&jobsList, "jobs", "ls")
+	if out := h.ok("jobs", "show", jobsList[0].ID); !strings.Contains(out, "\nshape: made a stand-in\n") {
+		t.Fatalf("jobs show:\n%s", out)
+	}
+}
+
 func TestGenerateFollowsAJobToAnAssetTheLibraryCanSave(t *testing.T) {
 	h := newHarness(t)
 	img := h.image("chest.png")

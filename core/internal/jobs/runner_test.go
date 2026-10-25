@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -49,6 +50,8 @@ type fakeProvider struct {
 	infos int
 	// unavailable are the built-ins it says it cannot run here, with why.
 	unavailable map[string]string
+	// notes are what a stage type says about its first output, such as a stand-in it made.
+	notes map[string]string
 }
 
 var cpu = "cpu"
@@ -168,6 +171,9 @@ func (f *fakeProvider) Run(_ context.Context, req engineapi.RunRequest, evs chan
 		if outs[0].Hash == "" {
 			outs[0].Hash = ref
 		}
+		f.mu.Lock()
+		outs[0].Note = f.notes[s.Use]
+		f.mu.Unlock()
 		produced[s.ID] = outs[0].Hash
 		secs := 0.01
 		evs <- engineapi.Event{Type: "stage.started", Data: map[string]any{"stage": s.ID}}
@@ -268,6 +274,28 @@ func TestTextureRerunHitsTheShapeCache(t *testing.T) {
 	}
 	if last := fp.runs[len(fp.runs)-1]; strings.Join(last, ",") != "paint,bake,lods,export" {
 		t.Fatalf("second run executed %v", last)
+	}
+}
+
+// A stage that made a stand-in says so on its output, and a cache hit on that output says it again.
+func TestAnOutputsNoteStaysWithItThroughTheCache(t *testing.T) {
+	r, fp, _, _, img := setup(t)
+	fp.set(func(f *fakeProvider) { f.notes = map[string]string{"mesh.decimate": "simplified instead"} })
+	for run := range 2 {
+		j, err := r.Submit(context.Background(), SubmitRequest{Input: img, Preset: "mobile-prop"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := wait(t, r, j.ID)
+		for _, s := range got.Stages {
+			want := []string(nil)
+			if s.Use == "mesh.decimate" {
+				want = []string{"simplified instead"}
+			}
+			if !slices.Equal(s.OutputNotes(), want) || s.Cached != (run == 1) {
+				t.Fatalf("run %d, stage %s: notes %q, cached %v", run, s.ID, s.OutputNotes(), s.Cached)
+			}
+		}
 	}
 }
 

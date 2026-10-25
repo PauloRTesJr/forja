@@ -10,7 +10,7 @@ corrupt the protocol stream.
     -> {"op": "unload"} / {"op": "exit"}
     <- {"type": "ready"} / {"type": "loaded", "adapter": ...}
     <- {"type": "progress", "id": ..., "step": n, "total": m}
-    <- {"type": "result", "id": ..., "outputs": [{"path", "kind", "preview"}], "seconds": s}
+    <- {"type": "result", "id": ..., "outputs": [{"path", "kind", "preview", "note"}], "seconds": s}
     <- {"type": "error", "id": ..., "error": "...", "cancelled": bool}
 """
 
@@ -26,7 +26,20 @@ import traceback
 from pathlib import Path
 from typing import Any, TextIO
 
-from forja_engine.sdk import Adapter, ArtifactKind, Cancelled, Device, StageContext, StageInput, StageType
+from forja_engine.sdk import (
+    Adapter,
+    ArtifactKind,
+    Cancelled,
+    Device,
+    StageContext,
+    StageInput,
+    StageOutput,
+    StageType,
+)
+
+
+def outputs_to_json(outputs: list[StageOutput]) -> list[dict[str, Any]]:
+    return [{"path": str(o.path), "kind": str(o.kind), "preview": o.preview, "note": o.note} for o in outputs]
 
 
 def ctx_to_json(ctx: StageContext) -> dict[str, Any]:
@@ -172,9 +185,7 @@ def main() -> None:
                         "id": run_id,
                         "seconds": time.perf_counter() - started,
                         "peak_vram_bytes": _peak_vram(),
-                        "outputs": [
-                            {"path": str(o.path), "kind": str(o.kind), "preview": o.preview} for o in outputs
-                        ],
+                        "outputs": outputs_to_json(outputs),
                     }
                 )
             except Cancelled:

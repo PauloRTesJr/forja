@@ -84,6 +84,7 @@ class Remesh(Adapter):
 
     Not deterministic: QuadriFlow in Blender 5.2 makes a different mesh on each run for the same
     seed, even on one thread. The stage cache keeps the first result, so a job re-run reuses it.
+    When QuadriFlow fails on every try, the stage decimates instead and says so in its output's note.
     """
 
     blender = True
@@ -98,12 +99,27 @@ class Remesh(Adapter):
         target = int(ctx.params.get("target_tris", 5000))
         ctx.progress(1, 2)
         ctx.check_cancel()
-        low = blender_mesh.quad_remesh(
-            mesh, target, seed=ctx.seed, preserve_sharp=bool(ctx.params.get("preserve_sharp", False))
-        )
+        note = ""
+        try:
+            low = blender_mesh.quad_remesh(
+                mesh, target, seed=ctx.seed, preserve_sharp=bool(ctx.params.get("preserve_sharp", False))
+            )
+        except blender.BlenderError as e:
+            if blender.problem() is not None:
+                raise  # Blender is gone, which is no fault of this shape's
+            # Some shapes defeat QuadriFlow on every try. The job still needs a low-poly, and the
+            # decimation this stage replaces makes one; the note tells the person it is not quads.
+            log.warning("quad remesh fell back to decimation: %s", e)
+            ctx.check_cancel()
+            low = mesh_ops.decimate(mesh, target)
+            note = (
+                "QuadriFlow could not remesh this shape, so it was simplified the usual way instead: "
+                "triangles, not quads"
+            )
         ctx.check_cancel()
         ctx.progress(2, 2)
-        return [StageOutput(mesh_ops.save(low, ctx.out_dir / "remeshed.glb"), ArtifactKind.MESH_GLB)]
+        out = mesh_ops.save(low, ctx.out_dir / "remeshed.glb")
+        return [StageOutput(out, ArtifactKind.MESH_GLB, note=note)]
 
 
 class SmartUnwrap(Adapter):

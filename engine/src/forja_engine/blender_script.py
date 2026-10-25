@@ -100,10 +100,7 @@ def remesh(job):
             if quadriflow(ob, want, job["seed"], job["sharp"]):
                 break
         else:
-            return {
-                "error": "QuadriFlow could not remesh this shape, even rebuilt from voxels; "
-                "turn off Quad remesh for this image to use the usual simplification"
-            }
+            return {"error": "QuadriFlow could not remesh this shape, even rebuilt from voxels"}
     # QuadriFlow lands near, not on, the face count it is asked for: aim once more from what it made.
     runs = []
     ask = want

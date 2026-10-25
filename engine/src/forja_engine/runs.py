@@ -262,7 +262,7 @@ class RunManager:
             )
             for out in result["outputs"]:
                 ref = self.store.put_file(Path(out["path"]))
-                entry = {"hash": ref, "kind": out["kind"], "preview": out["preview"]}
+                entry = {"hash": ref, "kind": out["kind"], "preview": out["preview"], "note": out["note"]}
                 state.outputs.append(entry)
                 await run.emit("artifact.ready", stage=spec.id, **entry)
             state.seconds = result["seconds"]

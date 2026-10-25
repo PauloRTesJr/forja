@@ -35,6 +35,9 @@ type Output struct {
 	Hash    string `json:"hash"`
 	Kind    string `json:"kind"`
 	Preview bool   `json:"preview,omitempty"`
+	// Note is what the stage said about the output for the person, such as a stand-in made when
+	// it could not do what it was asked. The stage cache keeps it with the output.
+	Note string `json:"note,omitempty"`
 }
 
 type Stage struct {
@@ -58,6 +61,17 @@ type Stage struct {
 	Fallbacks []Fallback `json:"fallbacks,omitempty"`
 	// ProviderLabel names Provider for people, as it was called when the job ran.
 	ProviderLabel string `json:"provider_label,omitempty"`
+}
+
+// OutputNotes are what the stage said about its outputs, such as a stand-in it made.
+func (s *Stage) OutputNotes() []string {
+	var notes []string
+	for _, o := range s.Outputs {
+		if o.Note != "" {
+			notes = append(notes, o.Note)
+		}
+	}
+	return notes
 }
 
 // Fallback is a stage moving to another provider after a failure there.

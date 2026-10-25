@@ -24,7 +24,7 @@ from forja_engine.metrics import Sampler, rss_of
 from forja_engine.registry import Manifest, instantiate
 from forja_engine.sdk import StageContext, StageType
 from forja_engine.vram import FitMode, VramManager
-from forja_engine.worker import ctx_from_json, ctx_to_json
+from forja_engine.worker import ctx_from_json, ctx_to_json, outputs_to_json
 from forja_engine.workers import StageFailed, WorkerCrashed, WorkerPool
 
 log = logging.getLogger(__name__)
@@ -69,7 +69,7 @@ def _run_builtin(task: str, ctx_json: dict[str, Any], measure: bool = False) -> 
         "type": "result",
         "seconds": seconds,
         "peak_ram_bytes": sampler.peak_ram_bytes,
-        "outputs": [{"path": str(o.path), "kind": str(o.kind), "preview": o.preview} for o in outputs],
+        "outputs": outputs_to_json(outputs),
     }
 
 
@@ -217,9 +217,7 @@ class DeviceLane:
                 seconds = time.perf_counter() - started
             return {
                 "seconds": seconds,
-                "outputs": [
-                    {"path": str(o.path), "kind": str(o.kind), "preview": o.preview} for o in outputs
-                ],
+                "outputs": outputs_to_json(outputs),
                 **self._measured(item, sampler, load_seconds),
             }
         for attempt in (1, 2):

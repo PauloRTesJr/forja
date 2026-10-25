@@ -34,6 +34,9 @@ type Output struct {
 	Hash    string `json:"hash"`
 	Kind    string `json:"kind"`
 	Preview bool   `json:"preview"`
+	// Note is what the person should know about the output, such as a stand-in the stage made
+	// when it could not do what it was asked (API 1.8).
+	Note string `json:"note,omitempty"`
 }
 
 type StageState struct {

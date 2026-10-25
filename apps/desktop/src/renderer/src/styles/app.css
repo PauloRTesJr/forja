@@ -3391,10 +3391,16 @@ button.view-slot:disabled {
   font-size: 14px;
   font-style: italic;
 }
+.stage-note.warn {
+  color: var(--warn);
+}
 .job-fallback {
   margin: 0;
   color: var(--warn);
   font-size: 14.5px;
+}
+.job-fallback.asset-note {
+  margin-top: 12px;
 }
 .setting.prices {
   flex-direction: column;

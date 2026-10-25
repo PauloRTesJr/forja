@@ -56,6 +56,14 @@ export function StageList({ stages }: { stages: Stage[] }) {
             </span>
             <span className="stage-time">{stageTime(s)}</span>
             {s.status === 'running' && s.note && <span className="stage-note">{s.note}</span>}
+            {s.status === 'succeeded' &&
+              s.outputs
+                .filter((o) => o.note)
+                .map((o) => (
+                  <span key={o.hash} className="stage-note warn">
+                    {o.note}
+                  </span>
+                ))}
           </li>
         )
       })}

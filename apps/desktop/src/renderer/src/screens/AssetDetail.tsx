@@ -7,6 +7,7 @@ import { ArrowLeft, Cube, Folder, Grip, Trash } from '../components/icons'
 import { SectionHead } from '../components/ScreenHead'
 import { api, ApiError, artifactURL, deleteAsset, openInBlender, rigOf, type Asset, type Job, type Rig } from '../lib/api'
 import { dragOut, readyDrag } from '../lib/drag'
+import { describeNotes } from '../lib/estimate'
 import { keys } from '../lib/events'
 import { count, relative, seconds, skeletonName, stageLabel } from '../lib/format'
 import { transition, useNavigate } from '../lib/nav'
@@ -175,6 +176,11 @@ export function AssetDetail({ id }: { id: string }) {
                   ))}
                 </tbody>
               </table>
+              {describeNotes(job.data.stages).map((note) => (
+                <p key={note} className="job-fallback asset-note">
+                  {note}
+                </p>
+              ))}
             </section>
           )}
         </aside>

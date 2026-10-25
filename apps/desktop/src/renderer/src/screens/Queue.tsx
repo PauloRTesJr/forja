@@ -7,7 +7,7 @@ import { SheetCard } from '../components/SheetCard'
 import { StageList, StageTrack } from '../components/StageTrack'
 import { api, artifactURL, cancelJob, type Job } from '../lib/api'
 import { keys } from '../lib/events'
-import { describeMoves } from '../lib/estimate'
+import { describeMoves, describeNotes } from '../lib/estimate'
 import { relative, seconds } from '../lib/format'
 import { isActive, needsAnswer, summarize } from '../lib/jobs'
 import { transition, useNavigate } from '../lib/nav'
@@ -49,6 +49,8 @@ function JobRow({ job, index }: { job: Job; index: number }) {
   const error = job.stages.find((s) => s.status === 'failed')?.error ?? job.error
   // A stage that moved to another provider after a failure says so, even while collapsed.
   const moves = describeMoves(job.stages)
+  // So does one that made a stand-in for what it was asked, such as a simplification for a quad remesh.
+  const notes = describeNotes(job.stages)
   return (
     <article className={`job enter ${job.status}`} style={{ '--i': Math.min(index, 8) } as React.CSSProperties}>
       <div className="job-thumb">
@@ -76,6 +78,11 @@ function JobRow({ job, index }: { job: Job; index: number }) {
         {moves.length > 0 && (
           <p className="job-fallback enter" role="status">
             {moves.join(' ')}
+          </p>
+        )}
+        {notes.length > 0 && (
+          <p className="job-fallback enter" role="status">
+            {notes.join(' ')}
           </p>
         )}
         {error && (

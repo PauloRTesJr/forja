@@ -1,3 +1,4 @@
+import dataclasses
 import json
 import os
 import struct
@@ -8,6 +9,7 @@ import pytest
 from fastapi.testclient import TestClient
 from PIL import Image
 
+from forja_engine.adapters import stub
 from forja_engine.adapters.builtin import BUILTINS
 from forja_engine.api.app import EngineConfig, create_app
 from forja_engine.sdk import StageType
@@ -182,6 +184,20 @@ def test_side_views_reach_the_stage_that_reads_them(client, tmp_path):
     bad = {**with_side, "views": ["front"]}
     r = client.post("/v1/runs", json={"stages": [*prep("", front), *prep("-left", left), bad]})
     assert r.status_code == 422
+
+
+def test_a_note_on_an_output_reaches_the_run(tmp_path, monkeypatch):
+    shape = stub.StubShape.run
+
+    def noted(self, ctx):
+        return [dataclasses.replace(o, note="made a stand-in") for o in shape(self, ctx)]
+
+    monkeypatch.setattr(stub.StubShape, "run", noted)
+    app = create_app(EngineConfig(store_root=tmp_path, token="secret", in_process_models=True))
+    with TestClient(app, headers={"Authorization": "Bearer secret"}) as c:
+        run = finished(c, {"stages": [{**PIPELINE[0], "inputs": [upload(c)]}, *PIPELINE[1:3]]})
+    assert run["stages"]["shape"]["outputs"][0]["note"] == "made a stand-in"
+    assert run["stages"]["bg"]["outputs"][0]["note"] == ""
 
 
 def test_sheet_detection_runs_as_a_builtin_stage(client):
