@@ -1,6 +1,6 @@
 [project]
 name = "forja-engine"
-version = "0.1.0"
+version = "0.2.0"
 description = "Forja inference engine: runs stage batches on local devices"
 license = "Apache-2.0"
 requires-python = ">=3.11"
@@ -20,7 +20,7 @@ dependencies = [
     "huggingface-hub>=0.27",
     "embreex>=4.4 ; (platform_machine == 'x86_64' and sys_platform == 'linux') or sys_platform == 'darwin' or sys_platform == 'win32'",
     "networkx>=3.4",
-    "forja-engine-sdk==0.1.0",
+    "forja-engine-sdk==0.2.0",
     "packaging>=24",
 ]
 

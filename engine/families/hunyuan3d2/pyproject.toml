@@ -1,6 +1,6 @@
 [project]
 name = "forja-hunyuan3d2"
-version = "0.1.0"
+version = "0.2.0"
 description = "Forja adapter for the hunyuan3d2 model family"
 license = "Apache-2.0"
 requires-python = ">=3.11"

@@ -1,6 +1,6 @@
 [project]
 name = "forja-engine-sdk"
-version = "0.1.0"
+version = "0.2.0"
 description = "Stage interfaces and conformance suite for Forja model adapters"
 readme = "README.md"
 license = "Apache-2.0"

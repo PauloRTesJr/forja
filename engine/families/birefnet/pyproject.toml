@@ -1,6 +1,6 @@
 [project]
 name = "forja-birefnet"
-version = "0.1.0"
+version = "0.2.0"
 description = "Forja adapter for the birefnet model family"
 license = "Apache-2.0"
 requires-python = ">=3.11"
