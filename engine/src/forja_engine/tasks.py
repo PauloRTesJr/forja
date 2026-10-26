@@ -22,6 +22,8 @@ from forja_engine.install import InstallCancelled, Reporter
 
 _KEEP = 50
 _LOG_LINES = 200
+# The statuses a task ends in.
+ENDED = ("succeeded", "failed", "cancelled")
 
 
 @dataclass
@@ -52,7 +54,7 @@ class Task:
 
     @property
     def done(self) -> bool:
-        return self.status in ("succeeded", "failed", "cancelled")
+        return self.status in ENDED
 
     def bind(self, loop: asyncio.AbstractEventLoop) -> None:
         self._loop = loop

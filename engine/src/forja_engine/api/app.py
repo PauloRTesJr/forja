@@ -27,7 +27,7 @@ from forja_engine.runs import RunManager, RunRequest
 from forja_engine.scheduler import Scheduler
 from forja_engine.sdk import StageType
 from forja_engine.store import ArtifactStore
-from forja_engine.tasks import TaskManager, TaskReporter
+from forja_engine.tasks import ENDED, TaskManager, TaskReporter
 from forja_engine.vram import DoesNotFit, FitMode
 
 GB = 1 << 30
@@ -378,8 +378,10 @@ def create_app(cfg: EngineConfig) -> FastAPI:
             seen = after
             while True:
                 seen = await task.wait(seen)
-                yield f"id: {seen}\nevent: task\ndata: {json.dumps(task.to_json())}\n\n".encode()
-                if task.done:
+                state = task.to_json()
+                yield f"id: {seen}\nevent: task\ndata: {json.dumps(state)}\n\n".encode()
+                # Ends on what it sent: a task that ended since then sends its last state next.
+                if state["status"] in ENDED:
                     return
                 await asyncio.sleep(0.25)  # at most four updates a second
 
