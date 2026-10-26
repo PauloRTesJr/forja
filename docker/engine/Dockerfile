@@ -58,6 +58,8 @@ RUN --mount=type=cache,target=/root/.cache/uv UV_CACHE_DIR=/root/.cache/uv uv py
 
 WORKDIR /opt/forja/engine
 COPY engine/pyproject.toml engine/uv.lock engine/.python-version ./
+# The engine depends on the adapter SDK by path (tool.uv.sources), so it is a dependency here.
+COPY engine/sdk ./sdk
 RUN --mount=type=cache,target=/root/.cache/uv UV_CACHE_DIR=/root/.cache/uv \
     uv sync --frozen --no-dev --no-install-project
 COPY engine/src ./src
