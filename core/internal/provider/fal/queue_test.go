@@ -254,12 +254,14 @@ func TestCancellingARunCancelsItsRequest(t *testing.T) {
 		q := newQueue(t)
 		q.stream, q.polls = "drop", []string{tc.status}
 		ctx, cancel := context.WithCancel(context.Background())
+		// Cancelled once the provider polls a second time, so it has read the status the first
+		// poll answered (the fake counts a poll before it answers it).
 		go func() {
 			for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(time.Millisecond) {
 				q.mu.Lock()
 				polled := q.polled
 				q.mu.Unlock()
-				if polled > 0 {
+				if polled > 1 {
 					break
 				}
 			}
