@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 from forja_engine import checks
 from forja_engine.api import app as engine_app
 from forja_engine.api.app import EngineConfig, create_app
+from forja_engine.tasks import Task
 
 
 class FakeInstaller:
@@ -82,6 +83,23 @@ def test_models_say_where_they_would_run_and_how_well(client):
     assert models["stub-shape"]["runs_on"] == "cpu" and models["stub-shape"]["fit"] == "fits"
     assert "fit" in models["triposg"] and "runs_on" in models["triposg"]
     assert models["hunyuan3d2-paint"]["license"]["url"].startswith("https://")
+
+
+def test_a_task_that_ends_while_a_state_is_sent_still_sends_its_end(client, monkeypatch):
+    task = client.post("/v1/models/triposg/install").json()
+    to_json = Task.to_json
+
+    def ends_meanwhile(self, *args, **kwargs):
+        state = to_json(self, *args, **kwargs)
+        if state["status"] == "running" and not self.done:
+            self.finish("succeeded")  # after this state was taken, before it reaches the client
+        return state
+
+    monkeypatch.setattr(Task, "to_json", ends_meanwhile)
+    try:
+        assert [s["status"] for s in follow(client, task["id"])][-2:] == ["running", "succeeded"]
+    finally:
+        FakeInstaller.gate.set()
 
 
 def test_engine_models_cannot_be_removed_but_installed_ones_can(client):

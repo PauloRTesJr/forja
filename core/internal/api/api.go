@@ -599,12 +599,13 @@ func (s *Server) eventsSSE(w http.ResponseWriter, r *http.Request) {
 		problem(w, 500, "streaming unsupported")
 		return
 	}
+	// Subscribed before the client hears the stream is open, as eventsWS does.
+	ch, unsubscribe := s.Hub.Subscribe()
+	defer unsubscribe()
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.WriteHeader(200)
 	flusher.Flush()
-	ch, unsubscribe := s.Hub.Subscribe()
-	defer unsubscribe()
 	keepalive := time.NewTicker(15 * time.Second)
 	defer keepalive.Stop()
 	for {
@@ -631,13 +632,15 @@ func (s *Server) eventsSSE(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) eventsWS(w http.ResponseWriter, r *http.Request) {
+	// Subscribed before the handshake ends: a client that connects, then submits a job, hears
+	// every event of it.
+	ch, unsubscribe := s.Hub.Subscribe()
+	defer unsubscribe()
 	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
 	if err != nil {
 		return
 	}
 	defer conn.CloseNow()
-	ch, unsubscribe := s.Hub.Subscribe()
-	defer unsubscribe()
 	ctx := conn.CloseRead(r.Context())
 	ping := time.NewTicker(20 * time.Second)
 	defer ping.Stop()
