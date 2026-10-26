@@ -400,15 +400,23 @@ func (a *app) watch(ctx context.Context, c *Client, evs <-chan Event, list []*li
 		}
 	}
 	parked := 0
+	// answered are the jobs this command answered: their events from before the answer still
+	// say they wait.
+	answered := map[string]bool{}
 	// settle handles a job that ended or waits; it reports whether to stop following it.
 	settle := func(j *library.Job) (bool, error) {
 		switch {
 		case j.Status.Done():
 			a.report(j)
+		case j.Status == library.Waiting && answered[j.ID]:
+			return false, nil
 		case j.Status == library.Waiting && j.Sheet != nil && j.Sheet.Found && j.Sheet.Answer == "":
 			if a.tty && !a.json {
-				answered, err := a.askSheet(ctx, c, j)
-				if err != nil || answered {
+				ok, err := a.askSheet(ctx, c, j)
+				if ok {
+					answered[j.ID] = true
+				}
+				if err != nil || ok {
 					return false, err
 				}
 			}
@@ -423,16 +431,20 @@ func (a *app) watch(ctx context.Context, c *Client, evs <-chan Event, list []*li
 		delete(waiting, j.ID)
 		return true, nil
 	}
-	// A job may have ended, or come to wait, between submit and subscribe.
+	seen := map[string]string{}
+	// A job may have ended, or come to wait, before its events are read. One that ended is
+	// printed from its state, since following it stops here; the events of the others follow.
 	for id := range waiting {
 		var j library.Job
 		if c.Do(ctx, "GET", "/v1/jobs/"+id, nil, &j) == nil {
+			if j.Status.Done() && !a.json {
+				a.stageLines(&j, seen)
+			}
 			if _, err := settle(&j); err != nil {
 				return err
 			}
 		}
 	}
-	seen := map[string]string{}
 	for len(waiting) > 0 {
 		select {
 		case <-ctx.Done():
@@ -448,12 +460,15 @@ func (a *app) watch(ctx context.Context, c *Client, evs <-chan Event, list []*li
 				var fb struct {
 					Job       string `json:"job"`
 					Stage     string `json:"stage"`
+					From      string `json:"from"`
+					To        string `json:"to"`
 					FromLabel string `json:"from_label"`
 					ToLabel   string `json:"to_label"`
 					Reason    string `json:"reason"`
 				}
 				if json.Unmarshal(ev.Data, &fb) == nil && waiting[fb.Job] != nil {
-					a.printf("  %-10s %-20s moves to %s: %s %s\n", waiting[fb.Job].Name, fb.Stage, fb.ToLabel, fb.FromLabel, fb.Reason)
+					a.moveLine(waiting[fb.Job].Name, fb.Job, fb.Stage, orDash(fb.FromLabel, fb.From), orDash(fb.ToLabel, fb.To),
+						fb.Reason, seen)
 				}
 				continue
 			}
@@ -486,11 +501,15 @@ func (a *app) watch(ctx context.Context, c *Client, evs <-chan Event, list []*li
 	return nil
 }
 
-// stageLines prints each stage of j whose status changed since the last call, and what its
-// provider says while it runs, such as its place in a hosted model's queue.
+// stageLines prints each stage of j whose status changed since the last call, where it moved
+// after a failure, and what its provider says while it runs, such as its place in a hosted
+// model's queue.
 func (a *app) stageLines(j *library.Job, seen map[string]string) {
 	for _, s := range j.Stages {
 		key := j.ID + "/" + s.ID
+		for _, f := range s.Fallbacks {
+			a.moveLine(j.Name, j.ID, s.ID, orDash(f.FromLabel, f.From), orDash(f.ToLabel, f.To), f.Reason, seen)
+		}
 		if s.Note != "" && seen[key+"#note"] != s.Note {
 			seen[key+"#note"] = s.Note
 			a.printf("  %-10s %-20s %s\n", j.Name, s.ID, s.Note)
@@ -516,6 +535,17 @@ func (a *app) stageLines(j *library.Job, seen map[string]string) {
 			}
 		}
 	}
+}
+
+// moveLine prints a stage's move to another provider once, whether its event or a job's state
+// told of it first.
+func (a *app) moveLine(name, job, stage, from, to, reason string, seen map[string]string) {
+	key := job + "/" + stage + "#moved:" + to + "|" + reason
+	if seen[key] != "" {
+		return
+	}
+	seen[key] = "printed"
+	a.printf("  %-10s %-20s moves to %s: %s %s\n", name, stage, to, from, reason)
 }
 
 func (a *app) report(j *library.Job) {

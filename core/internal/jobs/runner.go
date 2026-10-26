@@ -907,10 +907,11 @@ func (r *Runner) leave(a *active) {
 }
 
 // wait parks a job until the user answers; it keeps no slot and survives restarts. It is no
-// longer active by the time anyone hears it waits, so an answer can resume it at once.
+// longer active by the time anyone hears it waits, so an answer can resume it at once. The
+// active job never shows Waiting: a client reading it then would answer before it left.
 func (r *Runner) wait(a *active) {
-	r.update(a, func(j *library.Job) { j.Status = library.Waiting })
 	snap := snapshot(a)
+	snap.Status = library.Waiting
 	if err := r.db.SaveJob(context.Background(), snap); err != nil {
 		r.log.Error("saving job", "job", snap.ID, "err", err)
 	}
