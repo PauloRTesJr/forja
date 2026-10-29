@@ -14,8 +14,9 @@ so roughness and metallic stay editable constant factors, decision 6). Vertex no
 tangents are written into the file, so Unity shades it exactly as it was baked.
 
 Not covered yet, and still part of the M0 milestone in the spec:
-- **Hunyuan3D 2.1 shape**, as a second shape model to compare.
-- **The cloud arm**: Hunyuan3D 2.1 PBR and TRELLIS.2, which need 24 GB or more.
+- **The newer shape models**: Pixal3D and its multi-view model, against TripoSG and
+  Hunyuan3D-2mv. Their ranks come from upstream (decision 38); step 6 measures them.
+- **The cloud arm**: TRELLIS.2 and TRELLIS.2 Paint (PBR), which need 24 GB or more.
 
 ## 1. Machine setup (Ubuntu, once)
 
@@ -105,3 +106,22 @@ Useful variations, each one a single flag:
 
 When VRAM runs short, the engine falls back to fit-first mode on its own. For Hunyuan that
 means CPU offload: the run is slower but stays local.
+
+## 6. Compare the shape models
+
+The same images through the newer shape models, everything else as pinned. Pixal3D needs Linux
+(NATTEN), its DINOv3 encoder needs a Hugging Face token with the DINOv3 License accepted, and on
+the 12 GB card it runs in its low-VRAM mode:
+
+```bash
+export HF_TOKEN=...   # from huggingface.co/settings/tokens, after accepting the license
+../../core/bin/forja models install pixal3d pixal3d-mv
+../../core/bin/forja generate refs/* --priority batch --set shape.model=pixal3d --json > results/pixal3d-$(date +%F).json
+```
+
+Record time, peak VRAM and the checklist's shape scores beside TripoSG's. Where a reference
+has side views, the multi-view pair is `--set shape.model=pixal3d-mv` against
+`--set shape.model=hunyuan3d2-mv`. If Pixal3D runs out of memory on the 12 GB card, raise its
+`min_vram_gb` in the manifest; if it wins, it stays ranked first and the pinned `shape` here
+moves to it. With 24 GB or more (the cloud arm), `--set shape.model=trellis2` and
+`--set texture.model=trellis2-texture` do the same for TRELLIS.2.

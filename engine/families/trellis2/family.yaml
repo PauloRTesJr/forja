@@ -1,0 +1,23 @@
+# TRELLIS.2 (MIT), Microsoft: image to shape, and PBR painting of a given mesh. Fetched at
+# install time, never committed here. Upstream tests Linux with 24 GB GPUs only.
+name: trellis2
+python: "3.11"
+# No mps lane: the voxel, mesh and sparse convolution extensions below are CUDA kernels.
+lanes: [cuda]
+# Upstream's setup.sh: torch 2.6.0 on CUDA 12.4.
+torch_backend: { cuda: cu124 }
+upstream:
+  url: https://codeload.github.com/microsoft/TRELLIS.2/tar.gz/75fbf0183001ed9876c8dbb35de6b68552ee08bd
+  sha256: 65729b2e0d6a96b429379e4cf04c67be38880fcca57e4673e94f300854e75389
+  license: MIT
+  pythonpath: ["."]
+# The CUDA extensions upstream's setup.sh builds, each at a pinned commit; they need nvcc
+# (CUDA toolkit 12.x) and a C++ compiler. o_voxel comes from the same commit as the code,
+# through git because its Eigen submodule is not in the archive; its own list names CuMesh and
+# FlexGEMM as unpinned git URLs, hence --no-deps after building the pinned ones.
+build:
+  - nvdiffrast @ git+https://github.com/NVlabs/nvdiffrast.git@253ac4fcea7de5f396371124af597e6cc957bfae
+  - cumesh @ git+https://github.com/JeffreyXiang/CuMesh.git@12289e1062f0603f2f0d0771b02e1395d247f26f
+  - flex_gemm @ git+https://github.com/JeffreyXiang/FlexGEMM.git@6dd94a859c26ee8246888502eada3dd8ad85532e
+  - --no-deps o_voxel @ git+https://github.com/microsoft/TRELLIS.2.git@75fbf0183001ed9876c8dbb35de6b68552ee08bd#subdirectory=o-voxel
+smoke: "import torch, o_voxel, cumesh, flex_gemm, nvdiffrast.torch, trellis2.pipelines.trellis2_texturing"

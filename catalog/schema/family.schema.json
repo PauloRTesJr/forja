@@ -32,11 +32,27 @@
         },
         "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
         "license": { "description": "The upstream code's license.", "type": "string", "minLength": 1 },
-        "pythonpath": { "type": "array", "items": { "type": "string" } }
+        "pythonpath": { "type": "array", "items": { "type": "string" } },
+        "extra": {
+          "description": "Further pinned source archives the upstream code imports, each extracted to upstream-<name> in the environment and put on the path like the main one.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "url", "sha256", "license"],
+            "additionalProperties": false,
+            "properties": {
+              "name": { "type": "string", "pattern": "^[a-z0-9][a-z0-9_-]*$" },
+              "url": { "type": "string", "pattern": "^https://" },
+              "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+              "license": { "type": "string", "minLength": 1 },
+              "pythonpath": { "type": "array", "items": { "type": "string" } }
+            }
+          }
+        }
       }
     },
     "build": {
-      "description": "Packages compiled against the installed torch, in order; {upstream} is the extracted source. A mapping gives each lane its own list; a lane it leaves out builds nothing.",
+      "description": "Packages compiled against the installed torch, in order; {upstream} is the extracted source. An entry may start with --no-deps to install that package without its dependencies. A mapping gives each lane its own list; a lane it leaves out builds nothing.",
       "oneOf": [
         { "$ref": "#/$defs/builds" },
         {

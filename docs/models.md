@@ -8,17 +8,23 @@ Forja ships no model weights. Each model is described by a manifest (where its w
 |---|---|---|---|---|---|---|
 | BiRefNet (general) | `birefnet` | Background removal | MIT | 8 GB¹ | 3.8 GB | NVIDIA, CPU (a Mac's included) |
 | BiRefNet lite | `birefnet-lite` | Background removal | MIT | 0.8 GB | 3.1 GB | NVIDIA, CPU (a Mac's included) |
+| Pixal3D | `pixal3d` | Shape | MIT⁴ | 18 GB (needs 10) | 25.8 GB | NVIDIA, Linux⁵ |
+| TRELLIS.2 | `trellis2` | Shape | MIT⁴ | 24 GB (needs 24) | 16.1 GB | NVIDIA⁵ |
 | TripoSG | `triposg` | Shape | MIT | 8 GB (needs 8) | 12.5 GB | NVIDIA |
+| Pixal3D multi-view | `pixal3d-mv` | Shape, from the front plus side and back views | MIT⁴ | 18 GB (needs 10) | 18.8 GB | NVIDIA, Linux⁵ |
 | Hunyuan3D-2mv (turbo) | `hunyuan3d2-mv` | Shape, from the front plus side and back views | Tencent Hunyuan 3D 2.0 Community² | 6 GB (needs 6) | 5.0 GB | NVIDIA, Apple Silicon (experimental: [macOS](macos.md)) |
+| TRELLIS.2 Paint | `trellis2-texture` | Texture (base color, roughness, metallic) | MIT⁴ | 24 GB (needs 24) | 8.0 GB | NVIDIA⁵ |
 | Hunyuan3D-2 Paint (turbo) | `hunyuan3d2-paint` | Texture (base color) | Tencent Hunyuan 3D 2.0 Community² | 12.5 GB (needs 10) | 23.1 GB | NVIDIA |
 | SkinTokens (TokenRig) | `skintokens` | Rig ([rigging](rigging.md)) | MIT | 14 GB (needs 14) | 8.1 GB | NVIDIA |
 | UniRig | `unirig` | Rig ([rigging](rigging.md)) | MIT³ | 8.7 GB (needs 8) | 10.7 GB | NVIDIA |
 
-VRAM is the peak at default settings; "needs" is the least the model runs in at all. The engine replaces these figures with the peaks it measures on your GPU. The [hardware guide](hardware.md) says what runs on 8, 12, 16 and 24 GB.
+Within a stage, the list runs from the highest-ranked model down: a job gets the best one ready, so installing Pixal3D or TRELLIS.2 upgrades every preset where they fit. VRAM is the peak at default settings; "needs" is the least the model runs in at all. The engine replaces these figures with the peaks it measures on your GPU. The [hardware guide](hardware.md) says what runs on 8, 12, 16 and 24 GB.
 
 1. BiRefNet's figure is what ONNX Runtime's CUDA arena grows to on a 12 GB card, because cuDNN sizes its workspace to the free memory. It runs in much less.
 2. Commercial use is allowed, with limits: the license does not cover the EU, the UK or South Korea, and above 1 million monthly active users a separate license is needed. Forja shows these terms; it does not block by location.
 3. UniRig's upstream tree, fetched at install time, also carries the Michelangelo shape encoder under GPL-3.0.
+4. Their image encoder is Meta's DINOv3, under the DINOv3 License: commercial use is allowed, but not military, weapons or other uses that trade controls forbid. Its weights are gated on Hugging Face: accept the license on [its page](https://huggingface.co/facebook/dinov3-vitl16-pretrain-lvd1689m) and set `HF_TOKEN` before installing.
+5. Upstream tests these on Linux. Their CUDA extensions are built at install; Pixal3D's NATTEN does not build on Windows, so a Windows computer sends it to a Linux one ([sharing](sharing.md), [cloud](cloud.md)). Disk figures are estimates until measured.
 
 The stub models (`stub-background`, `stub-shape`, `stub-paint`, `stub-rig`) are deterministic CPU stand-ins for tests and machines without a GPU. They are used only when `models.stubs = true`.
 

@@ -314,9 +314,18 @@ class Installer:
 
         def build() -> None:
             for spec in builds:
-                target = spec.replace("{upstream}", str(env_dir / "upstream"))
+                options, target = families.split_build(spec.replace("{upstream}", str(env_dir / "upstream")))
                 _run(
-                    [uv_binary(), "pip", "install", "--python", python, "--no-build-isolation", target],
+                    [
+                        uv_binary(),
+                        "pip",
+                        "install",
+                        "--python",
+                        python,
+                        "--no-build-isolation",
+                        *options,
+                        target,
+                    ],
                     self.log,
                     env=build_env,
                     cancel=self.report.cancel,
@@ -363,12 +372,14 @@ class Installer:
 
     def upstream(self, fam: families.Family, env_dir: Path, python: Path) -> None:
         assert fam.upstream
-        up = fam.upstream
-        archive = fetch_verified(up.url, up.sha256, self.envs_dir / "_downloads", self.log)
-        src = extract_tarball(archive, env_dir / "upstream")
-        self.log(f"upstream source ({up.license}) at {src}")
+        paths = []
+        for up in (fam.upstream, *fam.extra_upstreams):
+            archive = fetch_verified(up.url, up.sha256, self.envs_dir / "_downloads", self.log)
+            src = extract_tarball(archive, env_dir / up.folder)
+            self.log(f"upstream source ({up.license}) at {src}")
+            paths += [(src / p).resolve() for p in up.pythonpath]
         pth = site_packages(python) / f"forja-{fam.name}-upstream.pth"
-        pth.write_text("".join(f"{(src / p).resolve()}\n" for p in up.pythonpath))
+        pth.write_text("".join(f"{p}\n" for p in paths))
 
     def weights(self, manifest: Manifest) -> Path:
         w: dict[str, Any] = manifest.weights
@@ -377,6 +388,17 @@ class Installer:
         if w.get("hub", "huggingface") != "huggingface":
             raise InstallError(f"{manifest.id}: weights hub {w.get('hub')!r} is not supported")
         dest = self.models_dir / manifest.id
+        self._hub(w, dest)
+        # Weights the main repository's code loads from elsewhere (an image encoder, a small
+        # upsampler), each pinned like the main one and kept under the same folder.
+        for extra in w.get("extra") or []:
+            if "url" in extra:
+                self._file(extra["url"], extra["sha256"], dest / extra["path"])
+            else:
+                self._hub(extra, dest / extra["dir"])
+        return dest
+
+    def _hub(self, w: dict[str, Any], dest: Path) -> None:
         allow = w.get("allow") or None
         files = w.get("files") or []
         if files and not allow:
@@ -409,7 +431,13 @@ class Installer:
             path = dest / f["path"]
             if "sha256" in f and sha256_file(path) != f["sha256"]:
                 raise InstallError(f"{path}: sha256 mismatch; delete it and install again")
-        return dest
+
+    def _file(self, url: str, sha256: str, path: Path) -> None:
+        if path.is_file() and sha256_file(path) == sha256:
+            return
+        cached = fetch_verified(url, sha256, self.envs_dir / "_downloads", self.log)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(cached, path)
 
     def smoke(self, manifest: Manifest, fam: families.Family, python: Path, lane: str) -> None:
         module = manifest.adapter.partition(":")[0]

@@ -73,6 +73,8 @@ build: ["<package>==<version>"]       # compiled against the installed torch, in
 smoke: "import <upstream module>"     # proves the upstream code and its extensions load
 ```
 
+A build entry may start with `--no-deps` to install that package without its dependencies, for upstream packages that list their siblings as unpinned git URLs (TRELLIS.2's `o_voxel`); build the pinned siblings first. When the upstream code imports another repository it does not ship, list that one under `upstream.extra` with a `name`, its own pinned archive, sha256, license and `pythonpath`: it is extracted to `upstream-<name>` and put on the path too.
+
 `requirements/<lane>.txt` lists the family's dependencies for each lane in `lanes`. Install adds `forja-engine` (and with it `forja-engine-sdk`) and the adapter package. `catalog/schema/family.schema.json` is the full schema.
 
 ## 4. Write the manifest
@@ -107,6 +109,22 @@ params:
 rank: 10                              # higher wins when a preset leaves the model open
 views: [front, left, back, right]     # only for models that read side views
 ```
+
+When the model's code also loads weights from elsewhere (an image encoder in another repository, a small checkpoint from a release page), pin each under `weights.extra`, never let the adapter download it:
+
+```yaml
+weights:
+  # ...the main repository, as above
+  extra:
+    - repo: <org>/<encoder>                # another Hugging Face repository, into <dir>
+      revision: <40-character commit sha>
+      dir: encoder
+      files:
+        - { path: model.safetensors, sha256: <sha256>, bytes: <size> }
+    - { url: "https://<host>/<file>.pth", sha256: <sha256>, path: upsampler/<file>.pth }
+```
+
+Both land inside the model's weights folder (`self.weights_dir / "encoder"`), and the adapter builds the pipeline from there instead of the upstream loader's Hub names.
 
 `catalog/schema/manifest.schema.json` is the full schema. A license with restrictions, a custom one, or one without commercial use makes users accept it before installing.
 

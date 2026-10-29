@@ -1,0 +1,59 @@
+id: trellis2
+name: TRELLIS.2
+family: trellis2
+adapter: forja_trellis2:Trellis2Shape
+tasks: [shape]
+# Above TripoSG: sharper detail, open and non-manifold surfaces. Needs 24 GB, so a 12 GB card
+# keeps TripoSG and sends this one to another computer.
+rank: 15
+description: Turns the cut-out image into a detailed shape, with open surfaces and thin parts.
+# Estimated: environment about 6 GB (torch 2.6, compiled extensions), weights 10.1 GB.
+disk_gb: 16.1
+license:
+  spdx: MIT
+  commercial: true
+  restrictions:
+    - "its image encoder, Meta's DINOv3, is under the DINOv3 License: no military, weapons or other uses trade controls forbid"
+  url: https://github.com/microsoft/TRELLIS.2/blob/75fbf0183001ed9876c8dbb35de6b68552ee08bd/LICENSE
+# Upstream's README: an NVIDIA GPU with at least 24 GB. The VRAM manager replaces it with measured peaks.
+vram_gb: 24
+requirements:
+  cuda: { status: supported, min_vram_gb: 24 }
+  mps: { status: unsupported }
+  cpu: { status: unsupported }
+weights:
+  hub: huggingface
+  repo: microsoft/TRELLIS.2-4B
+  revision: af44b45f2e35a493886929c6d786e563ec68364d
+  files:
+    - { path: pipeline.json }
+    - { path: ckpts/ss_flow_img_dit_1_3B_64_bf16.json }
+    - { path: ckpts/ss_flow_img_dit_1_3B_64_bf16.safetensors, sha256: ca01377c485bec418076d38ee80166d32dc776d744f2553b835cba1e97a7abf6, bytes: 2584426920 }
+    - { path: ckpts/slat_flow_img2shape_dit_1_3B_512_bf16.json }
+    - { path: ckpts/slat_flow_img2shape_dit_1_3B_512_bf16.safetensors, sha256: ec5e0917ef9b7e25ad51dffc7d19687a42019871f94239f2fa7f86264c55b70f, bytes: 2584574424 }
+    - { path: ckpts/slat_flow_img2shape_dit_1_3B_1024_bf16.json }
+    - { path: ckpts/slat_flow_img2shape_dit_1_3B_1024_bf16.safetensors, sha256: 07cd0596f634c5adc1890023d16023afc5eed02fb84b22bb23aff5bf0030fbbd, bytes: 2584574424 }
+    - { path: ckpts/shape_dec_next_dc_f16c32_fp16.json }
+    - { path: ckpts/shape_dec_next_dc_f16c32_fp16.safetensors, sha256: e3b718d3e43e4f8780e9a24ac6fff231811a67e3b058e336e10fe654c911d581, bytes: 948490494 }
+  extra:
+    # pipeline.json names TRELLIS's sparse structure decoder by its repository.
+    - repo: microsoft/TRELLIS-image-large
+      revision: 25e0d31ffbebe4b5a97464dd851910efc3002d96
+      dir: TRELLIS-image-large
+      files:
+        - { path: ckpts/ss_dec_conv3d_16l8_fp16.json }
+        - { path: ckpts/ss_dec_conv3d_16l8_fp16.safetensors, sha256: 1c76d4a40519aa2d711cc263a8404105231ac26db31d946bed48b84fee79009a, bytes: 147591972 }
+    # Gated: accept the DINOv3 License on its Hugging Face page and set HF_TOKEN to install.
+    - repo: facebook/dinov3-vitl16-pretrain-lvd1689m
+      revision: ea8dc2863c51be0a264bab82070e3e8836b02d51
+      dir: dinov3
+      files:
+        - { path: config.json }
+        - { path: preprocessor_config.json }
+        - { path: model.safetensors, sha256: dcb2e45127cccbf1601e5f42fef165eea275c8e5213197e8dcf3f48822718179, bytes: 1212559808 }
+params:
+  # Upstream's default; 1536_cascade adds detail and time, 512 is a quick draft.
+  pipeline_type: { type: string, default: 1024_cascade, enum: ["512", "1024", 1024_cascade, 1536_cascade] }
+  steps: { type: integer, default: 12, minimum: 4, maximum: 50 }
+  max_faces: { type: integer, default: 1000000, minimum: 10000, maximum: 16777216, description: Simplify a denser result to this many triangles }
+  yaw_degrees: { type: number, default: 0, description: Rotate the output about Y if it faces the wrong way }

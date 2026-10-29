@@ -168,8 +168,45 @@
               "bytes": { "type": "integer", "minimum": 0 }
             }
           }
+        },
+        "extra": {
+          "description": "Further weights the model's code loads, each pinned: a Hugging Face repository downloaded into <dir>, or one file over HTTPS saved at <path>, both inside the model's weights folder.",
+          "type": "array",
+          "items": {
+            "oneOf": [
+              {
+                "type": "object",
+                "required": ["repo", "revision", "dir"],
+                "additionalProperties": false,
+                "properties": {
+                  "repo": { "type": "string", "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$" },
+                  "revision": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+                  "dir": { "$ref": "#/$defs/relpath" },
+                  "allow": { "type": "array", "items": { "type": "string" } },
+                  "ignore": { "type": "array", "items": { "type": "string" } },
+                  "files": { "$ref": "#/$defs/weights/properties/files" }
+                }
+              },
+              {
+                "type": "object",
+                "required": ["url", "sha256", "path"],
+                "additionalProperties": false,
+                "properties": {
+                  "url": { "type": "string", "pattern": "^https://" },
+                  "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+                  "path": { "$ref": "#/$defs/relpath" },
+                  "bytes": { "type": "integer", "minimum": 0 }
+                }
+              }
+            ]
+          }
         }
       }
+    },
+    "relpath": {
+      "description": "A folder or file inside the model's weights folder.",
+      "type": "string",
+      "pattern": "^(?![/.])(?!.*\\.\\.)[A-Za-z0-9_./-]+$"
     }
   }
 }

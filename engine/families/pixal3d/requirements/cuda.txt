@@ -1,0 +1,19 @@
+setuptools
+wheel
+ninja
+torch==2.6.0
+torchvision==0.21.0
+# Attention for the dense and sparse transformers (ATTN_BACKEND=xformers): flash-attn has
+# Linux wheels only.
+xformers==0.0.29.post3
+transformers==4.57.3
+safetensors
+easydict
+opencv-python-headless
+trimesh
+tqdm
+kornia
+einops
+# o_voxel's own dependencies, installed here because it is built with --no-deps.
+plyfile
+zstandard

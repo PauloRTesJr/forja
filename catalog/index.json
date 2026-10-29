@@ -88,6 +88,50 @@
       "sha256": "21ff9fe4077f6fd937cb177e1f328051bfb4217f2361cb7c2aa869d806655e82"
     },
     {
+      "id": "pixal3d-mv",
+      "name": "Pixal3D multi-view",
+      "family": "pixal3d",
+      "tasks": [
+        "shape"
+      ],
+      "license": {
+        "spdx": "MIT",
+        "commercial": true,
+        "restrictions": [
+          "its image encoder, Meta's DINOv3, is under the DINOv3 License: no military, weapons or other uses trade controls forbid"
+        ]
+      },
+      "adapter_version": "1",
+      "vram_gb": 18.0,
+      "disk_gb": 18.8,
+      "rank": 12,
+      "stub": false,
+      "manifest": "engine/src/forja_engine/manifests/pixal3d-mv.yaml",
+      "sha256": "f1cdbc066536d7054e15626624d42dd38f9ce383c5e0aede8bf24f4164c805f2"
+    },
+    {
+      "id": "pixal3d",
+      "name": "Pixal3D",
+      "family": "pixal3d",
+      "tasks": [
+        "shape"
+      ],
+      "license": {
+        "spdx": "MIT",
+        "commercial": true,
+        "restrictions": [
+          "its image encoder, Meta's DINOv3, is under the DINOv3 License: no military, weapons or other uses trade controls forbid"
+        ]
+      },
+      "adapter_version": "1",
+      "vram_gb": 18.0,
+      "disk_gb": 25.8,
+      "rank": 20,
+      "stub": false,
+      "manifest": "engine/src/forja_engine/manifests/pixal3d.yaml",
+      "sha256": "89da03b10076db3daf798d7afa976f51fc64602521c3bec0450770c84ade2881"
+    },
+    {
       "id": "skintokens",
       "name": "SkinTokens (TokenRig)",
       "family": "skintokens",
@@ -186,6 +230,50 @@
       "stub": true,
       "manifest": "engine/src/forja_engine/manifests/stub-shape.yaml",
       "sha256": "d7c1ba834735d035387c17850b30a8e64f8cd231b47f138a6fa8b551c2f52a6f"
+    },
+    {
+      "id": "trellis2-texture",
+      "name": "TRELLIS.2 Paint",
+      "family": "trellis2",
+      "tasks": [
+        "texture"
+      ],
+      "license": {
+        "spdx": "MIT",
+        "commercial": true,
+        "restrictions": [
+          "its image encoder, Meta's DINOv3, is under the DINOv3 License: no military, weapons or other uses trade controls forbid"
+        ]
+      },
+      "adapter_version": "1",
+      "vram_gb": 24.0,
+      "disk_gb": 8.0,
+      "rank": 20,
+      "stub": false,
+      "manifest": "engine/src/forja_engine/manifests/trellis2-texture.yaml",
+      "sha256": "7fe6ac3091e009e13b7f18a78aab7472332b7fa61664d28f09663a3a2b9a86ba"
+    },
+    {
+      "id": "trellis2",
+      "name": "TRELLIS.2",
+      "family": "trellis2",
+      "tasks": [
+        "shape"
+      ],
+      "license": {
+        "spdx": "MIT",
+        "commercial": true,
+        "restrictions": [
+          "its image encoder, Meta's DINOv3, is under the DINOv3 License: no military, weapons or other uses trade controls forbid"
+        ]
+      },
+      "adapter_version": "1",
+      "vram_gb": 24.0,
+      "disk_gb": 16.1,
+      "rank": 15,
+      "stub": false,
+      "manifest": "engine/src/forja_engine/manifests/trellis2.yaml",
+      "sha256": "d0d8b2426f32d1513486a8c41e9ad67e8daaf9d791bbda109f9b442f0fb040e9"
     },
     {
       "id": "triposg",

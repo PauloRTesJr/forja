@@ -43,6 +43,9 @@ class Upstream:
     license: str
     # Folders inside the extracted source added to the environment's import path.
     pythonpath: tuple[str, ...] = (".",)
+    # Where the source is extracted in the environment: "upstream" for the family's own,
+    # "upstream-<name>" for each other one it lists under `extra`.
+    folder: str = "upstream"
 
 
 @dataclass(frozen=True)
@@ -52,6 +55,8 @@ class Family:
     python: str
     lanes: tuple[str, ...]
     upstream: Upstream | None = None
+    # Further pinned sources the upstream code imports but does not ship (Pixal3D's NAF).
+    extra_upstreams: tuple[Upstream, ...] = ()
     # Installed with --no-build-isolation after the requirements, in order, because they
     # compile against the torch already in the environment. "{upstream}" expands to the
     # extracted source folder. Per lane: a lane may install only the models that need no
@@ -75,13 +80,30 @@ class Family:
 
         out = []
         for spec in self.build_by_lane.get(lane, ()):
-            _, sep, marker = spec.partition(";")
+            _, sep, marker = split_build(spec)[1].partition(";")
             if not sep or Marker(marker.strip()).evaluate(environment):
                 out.append(spec)
         return tuple(out)
 
     def smoke(self, lane: str) -> str:
         return self.smoke_by_lane.get(lane, "")
+
+
+#: The one option a build entry may start with: install that package without its dependencies,
+#: for upstream packages that list their siblings as unpinned git URLs (TRELLIS.2's o_voxel).
+NO_DEPS = "--no-deps"
+
+
+def split_build(spec: str) -> tuple[list[str], str]:
+    """A build entry's uv options and its requirement."""
+    spec = spec.strip()
+    if spec.startswith(NO_DEPS + " "):
+        return [NO_DEPS], spec[len(NO_DEPS) :].strip()
+    return [], spec
+
+
+def _upstream(raw: dict[str, Any], folder: str = "upstream") -> Upstream:
+    return Upstream(raw["url"], raw["sha256"], raw["license"], tuple(raw.get("pythonpath", ["."])), folder)
 
 
 def _per_lane(raw: Any, lanes: tuple[str, ...], source: Path, key: str) -> dict[str, Any]:
@@ -108,18 +130,20 @@ def load(name: str, root: Path | None = None) -> Family:
     for lane in lanes:
         if lane not in LANES:
             raise ValueError(f"{spec_path}: unknown lane {lane!r}")
+    build_by_lane = {
+        lane: tuple(v or ()) for lane, v in _per_lane(doc.get("build", []), lanes, spec_path, "build").items()
+    }
+    for spec in (s for specs in build_by_lane.values() for s in specs):
+        if split_build(spec)[1].startswith("-"):
+            raise ValueError(f"{spec_path}: build entry {spec!r}: the only option is {NO_DEPS}")
     return Family(
         name=doc["name"],
         root=root,
         python=str(doc.get("python", "3.11")),
         lanes=lanes,
-        upstream=Upstream(up["url"], up["sha256"], up["license"], tuple(up.get("pythonpath", ["."])))
-        if up
-        else None,
-        build_by_lane={
-            lane: tuple(v or ())
-            for lane, v in _per_lane(doc.get("build", []), lanes, spec_path, "build").items()
-        },
+        upstream=_upstream(up) if up else None,
+        extra_upstreams=tuple(_upstream(x, f"upstream-{x['name']}") for x in (up or {}).get("extra", [])),
+        build_by_lane=build_by_lane,
         env={k: str(v) for k, v in (doc.get("env") or {}).items()},
         torch_backend={k: str(v) for k, v in (doc.get("torch_backend") or {}).items()},
         smoke_by_lane={

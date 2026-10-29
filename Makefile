@@ -34,7 +34,7 @@ test: ## Run every test suite
 	cd apps/desktop && pnpm test
 
 check: ## Lint, type-check and test everything (what CI runs)
-	cd engine && uv run ruff check . ../templates && uv run ruff format --check . ../templates && uv run mypy src families/birefnet/src families/triposg/src families/hunyuan3d2/src families/unirig/src families/skintokens/src sdk/src ../templates/adapter/src && uv run pytest -q
+	cd engine && uv run ruff check . ../templates && uv run ruff format --check . ../templates && uv run mypy src families/birefnet/src families/triposg/src families/hunyuan3d2/src families/unirig/src families/skintokens/src families/trellis2/src families/pixal3d/src sdk/src ../templates/adapter/src && uv run pytest -q
 	cd core && gofmt -l . | (! grep .) && go vet ./... && go test $$([ "$$(go env CGO_ENABLED)" = 1 ] && echo -race) ./...
 	cd apps/desktop && pnpm lint && pnpm typecheck && pnpm test && pnpm build
 
