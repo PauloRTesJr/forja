@@ -1,8 +1,9 @@
 import { basename, join } from 'node:path'
-import { app, BrowserWindow, clipboard, dialog, ipcMain, nativeImage, nativeTheme, shell, type NativeImage } from 'electron'
+import { app, BrowserWindow, clipboard, dialog, ipcMain, nativeTheme, shell, type NativeImage } from 'electron'
 import iconIco from '../../build/icon.ico?asset'
 import iconPng from '../../build/icon.png?asset'
 import { Core } from './core'
+import { dragIcon } from './drag'
 import { handleScheme, registerScheme } from './protocol'
 
 registerScheme()
@@ -122,12 +123,10 @@ type DragFile = { file: string; icon: NativeImage }
 const dragFiles = new Map<string, Promise<DragFile>>()
 const dragIcons = new Map<string, NativeImage>()
 function readyDrag(id: string, png?: ArrayBuffer): Promise<DragFile> {
-  if (png) dragIcons.set(id, nativeImage.createFromBuffer(Buffer.from(png)))
+  if (png) dragIcons.set(id, dragIcon(png))
   const ready = (async (): Promise<DragFile> => {
     const { path } = await coreJSON<{ path: string }>('POST', `/v1/assets/${encodeURIComponent(id)}/drag`)
-    let icon = dragIcons.get(id) ?? nativeImage.createEmpty()
-    if (icon.isEmpty()) icon = await app.getFileIcon(path, { size: 'large' })
-    return { file: path, icon }
+    return { file: path, icon: dragIcons.get(id) ?? dragIcon() }
   })()
   dragFiles.set(id, ready)
   ready.catch(() => dragFiles.delete(id))
