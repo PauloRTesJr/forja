@@ -149,8 +149,12 @@ class TextureMatch(Adapter):
     """Pulls a painted base color back toward the reference it was painted from.
 
     Inputs: the painted mesh and the framed reference. Geometry, UVs, roughness and metallic
-    pass through, so the bake stage after it works unchanged. See ops/match.py for the method.
+    (factors, and the map when the painter made one) pass through, so the bake stage after it
+    works unchanged. See ops/match.py for the method.
     """
+
+    # 2: keeps a painted roughness and metallic map.
+    version = "2"
 
     def capabilities(self) -> Capabilities:
         return Capabilities(tasks=(StageType.TEXTURE_MATCH,), devices=CPU)
@@ -188,6 +192,7 @@ class TextureMatch(Adapter):
             result.texture,
             roughness=_factor(material, "roughnessFactor", 0.8),
             metallic=_factor(material, "metallicFactor", 0.0),
+            metallic_roughness=getattr(material, "metallicRoughnessTexture", None),
         )
         path = mesh_ops.save(out, ctx.out_dir / "matched.glb")
         ctx.progress(3, 3)
@@ -197,8 +202,9 @@ class TextureMatch(Adapter):
 class Bake(Adapter):
     """Normal and AO maps from the high-poly onto the painted low-poly (docs/decisions.md, 6).
 
-    Inputs: the textured low-poly first, the high-poly second. Roughness and metallic stay
-    constant factors; the ORM map's G and B are white so those factors pass through.
+    Inputs: the textured low-poly first, the high-poly second. The ORM map's R is the baked
+    occlusion; its G and B are the painter's roughness and metallic map when it made one
+    (TRELLIS.2), else white, so the constant factors pass through.
 
     When the low-poly was not painted (a model did shape and texture in one pass, so the paint
     stage was skipped), it is unwrapped here and the high-poly's colors are baked as its base
@@ -206,7 +212,8 @@ class Bake(Adapter):
     """
 
     # 3: MikkTSpace tangents, measured cage, 4 samples per texel, padded gutters, smoother AO.
-    version = "3"
+    # 4: keeps a painted roughness and metallic map in the ORM's G and B.
+    version = "4"
 
     def capabilities(self) -> Capabilities:
         return Capabilities(tasks=(StageType.BAKE,), devices=CPU)
@@ -245,6 +252,12 @@ class Bake(Adapter):
                 result.cage * 100,
                 result.hit_ratio * 100,
             )
+        orm = result.orm
+        painted = getattr(material, "metallicRoughnessTexture", None)
+        if painted is not None:
+            occlusion = orm.getchannel("R")
+            maps = painted.convert("RGB").resize(occlusion.size, Image.Resampling.BILINEAR)
+            orm = Image.merge("RGB", (occlusion, maps.getchannel("G"), maps.getchannel("B")))
         low = result.mesh
         out = low.copy()
         out.visual = trimesh.visual.TextureVisuals(
@@ -252,8 +265,8 @@ class Bake(Adapter):
             material=trimesh.visual.material.PBRMaterial(
                 baseColorTexture=base,
                 normalTexture=result.normal,
-                occlusionTexture=result.orm,
-                metallicRoughnessTexture=result.orm,
+                occlusionTexture=orm,
+                metallicRoughnessTexture=orm,
                 roughnessFactor=_factor(material, "roughnessFactor", 0.8),
                 metallicFactor=_factor(material, "metallicFactor", 0.0),
             ),

@@ -261,10 +261,19 @@ def dilate(tex: NDArray[np.float32], covered: NDArray[np.bool_], iterations: int
 
 
 def textured(
-    mesh: trimesh.Trimesh, base_color: Image.Image, roughness: float, metallic: float
+    mesh: trimesh.Trimesh,
+    base_color: Image.Image,
+    roughness: float,
+    metallic: float,
+    metallic_roughness: Image.Image | None = None,
 ) -> trimesh.Trimesh:
+    """The mesh with a PBR material. `metallic_roughness` is a glTF map (G roughness, B metallic)
+    that the factors scale, for painters that make one."""
     material = trimesh.visual.material.PBRMaterial(
-        baseColorTexture=base_color, roughnessFactor=roughness, metallicFactor=metallic
+        baseColorTexture=base_color,
+        metallicRoughnessTexture=metallic_roughness,
+        roughnessFactor=roughness,
+        metallicFactor=metallic,
     )
     out = mesh.copy()
     out.visual = trimesh.visual.TextureVisuals(uv=uvs_of(mesh), material=material)

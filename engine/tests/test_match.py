@@ -120,6 +120,24 @@ def test_stage_keeps_geometry_uvs_and_material_factors(tmp_path):
     assert np.asarray(material.baseColorTexture).tobytes() != np.asarray(gradient(128)).tobytes()
 
 
+def test_stage_keeps_a_painted_roughness_and_metallic_map(tmp_path):
+    maps = Image.new("RGB", (64, 64), (0, 200, 40))
+    painted = m.textured(plane(), gradient(128), roughness=1.0, metallic=1.0, metallic_roughness=maps)
+    glb = m.save(painted, tmp_path / "painted.glb")
+    ref = tmp_path / "ref.png"
+    reference(checker(200, 8)).save(ref)
+    ctx = StageContext(
+        stage_id="match",
+        task=StageType.TEXTURE_MATCH,
+        inputs=[StageInput(glb, ArtifactKind.MESH_GLB, "a"), StageInput(ref, ArtifactKind.IMAGE_PNG, "b")],
+        params={},
+        seed=0,
+        out_dir=tmp_path,
+    )
+    kept = m.load(TextureMatch().run(ctx)[0].path).visual.material.metallicRoughnessTexture
+    assert kept is not None and kept.convert("RGB").getpixel((10, 10)) == (0, 200, 40)
+
+
 def _render(mesh: trimesh.Trimesh, tex: Image.Image, yaw: float, size: int = 256) -> Image.Image:
     """The textured mesh from `yaw`, framed like the framing stage: what a reference would show."""
     rot = match.View(yaw, 0.0, match.Projection(1, 0, 0)).rotation()

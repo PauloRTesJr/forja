@@ -107,6 +107,24 @@ def test_bake_stage_writes_pbr_glb(tmp_path):
     assert mat.roughnessFactor == pytest.approx(0.6) and mat.metallicFactor == pytest.approx(0.1)
 
 
+def test_bake_keeps_a_painted_roughness_and_metallic_map(tmp_path):
+    from forja_engine.adapters.builtin import Bake
+    from forja_engine.sdk import ArtifactKind, StageContext, StageInput, StageType
+
+    high = trimesh.creation.icosphere(subdivisions=4)
+    maps = Image.new("RGB", (64, 64), (0, 150, 30))  # glTF: G roughness, B metallic
+    low = m.textured(m.unwrap(m.decimate(high, 300)), Image.new("RGB", (128, 128)), 1.0, 1.0, maps)
+    paths = [m.save(low, tmp_path / "low.glb"), m.save(high, tmp_path / "high.glb")]
+    ctx = StageContext(
+        "bake", StageType.BAKE, [StageInput(p, ArtifactKind.MESH_GLB, "") for p in paths], {}, 0, tmp_path
+    )
+    mat = m.load(Bake().run(ctx)[0].path).visual.material
+    orm = np.asarray(mat.metallicRoughnessTexture.convert("RGB"))
+    assert orm.shape[:2] == (128, 128)  # at the bake's size, not the painter's
+    assert (orm[..., 1] == 150).all() and (orm[..., 2] == 30).all()
+    assert mat.roughnessFactor == pytest.approx(1.0) and mat.metallicFactor == pytest.approx(1.0)
+
+
 def test_colors_of_a_textured_high_poly_are_baked_into_the_low_poly():
     """A model that does shape and texture in one pass hands bake a textured high-poly."""
     high = plane(16)
