@@ -43,6 +43,7 @@ var Recommended = []struct {
 }{
 	{"fal-ai/hunyuan-3d/v3.1/pro/image-to-3d", 30},
 	{"fal-ai/trellis-2", 28},
+	{"tripo3d/p2/image-to-3d", 27},
 	{"tripo3d/h3.1/image-to-3d", 26},
 	{"meshy/v7.1/image-to-3d", 24},
 	{"fal-ai/hyper3d/rodin/v2.5", 22},

@@ -15,7 +15,7 @@ forja hubs connect fal < fal-key.txt
 forja hubs ls
 ```
 
-Forja tests the key, keeps it in the OS keychain (never in a file), and adds its recommended models: Hunyuan3D 3.1 Pro, TRELLIS.2, Tripo 3.1, Meshy 7.1, Rodin 2.5 and TRELLIS.2 retexture. Each was checked to map onto Forja's stages.
+Forja tests the key, keeps it in the OS keychain (never in a file), and adds its recommended models: Hunyuan3D 3.1 Pro, TRELLIS.2, Tripo P2, Tripo 3.1, Meshy 7.1, Rodin 2.5 and TRELLIS.2 retexture. Each was checked to map onto Forja's stages.
 
 ## Find and add other models
 
