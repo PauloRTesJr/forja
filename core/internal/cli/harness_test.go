@@ -51,6 +51,8 @@ type fakeEngine struct {
 	measured []bool
 	// notes are what a stage type says about its first output, such as a stand-in it made.
 	notes map[string]string
+	// refuse, when set, is the refusal every run gets instead of running.
+	refuse string
 }
 
 // fakeMetrics is what an engine measures of a stage: a model's load, memory, and a mesh's stats.
@@ -130,6 +132,12 @@ func (e *fakeEngine) set(fn func(e *fakeEngine)) {
 }
 
 func (e *fakeEngine) Run(_ context.Context, req engineapi.RunRequest, evs chan<- engineapi.Event) (*engineapi.Run, error) {
+	e.mu.Lock()
+	refuse := e.refuse
+	e.mu.Unlock()
+	if refuse != "" {
+		return nil, refusal(refuse)
+	}
 	run := &engineapi.Run{ID: "r", Status: "succeeded", Stages: map[string]engineapi.StageState{}}
 	produced := map[string]string{}
 	rigged := slices.ContainsFunc(req.Stages, func(s engineapi.StageSpec) bool { return s.Use == "rig" })
@@ -236,6 +244,12 @@ func (e *fakeEngine) FollowTask(_ context.Context, id string, states chan<- engi
 	states <- t
 	return nil
 }
+
+// refusal is an engine that answered and would not run, which is the job's failure and no outage.
+type refusal string
+
+func (r refusal) Error() string   { return string(r) }
+func (r refusal) StatusCode() int { return 422 }
 
 // chestGLB is a GLB with a full-detail mesh of 100 triangles and two LODs; rigged, every
 // level is skinned to a humanoid skeleton.
@@ -420,11 +434,12 @@ func (s *syncBuffer) String() string {
 	return s.b.String()
 }
 
-// image writes a reference image the core can read by path.
+// image writes a reference image the core can read by path: it starts as a PNG does, which
+// is as far as the core looks, and differs by name.
 func (h *harness) image(name string) string {
 	h.t.Helper()
 	path := filepath.Join(h.dir, name)
-	if err := os.WriteFile(path, []byte("fake image "+name), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte("\x89PNG\r\n\x1a\nfake image "+name), 0o644); err != nil {
 		h.t.Fatal(err)
 	}
 	return path

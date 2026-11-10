@@ -102,12 +102,25 @@ type Runner struct {
 
 	// meters are the paid batches running now, with what they owe so far (under mu).
 	meters map[*meter]bool
+
+	// closed is set once the core stops: no job starts after it (under mu). runs counts the
+	// jobs' run goroutines.
+	closed bool
+	runs   sync.WaitGroup
 }
 
+// errClosing is why a run was cancelled when the core stops, and what a job submitted then
+// is refused with.
+var errClosing = errors.New("Forja is closing; try again once it is open")
+
 type active struct {
-	cancel context.CancelFunc
+	// cancel ends the run: with nil for the user's cancel, with errClosing when the core stops.
+	cancel context.CancelCauseFunc
 	job    *library.Job
 	mu     sync.Mutex
+	// run tells this run of the job from an earlier one (before the user answered about a sheet,
+	// before a restart) in the ids its batches carry.
+	run string
 	// measured is set for a benchmark's sample (Measure).
 	measured *measured
 	// picks are where each stage runs now, owed what its paid stages are expected to cost
@@ -119,6 +132,9 @@ type active struct {
 	// work once: the background removal it ran while looking for a sheet of views serves its
 	// own stages. Only the job's run goroutine touches it.
 	ran map[string][]library.Output
+	// begun is set once a stage of the job's own plan has started and the library knows it; the
+	// stages that look for a sheet of views (looking) do not count. Under mu.
+	begun, looking bool
 }
 
 // measured is what a benchmark's sample keeps beside its job. Only the job's own run
@@ -230,7 +246,27 @@ func (r *Runner) Hold() (release func()) {
 	return func() { once.Do(r.ended) }
 }
 
+// built is a job that was checked and planned, ready to be saved and started.
+type built struct {
+	job  *library.Job
+	prep *prepared
+	cfg  *config.Loaded
+}
+
 func (r *Runner) submit(ctx context.Context, req SubmitRequest, m *measured) (*active, error) {
+	b, err := r.build(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	b.job.Sample = m != nil
+	return r.launch(ctx, b, m)
+}
+
+// build checks a submission and plans its job, without saving or starting anything.
+func (r *Runner) build(ctx context.Context, req SubmitRequest) (*built, error) {
+	if r.isClosed() {
+		return nil, errClosing
+	}
 	project := req.Project
 	if project != "" {
 		project, _ = filepath.Abs(project)
@@ -242,16 +278,21 @@ func (r *Runner) submit(ctx context.Context, req SubmitRequest, m *measured) (*a
 	input := req.Input
 	name := req.Name
 	if req.Path != "" {
-		if input, err = r.store.PutFile(req.Path); err != nil {
-			return nil, fmt.Errorf("reading %s: %w", req.Path, err)
+		if input, err = r.putImage(req.Path); err != nil {
+			return nil, err
 		}
 		if name == "" {
 			name = req.Path
 		}
 	}
-	if input == "" || !r.store.Has(input) {
-		return nil, fmt.Errorf("input %q is not in the object store", input)
+	if input == "" {
+		return nil, errors.New("no image was given: send a path, or the ref of an image in the store as input")
 	}
+	if !r.store.Has(input) {
+		return nil, fmt.Errorf("the image %s is no longer in Forja's store; choose the file again", input)
+	}
+	// Used now: a sweep leaves alone what was used within the hour.
+	r.store.Touch(input)
 	views, err := r.putViews(req.Views)
 	if err != nil {
 		return nil, err
@@ -280,7 +321,7 @@ func (r *Runner) submit(ctx context.Context, req SubmitRequest, m *measured) (*a
 		priority = "batch"
 	}
 	job := &library.Job{
-		ID: ulid.Make().String(), Name: export.Slug(name), Preset: presetID, Input: input, Views: views, Seed: seed,
+		ID: ulid.Make().String(), Name: export.DisplayName(name), Preset: presetID, Input: input, Views: views, Seed: seed,
 		Project: project, Priority: priority, Overrides: req.Overrides, Status: library.Queued, CreatedAt: time.Now(),
 	}
 	if len(views) == 0 {
@@ -291,24 +332,67 @@ func (r *Runner) submit(ctx context.Context, req SubmitRequest, m *measured) (*a
 		return nil, err
 	}
 	r.setStages(ctx, job, prep)
-	if err := r.db.SaveJob(ctx, job); err != nil {
+	return &built{job, prep, cfg}, nil
+}
+
+// launch saves a built job and runs it in the background.
+func (r *Runner) launch(ctx context.Context, b *built, m *measured) (*active, error) {
+	if err := r.db.SaveJob(ctx, b.job); err != nil {
 		return nil, err
 	}
-	a := r.start(job, prep, cfg, m)
+	a, err := r.start(b.job, b.prep, b.cfg, m)
+	if err != nil {
+		return nil, err
+	}
 	r.hub.Publish(EvJobCreated, snapshot(a))
 	return a, nil
 }
 
-// start makes a job active and runs it in the background.
-func (r *Runner) start(job *library.Job, prep *prepared, cfg *config.Loaded, m *measured) *active {
-	runCtx, cancel := context.WithCancel(context.Background())
-	a := &active{cancel: cancel, job: job, measured: m, avoid: failed{}, ran: map[string][]library.Output{}}
+// start makes a job active and runs it in the background. A core that is stopping
+// starts none.
+func (r *Runner) start(job *library.Job, prep *prepared, cfg *config.Loaded, m *measured) (*active, error) {
+	runCtx, cancel := context.WithCancelCause(context.Background())
+	id := ulid.Make().String()
+	a := &active{cancel: cancel, job: job, measured: m, avoid: failed{}, ran: map[string][]library.Output{}, run: id[len(id)-8:]}
 	a.set(prep)
 	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.closed {
+		cancel(nil)
+		return nil, errClosing
+	}
 	r.active[job.ID] = a
-	r.mu.Unlock()
+	r.runs.Add(1)
 	go r.run(runCtx, a, prep, cfg)
-	return a
+	return a, nil
+}
+
+func (r *Runner) isClosed() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.closed
+}
+
+// Close ends every running job as interrupted and starts no more. It waits up to grace for
+// them to end, so each is saved as it ended before the library closes.
+func (r *Runner) Close(grace time.Duration) {
+	r.mu.Lock()
+	r.closed = true
+	for _, a := range r.active {
+		a.cancel(errClosing)
+	}
+	r.mu.Unlock()
+	done := make(chan struct{})
+	go func() {
+		r.runs.Wait()
+		close(done)
+	}()
+	timer := time.NewTimer(grace)
+	defer timer.Stop()
+	select {
+	case <-done:
+	case <-timer.C:
+	}
 }
 
 // putViews stores a job's other views and returns their refs by view.
@@ -324,13 +408,14 @@ func (r *Runner) putViews(views map[string]string) (map[string]string, error) {
 		ref := src
 		if !strings.HasPrefix(src, "blake3:") {
 			var err error
-			if ref, err = r.store.PutFile(src); err != nil {
-				return nil, fmt.Errorf("reading the %s view %s: %w", v, src, err)
+			if ref, err = r.putImage(src); err != nil {
+				return nil, fmt.Errorf("the %s view: %w", v, err)
 			}
 		}
 		if !r.store.Has(ref) {
-			return nil, fmt.Errorf("the %s view %q is not in the object store", v, ref)
+			return nil, fmt.Errorf("the %s view %s is no longer in Forja's store; choose the file again", v, ref)
 		}
+		r.store.Touch(ref)
 		out[v] = ref
 	}
 	return out, nil
@@ -463,7 +548,7 @@ func (r *Runner) Cancel(id string) bool {
 	a, ok := r.active[id]
 	r.mu.Unlock()
 	if ok {
-		a.cancel()
+		a.cancel(nil)
 		return true
 	}
 	// A waiting job runs nowhere: cancelling it only records that.
@@ -473,11 +558,12 @@ func (r *Runner) Cancel(id string) bool {
 	defer r.unclaim(id)
 	ctx := context.Background()
 	job, err := r.db.Job(ctx, id)
-	if err != nil || job.Status != library.Waiting {
+	// So does a job that waits to be started again after a restart.
+	if err != nil || (job.Status != library.Waiting && job.Status != library.Queued) {
 		return false
 	}
 	now := time.Now()
-	job.Status, job.Error, job.FinishedAt = library.Cancelled, "cancelled", &now
+	job.Status, job.Error, job.FinishedAt = library.Cancelled, "", &now
 	for i := range job.Stages {
 		if !job.Stages[i].Status.Done() {
 			job.Stages[i].Status = library.Cancelled
@@ -511,6 +597,9 @@ func (r *Runner) unclaim(id string) {
 // AnswerSheet resumes a job waiting on a sheet, with the views to cut out of it or as one
 // image. Models are picked again: what is installed may have changed while it waited.
 func (r *Runner) AnswerSheet(ctx context.Context, id string, ans SheetAnswer) (*library.Job, error) {
+	if r.isClosed() {
+		return nil, errClosing
+	}
 	if !r.claim(id) {
 		return nil, fmt.Errorf("job %s is not waiting for an answer", id)
 	}
@@ -543,7 +632,10 @@ func (r *Runner) AnswerSheet(ctx context.Context, id string, ans SheetAnswer) (*
 	if err := r.db.SaveJob(ctx, job); err != nil {
 		return nil, err
 	}
-	a := r.start(job, prep, cfg, nil)
+	a, err := r.start(job, prep, cfg, nil)
+	if err != nil {
+		return nil, err
+	}
 	r.hub.Publish(EvJobUpdated, snapshot(a))
 	return snapshot(a), nil
 }
@@ -605,6 +697,7 @@ func (r *Runner) update(a *active, fn func(j *library.Job)) {
 }
 
 func (r *Runner) run(ctx context.Context, a *active, prep *prepared, cfg *config.Loaded) {
+	defer r.runs.Done()
 	r.gate.RLock()
 	defer r.ended()
 	defer r.leave(a)
@@ -612,13 +705,30 @@ func (r *Runner) run(ctx context.Context, a *active, prep *prepared, cfg *config
 		defer r.sample(a)
 	}
 	plan, err := r.runJob(ctx, a, prep, cfg)
+	closing := context.Cause(ctx) == errClosing
 	switch {
+	case err != nil && ctx.Err() != nil && !closing:
+		// The user cancelled. Whatever the run ended with meanwhile (a provider's error, a sheet
+		// found just then) is not what happened to the job: it was cancelled, and must not go
+		// on to wait for an answer.
+		r.finish(a, library.Cancelled, "", "")
 	case errors.Is(err, errWaiting):
 		r.wait(a)
+	case err != nil && closing && snapshot(a).Status == library.Queued:
+		// It only waited for its turn: it stays queued in the library, and the next core starts
+		// it again (Resume).
+	case err != nil && closing && !a.job.Sample && !r.began(a):
+		// Admitted, with a slot, but no stage began: the same as a job that waits for its turn.
+		r.requeue(a)
+	case err != nil && closing:
+		// Not the user's cancel: the job shows why it ended, as one a crash interrupted does.
+		r.finish(a, library.Failed, library.Interrupted, "")
 	case errors.Is(err, context.Canceled):
-		r.finish(a, library.Cancelled, "cancelled")
+		r.finish(a, library.Cancelled, "", "")
 	case err != nil:
-		r.finish(a, library.Failed, err.Error())
+		r.log.Warn("job failed", "job", a.job.ID, "err", err)
+		msg := r.explain(cfg, err)
+		r.finish(a, library.Failed, msg, detail(msg, err.Error()))
 	case a.measured != nil:
 		// A sample makes no asset, but reads the stats one would carry, as making it would.
 		job := snapshot(a)
@@ -627,13 +737,41 @@ func (r *Runner) run(ctx context.Context, a *active, prep *prepared, cfg *config
 				a.measured.stats = AssetStats(path, r.log)
 			}
 		}
-		r.finish(a, library.Succeeded, "")
+		r.finish(a, library.Succeeded, "", "")
 	default:
 		if err := r.createAsset(context.Background(), a, plan, cfg); err != nil {
-			r.finish(a, library.Failed, "export: "+err.Error())
+			r.log.Warn("job failed", "job", a.job.ID, "err", err)
+			r.finish(a, library.Failed, "The asset could not be saved: "+err.Error(), "")
 			return
 		}
-		r.finish(a, library.Succeeded, "")
+		r.finish(a, library.Succeeded, "", "")
+	}
+}
+
+// began reports whether a stage of the job's own plan has started.
+func (r *Runner) began(a *active) bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.begun
+}
+
+// requeue saves an admitted job that began nothing as queued again, for the next core to start.
+// What a look for a sheet of views left on it is wiped, as for a job that never got that far: the
+// next run looks again, with the answer the user gave standing.
+func (r *Runner) requeue(a *active) {
+	r.update(a, func(j *library.Job) {
+		j.Status, j.StartedAt = library.Queued, nil
+		if sh := j.Sheet; sh != nil {
+			j.Sheet, j.Views = &library.Sheet{Mode: sh.Mode, Answer: sh.Answer, Chosen: sh.Chosen}, nil
+		}
+		for i := range j.Stages {
+			j.Stages[i] = library.Stage{ID: j.Stages[i].ID, Use: j.Stages[i].Use, Model: j.Stages[i].Model,
+				Status: library.Queued, Provider: j.Stages[i].Provider, ProviderLabel: j.Stages[i].ProviderLabel, Outputs: []library.Output{}}
+		}
+	})
+	snap := snapshot(a)
+	if err := r.db.SaveJob(context.Background(), snap); err != nil {
+		r.log.Error("saving job", "job", snap.ID, "err", err)
 	}
 }
 
@@ -723,7 +861,9 @@ func (r *Runner) look(ctx context.Context, a *active, prep *prepared) error {
 		return ctx.Err()
 	}
 	r.setStatus(a, library.Running)
+	r.update(a, func(*library.Job) { a.looking = true })
 	err := r.inspect(ctx, a, prep)
+	r.update(a, func(*library.Job) { a.looking = false })
 	r.hub.Publish(EvJobUpdated, snapshot(a))
 	return err
 }
@@ -751,8 +891,20 @@ func (r *Runner) setStatus(a *active, s library.Status) {
 	if snapshot(a).Status == s {
 		return
 	}
-	r.update(a, func(j *library.Job) { j.Status = s })
-	r.hub.Publish(EvJobUpdated, snapshot(a))
+	r.update(a, func(j *library.Job) {
+		j.Status = s
+		if s == library.Running && j.StartedAt == nil {
+			now := time.Now()
+			j.StartedAt = &now
+		}
+	})
+	snap := snapshot(a)
+	// Saved, so a core that starts after this one knows which jobs only waited for their turn
+	// (it runs them) and which were running (it cannot).
+	if err := r.db.SaveJob(context.Background(), snap); err != nil {
+		r.log.Error("saving job", "job", snap.ID, "err", err)
+	}
+	r.hub.Publish(EvJobUpdated, snap)
 }
 
 func (r *Runner) plan(a *active, preset *presets.Preset, routes map[string]string) (*planner.Plan, error) {
@@ -919,10 +1071,13 @@ func (r *Runner) wait(a *active) {
 	r.hub.Publish(EvJobUpdated, snap)
 }
 
-func (r *Runner) finish(a *active, status library.Status, msg string) {
+func (r *Runner) finish(a *active, status library.Status, msg, more string) {
 	now := time.Now()
 	r.update(a, func(j *library.Job) {
-		j.Status, j.Error, j.FinishedAt = status, msg, &now
+		j.Status, j.Error, j.ErrorDetail, j.FinishedAt = status, msg, more, &now
+		if j.StartedAt != nil {
+			j.DurationSec = now.Sub(*j.StartedAt).Seconds()
+		}
 		for i := range j.Stages {
 			if !j.Stages[i].Status.Done() {
 				j.Stages[i].Status = library.Cancelled
@@ -995,10 +1150,13 @@ func (r *Runner) runBatch(ctx context.Context, a *active, plan *planner.Plan, id
 	}
 	// The engine answers a repeated client id with the run it already has, so a retry is safe.
 	// The first stage's key tells apart batches that start with the same stage: background
-	// removal runs on the sheet while looking for views, then on the front cut out of it.
+	// removal runs on the sheet while looking for views, then on the front cut out of it. The
+	// run's own id tells apart the same batch sent by another run of the job: once the user
+	// answers "keep it whole", the job starts over with the very stage its look began with, and
+	// must not be handed the look's run for it.
 	first := plan.Stages[idx[0]]
 	req := engineapi.RunRequest{
-		ClientRunID: a.job.ID + "-" + first.ID + "-" + strings.TrimPrefix(first.Key, "stage:")[:8],
+		ClientRunID: a.job.ID + "-" + a.run + "-" + first.ID + "-" + strings.TrimPrefix(first.Key, "stage:")[:8],
 		Priority:    a.job.Priority, Seed: plan.Seed, Measure: a.measured != nil,
 	}
 	for _, i := range idx {
@@ -1105,7 +1263,8 @@ func (r *Runner) runBatch(ctx context.Context, a *active, plan *planner.Plan, id
 			if js == nil {
 				return
 			}
-			js.Seconds, js.Error = seconds, errMsg
+			js.Seconds, js.Error = seconds, brief(errMsg)
+			js.ErrorDetail = detail(js.Error, errMsg)
 			if st.PeakVRAMBytes != nil {
 				js.PeakVRAM = *st.PeakVRAMBytes
 			}
@@ -1186,7 +1345,20 @@ func (r *Runner) onEngineEvent(ctx context.Context, a *active, p provider.Provid
 	}
 	switch ev.Type {
 	case "stage.started":
-		r.update(a, func(j *library.Job) { j.Stages[idx].Status = library.Running })
+		first := false
+		r.update(a, func(j *library.Job) {
+			j.Stages[idx].Status = library.Running
+			if !a.looking && !a.begun {
+				first, a.begun = true, true
+			}
+		})
+		if first {
+			// Stage states are saved when a job ends; this one is saved at its start so that a
+			// core that dies meanwhile can tell a job that ran from one that was only admitted.
+			if err := r.db.SaveJob(context.Background(), snapshot(a)); err != nil {
+				r.log.Error("saving job", "job", a.job.ID, "err", err)
+			}
+		}
 		r.hub.Publish(EvJobUpdated, snapshot(a))
 	case "stage.progress":
 		step, _ := ev.Data["step"].(float64)
@@ -1221,7 +1393,8 @@ func (r *Runner) onEngineEvent(ctx context.Context, a *active, p provider.Provid
 	case "stage.failed":
 		msg, _ := ev.Data["error"].(string)
 		r.update(a, func(j *library.Job) {
-			j.Stages[idx].Status, j.Stages[idx].Error, j.Stages[idx].Note = library.Failed, msg, ""
+			j.Stages[idx].Status, j.Stages[idx].Error, j.Stages[idx].Note = library.Failed, brief(msg), ""
+			j.Stages[idx].ErrorDetail = detail(j.Stages[idx].Error, msg)
 		})
 		r.hub.Publish(EvJobUpdated, snapshot(a))
 	}
@@ -1253,7 +1426,7 @@ func (r *Runner) createAsset(ctx context.Context, a *active, plan *planner.Plan,
 				License: r.license(ctx, job.Stages[i].Provider, s.Model),
 			})
 		}
-		if asset.ExportPath, err = export.ToProject(job.Project, cfg.Project.ExportDir, job.Name, glbPath, side); err != nil {
+		if asset.ExportPath, err = export.ToProject(job.Project, cfg.Project.ExportDir, export.Slug(job.Name), glbPath, side); err != nil {
 			return err
 		}
 	}

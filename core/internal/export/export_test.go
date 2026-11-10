@@ -16,7 +16,9 @@ import (
 
 func TestMain(m *testing.M) {
 	fakeblender.Main()
-	os.Exit(m.Run())
+	code := m.Run()
+	fakeblender.Cleanup()
+	os.Exit(code)
 }
 
 // fake makes this test binary a Blender of version and forgets what was probed before.
@@ -80,7 +82,7 @@ func TestAGLBIsCopiedWithoutBlenderAndRepeatedNamesAreNumbered(t *testing.T) {
 	glb := write(t, filepath.Join(dir, "store-object"), "glTF bytes")
 	f, _ := LookupFormat("glb")
 	out, err := ToFiles(context.Background(), nil, f, []Item{{Asset: "a1", Name: "chest", GLB: glb}},
-		filepath.Join(dir, "picked", "My Chest.GLB"))
+		filepath.Join(dir, "picked", "My Chest.GLB"), Options{})
 	if err != nil || len(out) != 1 || out[0].Asset != "a1" || len(out[0].Files) != 1 {
 		t.Fatalf("one file: %+v, %v", out, err)
 	}
@@ -92,21 +94,21 @@ func TestAGLBIsCopiedWithoutBlenderAndRepeatedNamesAreNumbered(t *testing.T) {
 	out, err = ToFiles(context.Background(), nil, f, []Item{
 		{Asset: "a1", Name: "chest", GLB: glb}, {Asset: "a2", Name: "Chest", GLB: glb}, {Asset: "a3", Name: "chest-2", GLB: glb},
 		{Asset: "a4", Name: `a:b/c`, GLB: glb},
-	}, folder)
+	}, folder, Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, want := names(folder), []string{"Chest-2.glb", "a-b-c.glb", "chest-2-2.glb", "chest.glb"}; !slices.Equal(got, want) {
+	if got, want := names(folder), []string{"Chest (2).glb", "a-b-c.glb", "chest-2.glb", "chest.glb"}; !slices.Equal(got, want) {
 		t.Fatalf("folder holds %v, want %v", got, want)
 	}
-	if out[1].Files[0] != filepath.Join(folder, "Chest-2.glb") {
+	if out[1].Files[0] != filepath.Join(folder, "Chest (2).glb") {
 		t.Fatalf("the second chest went to %v", out[1].Files)
 	}
 }
 
 func TestOtherFormatsNeedBlender(t *testing.T) {
 	f, _ := LookupFormat("fbx")
-	_, err := ToFiles(context.Background(), nil, f, []Item{{Asset: "a1", Name: "chest", GLB: "x"}}, t.TempDir())
+	_, err := ToFiles(context.Background(), nil, f, []Item{{Asset: "a1", Name: "chest", GLB: "x"}}, t.TempDir(), Options{})
 	if !errors.Is(err, ErrNoBlender) {
 		t.Fatalf("err %v", err)
 	}
@@ -125,7 +127,7 @@ func TestBlenderConvertsEachAssetAndOneThatFailsLeavesTheOthers(t *testing.T) {
 	obj, _ := LookupFormat("obj")
 	out, err := ToFiles(context.Background(), b, obj, []Item{
 		{Asset: "a1", Name: "chest", GLB: good}, {Asset: "a2", Name: "broken", GLB: bad}, {Asset: "a3", Name: "chest", GLB: good},
-	}, dir)
+	}, dir, Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -136,16 +138,16 @@ func TestBlenderConvertsEachAssetAndOneThatFailsLeavesTheOthers(t *testing.T) {
 	if out[1].Asset != "a2" || len(out[1].Files) != 0 || !strings.Contains(out[1].Error, "cannot read") {
 		t.Fatalf("broken asset %+v", out[1])
 	}
-	if out[2].Files[0] != filepath.Join(dir, "chest-2.obj") {
+	if out[2].Files[0] != filepath.Join(dir, "chest (2).obj") {
 		t.Fatalf("third asset %+v", out[2])
 	}
 	// Nothing of the hidden folder Blender wrote into is left.
-	if got := names(dir); !slices.Equal(got, []string{"chest-2.mtl", "chest-2.obj", "chest-2_Image_0.png", "chest.mtl", "chest.obj", "chest_Image_0.png"}) {
+	if got := names(dir); !slices.Equal(got, []string{"chest (2).mtl", "chest (2).obj", "chest (2)_Image_0.png", "chest.mtl", "chest.obj", "chest_Image_0.png"}) {
 		t.Fatalf("folder holds %v", got)
 	}
 
 	fbx, _ := LookupFormat("fbx")
-	out, err = ToFiles(context.Background(), b, fbx, []Item{{Asset: "a1", Name: "chest", GLB: good}}, filepath.Join(dir, "Hero.fbx"))
+	out, err = ToFiles(context.Background(), b, fbx, []Item{{Asset: "a1", Name: "chest", GLB: good}}, filepath.Join(dir, "Hero.fbx"), Options{})
 	if err != nil || len(out[0].Files) != 1 || out[0].Files[0] != filepath.Join(dir, "Hero.fbx") {
 		t.Fatalf("one FBX: %+v, %v", out, err)
 	}
@@ -172,5 +174,103 @@ func TestOpeningStartsBlenderWithTheAssetsAndDoesNotWait(t *testing.T) {
 	}
 	if j.Mode != "open" || len(j.Items) != 1 || j.Items[0].GLB != glb {
 		t.Fatalf("Blender was asked %+v", j)
+	}
+}
+
+// Saving one asset as "chest" made a folder named chest with chest.glb inside; exporting
+// into a folder that already held chest.glb replaced it without a word.
+func TestAFileGetsItsExtensionAndATakenNameIsNumbered(t *testing.T) {
+	dir := t.TempDir()
+	glb := write(t, filepath.Join(dir, "store-object"), "new bytes")
+	f, _ := LookupFormat("glb")
+	one := []Item{{Asset: "a1", Name: "chest", GLB: glb}}
+	ctx := context.Background()
+
+	out, err := ToFiles(ctx, nil, f, one, filepath.Join(dir, "saved", "My chest"), Options{File: true})
+	if err != nil || out[0].Files[0] != filepath.Join(dir, "saved", "My chest.glb") {
+		t.Fatalf("a file without its extension: %+v, %v", out, err)
+	}
+	if st, err := os.Stat(out[0].Files[0]); err != nil || st.IsDir() {
+		t.Fatalf("%s is not a file: %v", out[0].Files[0], err)
+	}
+	if _, err := ToFiles(ctx, nil, f, append(one, one...), filepath.Join(dir, "saved", "two"), Options{File: true}); err == nil {
+		t.Fatal("two assets went into one file")
+	}
+
+	folder := filepath.Join(dir, "folder")
+	if err := os.MkdirAll(folder, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mine := write(t, filepath.Join(folder, "chest.glb"), "the user's own file")
+	out, err = ToFiles(ctx, nil, f, one, folder, Options{})
+	if err != nil || out[0].Files[0] != filepath.Join(folder, "chest (2).glb") {
+		t.Fatalf("a taken name: %+v, %v", out, err)
+	}
+	if got, _ := os.ReadFile(mine); string(got) != "the user's own file" {
+		t.Fatalf("the file that was there now holds %q", got)
+	}
+	out, err = ToFiles(ctx, nil, f, one, folder, Options{})
+	if err != nil || out[0].Files[0] != filepath.Join(folder, "chest (3).glb") {
+		t.Fatalf("a name taken twice: %+v, %v", out, err)
+	}
+	// Asked to replace, it does; and a file the caller named is the caller's choice.
+	out, err = ToFiles(ctx, nil, f, one, folder, Options{Replace: true})
+	if err != nil || !strings.EqualFold(out[0].Files[0], mine) {
+		t.Fatalf("replace: %+v, %v", out, err)
+	}
+	if got, _ := os.ReadFile(mine); string(got) != "new bytes" {
+		t.Fatalf("replace left %q", got)
+	}
+	out, err = ToFiles(ctx, nil, f, one, filepath.Join(folder, "chest (2).glb"), Options{})
+	if err != nil || out[0].Files[0] != filepath.Join(folder, "chest (2).glb") {
+		t.Fatalf("a named file: %+v, %v", out, err)
+	}
+}
+
+func TestANameShowsAsTypedAndIsMadeSafeOnlyForFiles(t *testing.T) {
+	for in, want := range map[string]string{
+		"chest.png": "chest", "Baú do Tesouro.PNG": "Baú do Tesouro", "宝箱.webp": "宝箱", "My Chest v1.2": "My Chest v1.2",
+		"  red-barrel.jpeg ": "red-barrel", "": "asset", ".png": ".png", "tab\there.png": "tab here",
+		strings.Repeat("é", 200) + ".png": strings.Repeat("é", 120),
+	} {
+		if got := DisplayName(in); got != want {
+			t.Errorf("DisplayName(%q) = %q, want %q", in, got, want)
+		}
+	}
+	if got := DisplayName(filepath.Join("some", "folder", "Dragão.png")); got != "Dragão" {
+		t.Errorf("a path shows as %q", got)
+	}
+	// Where files are made: the letters stay in a library export, a project folder gets ASCII.
+	if FileName("Baú: do/Tesouro?") != "Baú- do-Tesouro-" || Slug("Baú do Tesouro") != "ba-do-tesouro" {
+		t.Errorf("file names: %q, %q", FileName("Baú: do/Tesouro?"), Slug("Baú do Tesouro"))
+	}
+}
+
+// Settings used to run any file typed into "Blender's path" with --version for up to 30 s.
+func TestOnlyAProgramNamedBlenderIsAskedForItsVersion(t *testing.T) {
+	dir := t.TempDir()
+	notes := write(t, filepath.Join(dir, "notes.exe"), "x")
+	if _, err := FindBlender(notes); err == nil || !strings.Contains(err.Error(), "notes.exe is not Blender's program") {
+		t.Fatalf("a file with another name: %v", err)
+	}
+	if err := CheckBlenderPath("blender"); err == nil || !strings.Contains(err.Error(), "full path") {
+		t.Fatalf("a relative path: %v", err)
+	}
+	for _, name := range []string{"blender", "blender.exe", "Blender", "Blender.EXE"} {
+		if err := CheckBlenderPath(filepath.Join(dir, name)); err != nil {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+
+	old := probeTimeout
+	probeTimeout = 300 * time.Millisecond
+	t.Cleanup(func() { probeTimeout = old })
+	path, _ := fake(t, fakeblender.Hangs)
+	start := time.Now()
+	if _, err := FindBlender(path); err == nil || !strings.Contains(err.Error(), "did not answer within") {
+		t.Fatalf("a program that never answers: %v", err)
+	}
+	if took := time.Since(start); took > 5*time.Second {
+		t.Fatalf("the probe took %v", took)
 	}
 }

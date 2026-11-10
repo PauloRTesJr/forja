@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -38,10 +39,18 @@ type Provider struct {
 func New(id string, kind provider.Kind, paid, sharesStore bool, ep Endpoint, st *store.Store) *Provider {
 	return &Provider{
 		id: id, kind: kind, paid: paid, shared: sharesStore, endpoint: ep, store: st,
-		// No overall timeout: event streams live as long as the run.
-		http: &http.Client{Transport: &http.Transport{MaxIdleConnsPerHost: 8, IdleConnTimeout: 90 * time.Second}},
+		// No overall timeout: event streams live as long as the run. Connecting has one: a computer
+		// that is switched off never answers, and the operating system waits 20 s or more to say so.
+		http: &http.Client{Transport: &http.Transport{
+			DialContext:         (&net.Dialer{Timeout: dialTimeout, KeepAlive: 30 * time.Second}).DialContext,
+			TLSHandshakeTimeout: 2 * dialTimeout,
+			MaxIdleConnsPerHost: 8, IdleConnTimeout: 90 * time.Second,
+		}},
 	}
 }
+
+// dialTimeout is how long connecting to an engine may take. Tests shorten it.
+var dialTimeout = 5 * time.Second
 
 // Static returns an Endpoint for a fixed URL.
 func Static(url, token string) Endpoint {
@@ -189,6 +198,17 @@ func (p *Provider) Download(ctx context.Context, ref string) error {
 
 func (p *Provider) Run(ctx context.Context, req engineapi.RunRequest, events chan<- engineapi.Event) (*engineapi.Run, error) {
 	body, _ := json.Marshal(req)
+	run, err := p.follow(ctx, body, events)
+	if errors.Is(err, provider.ErrRunLost) && ctx.Err() == nil {
+		// The engine died in the middle of the run and is back without it: the run is sent once
+		// more, from its start. An engine that loses it again is failing on this very run.
+		run, err = p.follow(ctx, body, events)
+	}
+	return run, err
+}
+
+// follow posts a run and forwards its events until it ends.
+func (p *Provider) follow(ctx context.Context, body []byte, events chan<- engineapi.Event) (*engineapi.Run, error) {
 	var run engineapi.Run
 	if _, err := p.do(ctx, http.MethodPost, "/v1/runs", bytes.NewReader(body), &run); err != nil {
 		return nil, err
@@ -199,6 +219,12 @@ func (p *Provider) Run(ctx context.Context, req engineapi.RunRequest, events cha
 		done, err := p.stream(ctx, run.ID, &cursor, events)
 		if done {
 			break
+		}
+		// An engine that accepted the run and no longer has it was restarted: asking again for
+		// its events cannot bring the run back.
+		var gone *ProblemError
+		if ctx.Err() == nil && errors.As(err, &gone) && gone.Status == http.StatusNotFound {
+			return nil, provider.ErrRunLost
 		}
 		if errors.Is(err, io.ErrUnexpectedEOF) && (cursor > before || time.Since(opened) > 5*time.Second) {
 			// A gateway that closes long requests (Modal) ends streams that worked; resume.

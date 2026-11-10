@@ -43,6 +43,9 @@ var errTooOld = errors.New("too old")
 // enough on PATH or where its installers put it.
 func FindBlender(configured string) (*Blender, error) {
 	if configured != "" {
+		if err := CheckBlenderPath(configured); err != nil {
+			return nil, err
+		}
 		return probe(configured)
 	}
 	var old error
@@ -134,13 +137,16 @@ func probe(path string) (*Blender, error) {
 var versionLine = regexp.MustCompile(`Blender (\d+)\.(\d+)(?:\.(\d+))?`)
 
 func askVersion(path string) (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), probeTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, path, "--version")
 	hide(cmd)
 	out, err := cmd.Output()
 	m := versionLine.FindSubmatch(out)
 	if m == nil {
+		if ctx.Err() != nil {
+			return "", fmt.Errorf("%s did not answer within %d seconds, so it is not a Blender Forja can use", path, int(probeTimeout.Seconds()))
+		}
 		if err != nil {
 			return "", fmt.Errorf("%s did not answer as Blender: %w", path, err)
 		}
@@ -267,4 +273,22 @@ func asciiJSON(raw []byte) string {
 		}
 	}
 	return b.String()
+}
+
+// probeTimeout bounds `blender --version`: a Blender answers at once, and a program that does
+// not is not one.
+var probeTimeout = 8 * time.Second
+
+// CheckBlenderPath refuses, before anything is run, a path that cannot be Blender's program:
+// Settings takes a typed path, and the probe starts whatever file it names.
+func CheckBlenderPath(path string) error {
+	if !filepath.IsAbs(path) {
+		return errors.New("Blender's path must be a full path to its program")
+	}
+	// Blender.app keeps the program in Contents/MacOS/Blender.
+	switch strings.ToLower(filepath.Base(path)) {
+	case "blender", "blender.exe":
+		return nil
+	}
+	return fmt.Errorf("%s is not Blender's program: pick the file named blender.exe (blender on macOS and Linux) in Blender's folder", filepath.Base(path))
 }

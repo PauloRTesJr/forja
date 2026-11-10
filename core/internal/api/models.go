@@ -5,6 +5,7 @@ import (
 	_ "embed"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"slices"
@@ -15,6 +16,7 @@ import (
 	"forja/internal/engineapi"
 	"forja/internal/installs"
 	"forja/internal/jobs"
+	"forja/internal/plain"
 	"forja/internal/provider"
 )
 
@@ -69,7 +71,7 @@ func (s *Server) models(w http.ResponseWriter, r *http.Request) {
 	}
 	cfg, err := s.Runner.Config("")
 	if err != nil {
-		problem(w, 422, err.Error())
+		problem(w, 422, plain.Err(err))
 		return
 	}
 	labels := map[string]string{jobs.LocalProvider: "This computer"}
@@ -83,7 +85,7 @@ func (s *Server) models(w http.ResponseWriter, r *http.Request) {
 		e, err := get(r.Context(), id)
 		if err != nil {
 			if !all {
-				problem(w, 502, err.Error())
+				problem(w, 502, plain.Err(err))
 				return
 			}
 			continue
@@ -144,7 +146,7 @@ func (s *Server) modelInstall(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	e, err := s.Catalog.Get(r.Context(), body.Provider)
 	if err != nil {
-		problem(w, 502, err.Error())
+		problem(w, 502, plain.Err(err))
 		return
 	}
 	m, ok := e.Model(id)
@@ -155,7 +157,7 @@ func (s *Server) modelInstall(w http.ResponseWriter, r *http.Request) {
 	if lic := m.License; lic.NeedsAcceptance() {
 		accepted, err := s.DB.Acceptances(r.Context())
 		if err != nil {
-			problem(w, 500, err.Error())
+			problem(w, 500, plain.Err(err))
 			return
 		}
 		if _, ok := accepted[id+" "+lic.SPDX]; !ok {
@@ -165,7 +167,7 @@ func (s *Server) modelInstall(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			if err := s.DB.AcceptLicense(r.Context(), id, lic.SPDX); err != nil {
-				problem(w, 500, err.Error())
+				problem(w, 500, plain.Err(err))
 				return
 			}
 		}
@@ -176,10 +178,97 @@ func (s *Server) modelInstall(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) modelRemove(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	s.startTask(w, r, providerParam(r), func(i provider.Installer) (*engineapi.Task, error) {
+	id, from := r.PathValue("id"), providerParam(r)
+	if e, err := s.Catalog.Get(r.Context(), from); err == nil {
+		if _, ok := e.Model(id); !ok {
+			problem(w, 404, "provider "+from+" has no model "+id+": say which computer it is on with ?provider=")
+			return
+		}
+	}
+	entry, err := s.Installs.Start(from, func(i provider.Installer) (*engineapi.Task, error) {
 		return i.Remove(r.Context(), id)
 	})
+	if err != nil {
+		writeProviderError(w, err)
+		return
+	}
+	s.unpinRemoved(id, from)
+	writeJSON(w, 202, entry)
+}
+
+// unpinRemoved drops the pins to a model that is being removed from a provider, unless
+// another provider still has it ready: a stage type pinned to a model nobody has refuses every
+// job, and the pin is not something the user would think to look for.
+func (s *Server) unpinRemoved(model, from string) {
+	cfg, err := config.Load("", nil)
+	if err != nil {
+		return
+	}
+	for _, p := range s.Providers.All() {
+		if e, ok := s.Catalog.Last(p.ID()); ok && p.ID() != from {
+			if m, ok := e.Model(model); ok && m.Ready() {
+				return
+			}
+		}
+	}
+	changes := map[string]any{}
+	for use, pin := range cfg.Models.Stages {
+		if pin != model || strings.Contains(use, ".") {
+			continue
+		}
+		if to := cfg.Routing.Stages[use]; to == "" || to == from {
+			changes["models.stages."+use] = nil
+			if to == from {
+				changes["routing.stages."+use] = nil
+			}
+		}
+	}
+	if len(changes) == 0 {
+		return
+	}
+	if err := config.Edit(config.UserFile(), changes, func() error { _, err := config.Load("", nil); return err }); err != nil {
+		s.Log.Warn("could not unpin a removed model", "model", model, "err", err)
+		return
+	}
+	s.Hub.Publish(EvSettingsChanged, map[string]string{"project": ""})
+	s.Hub.Publish(EvModelsChanged, map[string]string{"provider": from})
+}
+
+// pinnable says why a model cannot be pinned to a stage type, in the terms of a 422; "" when
+// it can. on is the provider the pin names, or "" for any.
+func (s *Server) pinnable(ctx context.Context, use, model, on string) string {
+	ids := []string{on}
+	if on == "" {
+		ids = ids[:0]
+		for _, p := range s.Providers.All() {
+			ids = append(ids, p.ID())
+		}
+	}
+	var silent []string
+	var found *engineapi.Model
+	for _, id := range ids {
+		e, err := s.Catalog.Get(ctx, id)
+		if err != nil {
+			silent = append(silent, id)
+			continue
+		}
+		if m, ok := e.Model(model); ok {
+			if m.Does(use) {
+				return ""
+			}
+			found = &m
+		}
+	}
+	switch {
+	case found != nil:
+		return fmt.Sprintf("%s is not a %s model (it does %s)", orID(found.Name, found.ID), use, strings.Join(found.Tasks, ", "))
+	case len(silent) > 0:
+		return fmt.Sprintf("no provider that answers has a model %s (%s could not be asked): `forja models ls` lists the models",
+			model, strings.Join(silent, ", "))
+	case on != "":
+		return fmt.Sprintf("provider %s has no model %s: `forja models ls --provider %s` lists its models", on, model, on)
+	}
+	return fmt.Sprintf("no provider has a model %s: `forja models ls` lists the models", model)
 }
 
 func (s *Server) startTask(w http.ResponseWriter, r *http.Request, providerID string,
@@ -197,12 +286,14 @@ func (s *Server) startTask(w http.ResponseWriter, r *http.Request, providerID st
 func writeProviderError(w http.ResponseWriter, err error) {
 	var prob interface{ StatusCode() int }
 	switch {
+	case errors.Is(err, installs.ErrUnknownProvider):
+		problem(w, 404, plain.Err(err))
 	case errors.Is(err, installs.ErrNoInstaller):
-		problem(w, 409, err.Error())
+		problem(w, 409, plain.Err(err))
 	case errors.As(err, &prob):
 		problem(w, prob.StatusCode(), detailOf(err))
 	default:
-		problem(w, 502, err.Error())
+		problem(w, 502, plain.Err(err))
 	}
 }
 
@@ -236,6 +327,14 @@ func (s *Server) modelStage(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if body.Model != "" {
+		ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+		defer cancel()
+		if why := s.pinnable(ctx, use, body.Model, body.Provider); why != "" {
+			problem(w, 422, why)
+			return
+		}
+	}
 	// The model and, when given, the provider that runs it; nothing means automatic.
 	var model, prov any
 	if body.Model != "" {
@@ -249,9 +348,10 @@ func (s *Server) modelStage(w http.ResponseWriter, r *http.Request) {
 		return err
 	})
 	if err != nil {
-		problem(w, 422, err.Error())
+		problem(w, 422, plain.Err(err))
 		return
 	}
+	s.Hub.Publish(EvSettingsChanged, map[string]string{"project": ""})
 	s.Hub.Publish(EvModelsChanged, map[string]string{"provider": ""})
 	w.WriteHeader(204)
 }
@@ -282,6 +382,14 @@ func (s *Server) checks(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) checkFix(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
+	if from := providerParam(r); from != jobs.LocalProvider {
+		if _, ok := s.Providers.Get(from); !ok {
+			problem(w, 404, "no provider "+from)
+			return
+		}
+		problem(w, 409, "A fix installs software on the computer that runs the engine, so it can only run on that computer. Open Forja there to apply it.")
+		return
+	}
 	s.startTask(w, r, providerParam(r), func(i provider.Installer) (*engineapi.Task, error) {
 		return i.Fix(r.Context(), id)
 	})
@@ -328,12 +436,12 @@ func (s *Server) setup(w http.ResponseWriter, r *http.Request) {
 	s.askAll(ctx)
 	local, err := s.Catalog.Get(ctx, jobs.LocalProvider)
 	if err != nil {
-		problem(w, 502, err.Error())
+		problem(w, 502, plain.Err(err))
 		return
 	}
 	all, err := s.Runner.Presets("")
 	if err != nil {
-		problem(w, 422, err.Error())
+		problem(w, 422, plain.Err(err))
 		return
 	}
 	var uses []string
@@ -345,7 +453,7 @@ func (s *Server) setup(w http.ResponseWriter, r *http.Request) {
 		}
 		plan, err := s.Runner.Resolve(ctx, "", p, nil)
 		if err != nil {
-			problem(w, 502, err.Error())
+			problem(w, 502, plain.Err(err))
 			return
 		}
 		for _, pick := range plan {
@@ -407,12 +515,12 @@ func bestHere(models []engineapi.Model, use string) *engineapi.Model {
 func (s *Server) setupTest(w http.ResponseWriter, r *http.Request) {
 	ref, err := s.Store.PutBytes(sample)
 	if err != nil {
-		problem(w, 500, err.Error())
+		problem(w, 500, plain.Err(err))
 		return
 	}
 	job, err := s.Runner.Submit(r.Context(), jobs.SubmitRequest{Input: ref, Name: "sample-chest", Priority: "interactive"})
 	if err != nil {
-		problem(w, 422, err.Error())
+		problem(w, 422, plain.Err(err))
 		return
 	}
 	writeJSON(w, 202, job)

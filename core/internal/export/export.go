@@ -82,24 +82,47 @@ type Exported struct {
 	Error string   `json:"error,omitempty"`
 }
 
+// Options say where an export's files go when the plain rule does not decide it.
+type Options struct {
+	// File makes dest the file to write, for one item: the format's extension is added when
+	// dest lacks it, instead of dest becoming a folder of that name.
+	File bool
+	// Replace overwrites files of the same name in the folder written into. Without it, an
+	// item whose name is taken there is written beside it as "name (2)". A file named by dest
+	// is always replaced: whoever named it chose it.
+	Replace bool
+}
+
 // ToFiles exports items in format f. dest is the file to write when there is one item and
-// it ends in the format's extension; otherwise it is the folder to write into, each asset
-// named after itself. Every format but GLB needs b. Blender writes into a hidden folder
-// beside the files first, so a failed export leaves no half-written file behind; existing
-// files of the same name are replaced.
-func ToFiles(ctx context.Context, b *Blender, f Format, items []Item, dest string) ([]Exported, error) {
+// it ends in the format's extension (or opts.File says so); otherwise it is the folder to
+// write into, each asset named after itself. Every format but GLB needs b. Blender writes
+// into a hidden folder beside the files first, so a failed export leaves no half-written
+// file behind.
+func ToFiles(ctx context.Context, b *Blender, f Format, items []Item, dest string, opts Options) ([]Exported, error) {
 	if f.Blender && b == nil {
 		return nil, ErrNoBlender
 	}
-	dir, files := dest, uniqueStems(items)
-	for i := range files {
-		files[i] += f.Ext
+	if opts.File {
+		if len(items) != 1 {
+			return nil, fmt.Errorf("%s names one file, but %d assets were given: name a folder", dest, len(items))
+		}
+		if !strings.EqualFold(filepath.Ext(dest), f.Ext) {
+			dest += f.Ext
+		}
 	}
-	if len(items) == 1 && strings.EqualFold(filepath.Ext(dest), f.Ext) {
-		dir, files[0] = filepath.Dir(dest), filepath.Base(dest)
+	dir, named := dest, len(items) == 1 && strings.EqualFold(filepath.Ext(dest), f.Ext)
+	if named {
+		dir = filepath.Dir(dest)
 	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, err
+	}
+	files := uniqueStems(items, dir, f.Ext, opts.Replace || named)
+	for i := range files {
+		files[i] += f.Ext
+	}
+	if named {
+		files[0] = filepath.Base(dest)
 	}
 	out := make([]Exported, len(items))
 	if !f.Blender {
@@ -147,16 +170,24 @@ func ToFiles(ctx context.Context, b *Blender, f Format, items []Item, dest strin
 	return out, nil
 }
 
-// uniqueStems names each item's files after it, numbering names that repeat in one export.
-func uniqueStems(items []Item) []string {
+// uniqueStems names each item's files after it, numbering names that repeat in one export
+// and, unless replace is set, names whose file in ext is already in dir.
+func uniqueStems(items []Item, dir, ext string, replace bool) []string {
 	// Case-insensitive, as Windows and macOS compare file names.
 	taken := map[string]bool{}
+	if entries, err := os.ReadDir(dir); err == nil && !replace {
+		for _, e := range entries {
+			if name := e.Name(); strings.EqualFold(filepath.Ext(name), ext) {
+				taken[strings.ToLower(name[:len(name)-len(ext)])] = true
+			}
+		}
+	}
 	out := make([]string, len(items))
 	for i, it := range items {
 		base := FileName(it.Name)
 		stem := base
 		for n := 2; taken[strings.ToLower(stem)]; n++ {
-			stem = fmt.Sprintf("%s-%d", base, n)
+			stem = fmt.Sprintf("%s (%d)", base, n)
 		}
 		taken[strings.ToLower(stem)] = true
 		out[i] = stem
@@ -223,4 +254,33 @@ func replace(tmp, dst string) error {
 		return fmt.Errorf("writing %s: %w", dst, err)
 	}
 	return nil
+}
+
+// imageExts are the extensions a name loses when it comes from an image file.
+var imageExts = []string{".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif", ".tif", ".tiff", ".tga", ".psd", ".exr"}
+
+// DisplayName is the name a job and its asset show: the file name the image came with, as
+// typed, without its folder and image extension. Only where a file is written does a name
+// become file-safe (FileName, Slug).
+func DisplayName(name string) string {
+	name = strings.TrimSpace(filepath.Base(strings.TrimSpace(name)))
+	for _, ext := range imageExts {
+		if len(name) > len(ext) && strings.EqualFold(name[len(name)-len(ext):], ext) {
+			name = name[:len(name)-len(ext)]
+			break
+		}
+	}
+	name = strings.TrimSpace(strings.Map(func(r rune) rune {
+		if r < 32 || r == 127 {
+			return ' '
+		}
+		return r
+	}, name))
+	if r := []rune(name); len(r) > 120 {
+		name = strings.TrimSpace(string(r[:120]))
+	}
+	if name == "" || name == "." || name == string(filepath.Separator) {
+		return "asset"
+	}
+	return name
 }

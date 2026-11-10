@@ -35,7 +35,7 @@ Forja does not search the network: type the address the sharing computer shows.
 
 - The sharing computer serves its engine over TLS with a certificate it signs itself.
 - The joining computer trades the code for a long-lived access token, and pins the certificate's SHA-256, so it never talks to an impostor and never needs a certificate authority.
-- A code works once, for ten minutes, and allows five attempts.
+- A code works once, for ten minutes, and allows five attempts. If sharing is on but the engine cannot serve the network (it failed to start, or the keychain or certificate was unavailable), `forja share` and the app say why.
 - The token is kept in the OS keychain only. No API returns it; the app shows only the store it lives in and its last four characters. `config.toml` keeps the address and the certificate fingerprint.
 
 `forja providers token <provider>` replaces a token (read from stdin) once the new one works; `forja providers rm <provider>` forgets a computer, its token and the stages routed to it. An engine you started by hand (`forja engine serve`) joins with its token instead of a code: **Access token** in the app, `--token-stdin` in the CLI.

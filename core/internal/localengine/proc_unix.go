@@ -23,4 +23,10 @@ func (g *procGroup) interrupt() {
 	_ = syscall.Kill(-g.pid, syscall.SIGTERM)
 }
 
+// kill ends the whole group at once: killing the launcher alone would leave the interpreter
+// and its model workers running.
+func (g *procGroup) kill() {
+	_ = syscall.Kill(-g.pid, syscall.SIGKILL)
+}
+
 func (g *procGroup) close() {}

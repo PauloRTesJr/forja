@@ -26,6 +26,11 @@ type Pick struct {
 	// a built-in no provider can run; Problem then says why (Blender was not found).
 	Missing bool   `json:"missing,omitempty"`
 	Problem string `json:"problem,omitempty"`
+	// Pinned is set when the model was chosen (by the preset, the job or [models.stages]), not
+	// picked by rank. A pinned model that is missing can be installed on InstallOn, the first
+	// provider that lists it; with no InstallOn, no provider knows a model of that name.
+	Pinned    bool   `json:"pinned,omitempty"`
+	InstallOn string `json:"install_on,omitempty"`
 	// Skipped stages are done by the model of an earlier stage, named by By: a hosted model
 	// that returns a textured mesh does the texture stage too (docs/decisions.md, 16).
 	Skipped bool   `json:"skipped,omitempty"`
@@ -45,14 +50,26 @@ type Pick struct {
 type MissingError struct {
 	Uses     []string
 	Problems map[string]string
+	// Pins are the stage types whose model was chosen and is not ready, by stage type.
+	Pins map[string]Pick
 }
 
 func (e *MissingError) Error() string {
 	var parts, models []string
 	for _, use := range e.Uses {
-		if why, ok := e.Problems[use]; ok {
+		pin, pinned := e.Pins[use]
+		switch why, ok := e.Problems[use]; {
+		case ok:
 			parts = append(parts, fmt.Sprintf("no provider can run %s: %s", use, why))
-		} else {
+		case pinned && pin.InstallOn != "":
+			parts = append(parts, fmt.Sprintf(
+				"%s is set to %s, which is not installed. Install it or switch the stage back to Automatic (`forja models unpin %s`).",
+				stageLabel(use), cmp.Or(pin.ModelName, pin.Model), use))
+		case pinned:
+			parts = append(parts, fmt.Sprintf(
+				"%s is set to %s, which no provider has. Switch the stage back to Automatic or choose another model (`forja models unpin %s`).",
+				stageLabel(use), pin.Model, use))
+		default:
 			models = append(models, use)
 		}
 	}
@@ -64,11 +81,22 @@ func (e *MissingError) Error() string {
 	return strings.Join(parts, "; ")
 }
 
+// stageLabel is a stage type as a sentence starts with it: "Shape".
+func stageLabel(use string) string {
+	if use == "" {
+		return use
+	}
+	return strings.ToUpper(use[:1]) + use[1:]
+}
+
 func missingError(picks []Pick) error {
-	e := &MissingError{Problems: map[string]string{}}
+	e := &MissingError{Problems: map[string]string{}, Pins: map[string]Pick{}}
 	for _, p := range picks {
 		if p.Missing && !p.Skipped {
 			e.Uses = append(e.Uses, p.Use)
+			if p.Pinned {
+				e.Pins[p.Use] = p
+			}
 			if p.Problem != "" {
 				e.Problems[p.Use] = p.Problem
 			}
@@ -221,6 +249,7 @@ func (r *Runner) pick(ctx context.Context, cfg *config.Loaded, s presets.Stage, 
 	if base.Model == "" {
 		base.Model = cfg.Models.Stages[s.Use]
 	}
+	base.Pinned = base.Model != ""
 	want := s.Provider
 	if want == "auto" {
 		want = ""
@@ -239,7 +268,10 @@ func (r *Runner) pick(ctx context.Context, cfg *config.Loaded, s presets.Stage, 
 		if avoid.has(s.ID, want) {
 			return base, nil, fmt.Errorf("stage %s runs only on %s, which failed", s.ID, r.label(cfg, want))
 		}
-		pick, ok, _, err := r.on(ctx, cfg, base, want, views)
+		pick, ok, has, err := r.on(ctx, cfg, base, want, views)
+		if has && !ok {
+			pick.InstallOn = want
+		}
 		switch {
 		case err != nil && base.Model == "":
 			return base, nil, err
@@ -270,6 +302,10 @@ func (r *Runner) pick(ctx context.Context, cfg *config.Loaded, s presets.Stage, 
 		}
 		if !p.Paid() {
 			listed = listed || has
+		}
+		if has && !ok && base.InstallOn == "" {
+			// Listed and not ready: where the chosen model can be installed.
+			base.InstallOn, base.ModelName = id, pick.ModelName
 		}
 		if ok {
 			opts = append(opts, pick)
@@ -387,4 +423,20 @@ func (r *Runner) Pick(ctx context.Context, project, use string) (Pick, error) {
 	}
 	pick, _, err := r.pick(ctx, cfg, presets.Stage{ID: use, Use: use}, nil, nil)
 	return pick, err
+}
+
+// PinProblem says, in a sentence for people, which stage types are set to a model that is not
+// ready; "" when none is. A plan with a stage missing for another reason is not the pin's fault.
+func PinProblem(picks []Pick) string {
+	e := &MissingError{Problems: map[string]string{}, Pins: map[string]Pick{}}
+	for _, p := range picks {
+		if p.Missing && !p.Skipped && p.Pinned && p.Problem == "" {
+			e.Uses = append(e.Uses, p.Use)
+			e.Pins[p.Use] = p
+		}
+	}
+	if len(e.Uses) == 0 {
+		return ""
+	}
+	return e.Error()
 }

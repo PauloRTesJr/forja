@@ -10,7 +10,9 @@ import (
 	"runtime"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 )
 
 const (
@@ -34,10 +36,54 @@ func Use(t testing.TB, version string) (path, opened string) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	exe = namedLikeBlender(t, exe)
 	opened = filepath.Join(t.TempDir(), "opened.jsonl")
 	t.Setenv(envVersion, version)
 	t.Setenv(envLog, opened)
 	return exe, opened
+}
+
+// Hangs is a version for which the fake never answers, as a program that is not Blender might not.
+const Hangs = "hangs"
+
+var (
+	copyOnce sync.Once
+	copyDir  string
+	copyPath string
+	copyErr  error
+)
+
+// namedLikeBlender is a copy of exe named as Forja requires of Blender's program. One copy serves
+// the whole test process: a running program's file cannot be deleted on Windows, so a copy per
+// test would break its temp folder's cleanup.
+func namedLikeBlender(t testing.TB, exe string) string {
+	t.Helper()
+	copyOnce.Do(func() {
+		copyDir, copyErr = os.MkdirTemp("", "fakeblender")
+		if copyErr != nil {
+			return
+		}
+		name := "blender"
+		if runtime.GOOS == "windows" {
+			name += ".exe"
+		}
+		copyPath = filepath.Join(copyDir, name)
+		var raw []byte
+		if raw, copyErr = os.ReadFile(exe); copyErr == nil {
+			copyErr = os.WriteFile(copyPath, raw, 0o755)
+		}
+	})
+	if copyErr != nil {
+		t.Fatal(copyErr)
+	}
+	return copyPath
+}
+
+// Cleanup removes that copy; call it after m.Run in TestMain. Failing to is not a failure.
+func Cleanup() {
+	if copyDir != "" {
+		_ = os.RemoveAll(copyDir)
+	}
 }
 
 // Unreadable marks a GLB the fake cannot convert, as a broken file would fail in Blender.
@@ -53,6 +99,9 @@ type job struct {
 }
 
 func run(version string, args []string) int {
+	if version == Hangs {
+		time.Sleep(time.Minute)
+	}
 	if slices.Contains(args, "--version") {
 		fmt.Printf("Blender %s\n\tbuild date: 2026-01-01\n", version)
 		return 0

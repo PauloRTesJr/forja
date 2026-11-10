@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"forja/internal/config"
+	"forja/internal/plain"
 	"forja/internal/provider"
 	"forja/internal/provider/fal"
 	"forja/internal/providers"
@@ -30,7 +31,7 @@ func (s *Server) hubAdd(w http.ResponseWriter, r *http.Request, vendor, key stri
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 	if err := fal.New(id, key, fal.RecommendedIDs(), s.Store).Health(ctx); err != nil {
-		problem(w, 422, err.Error())
+		problem(w, 422, plain.Err(err))
 		return
 	}
 	pc := config.Provider{ID: id, Label: "fal.ai", Kind: string(provider.KindAPI), Vendor: fal.Vendor,
@@ -41,7 +42,7 @@ func (s *Server) hubAdd(w http.ResponseWriter, r *http.Request, vendor, key stri
 	}
 	if err := config.AddProvider(config.UserFile(), pc, validateUser); err != nil {
 		_ = secrets.Delete(pc.Secret)
-		problem(w, 422, err.Error())
+		problem(w, 422, plain.Err(err))
 		return
 	}
 	// In routing order like any provider; paid ones are still never picked automatically
@@ -95,7 +96,7 @@ func (s *Server) hubCatalog(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	page, err := h.Search(ctx, r.URL.Query().Get("q"), r.URL.Query().Get("cursor"))
 	if err != nil {
-		problem(w, 502, err.Error())
+		problem(w, 502, plain.Err(err))
 		return
 	}
 	writeJSON(w, 200, page)
@@ -114,7 +115,7 @@ func (s *Server) hubThumbnail(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	body, kind, err := h.Thumbnail(ctx, r.URL.Query().Get("url"))
 	if err != nil {
-		problem(w, 502, err.Error())
+		problem(w, 502, plain.Err(err))
 		return
 	}
 	defer body.Close()
@@ -148,7 +149,7 @@ func (s *Server) hubModels(w http.ResponseWriter, r *http.Request) {
 		defer cancel()
 		checked, err := h.Check(ctx, model)
 		if err != nil {
-			problem(w, 502, err.Error())
+			problem(w, 502, plain.Err(err))
 			return
 		}
 		if checked.Problem != "" {
@@ -178,7 +179,7 @@ func (s *Server) hubModels(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if err := config.UpdateProvider(config.UserFile(), pc, validateUser); err != nil {
-		problem(w, 422, err.Error())
+		problem(w, 422, plain.Err(err))
 		return
 	}
 	s.rebuild(pc)
@@ -196,13 +197,13 @@ type SpendView struct {
 func (s *Server) spend(w http.ResponseWriter, r *http.Request) {
 	cfg, err := s.Runner.Config("")
 	if err != nil {
-		problem(w, 422, err.Error())
+		problem(w, 422, plain.Err(err))
 		return
 	}
 	now := time.Now()
 	today, err := s.DB.Spent(r.Context(), time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location()))
 	if err != nil {
-		problem(w, 500, err.Error())
+		problem(w, 500, plain.Err(err))
 		return
 	}
 	month, _ := s.DB.Spent(r.Context(), time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location()))

@@ -44,6 +44,9 @@ type fakeProvider struct {
 	// hold, when set, keeps runs that build a shape going until it is closed; held counts them.
 	hold chan struct{}
 	held int
+	// gate, when set, is called as a run arrives, before any of its stages: it may send events,
+	// and ends the run by returning an error.
+	gate func(ctx context.Context, req engineapi.RunRequest, evs chan<- engineapi.Event) error
 	// pngs makes the images it prepares start like PNG files, for a hosted model that checks.
 	pngs bool
 	// unavailable are the built-ins it says it cannot run here, with why.
@@ -106,7 +109,7 @@ func (f *fakeProvider) Upload(context.Context, string) error   { return nil }
 func (f *fakeProvider) Download(context.Context, string) error { return nil }
 func (f *fakeProvider) Cancel(context.Context, string) error   { return nil }
 
-func (f *fakeProvider) Run(_ context.Context, req engineapi.RunRequest, evs chan<- engineapi.Event) (*engineapi.Run, error) {
+func (f *fakeProvider) Run(ctx context.Context, req engineapi.RunRequest, evs chan<- engineapi.Event) (*engineapi.Run, error) {
 	// A real engine answers a repeated client id with the run it already has.
 	f.mu.Lock()
 	if f.clientIDs == nil {
@@ -119,14 +122,25 @@ func (f *fakeProvider) Run(_ context.Context, req engineapi.RunRequest, evs chan
 		return nil, fmt.Errorf("client run id %s was sent twice; the engine would replay the first run", req.ClientRunID)
 	}
 	f.mu.Lock()
-	hold := f.hold
+	hold, gate := f.hold, f.gate
 	f.mu.Unlock()
+	if gate != nil {
+		if err := gate(ctx, req, evs); err != nil {
+			return nil, err
+		}
+	}
 	for _, s := range req.Stages {
 		if s.Use == "shape" && hold != nil {
 			f.mu.Lock()
 			f.held++
 			f.mu.Unlock()
-			<-hold
+			// Like an engine, it says the stage began, and the run ends when its job is cancelled.
+			evs <- engineapi.Event{Type: "stage.started", Data: map[string]any{"stage": s.ID}}
+			select {
+			case <-hold:
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
 			break
 		}
 	}

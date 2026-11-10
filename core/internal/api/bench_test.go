@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"forja/internal/bench"
 	"forja/internal/engineapi"
@@ -64,7 +65,7 @@ func benchServer(t *testing.T) (*httptest.Server, *Server, *benchEngine, func(bo
 	be := &benchEngine{fakeEngine: eng, st: s.Store}
 	s.Providers.Add(be)
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "chest.png"), []byte("not really a png"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "chest.png"), []byte("\x89PNG\r\n\x1a\nnot really a png"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	suite := func(body string) string {
@@ -152,5 +153,47 @@ func TestOneBenchmarkRunsAtATimeAndCanBeCancelled(t *testing.T) {
 	call(t, ts, "GET", "/v1/bench/"+started.ID, nil, &res)
 	if res.Status != bench.Cancelled || !res.Options.Cold {
 		t.Fatalf("%+v", res)
+	}
+}
+
+// "Compare with the last run" picked a cancelled one, and then reported "nothing slower".
+func TestCompareTakesTheNewestFinishedRunAndRefusesACancelledOne(t *testing.T) {
+	ts, s, eng, suite := benchServer(t)
+	run := func() bench.Result {
+		var started bench.Result
+		if code := call(t, ts, "POST", "/v1/bench", bench.Request{Suite: suite(apiSuite)}, &started); code != 202 {
+			t.Fatalf("status %d", code)
+		}
+		return started
+	}
+	first := run()
+	s.benches().Wait()
+	time.Sleep(5 * time.Millisecond)
+	second := run()
+	s.benches().Wait()
+	time.Sleep(5 * time.Millisecond)
+	eng.hold = make(chan struct{})
+	cancelled := run()
+	call(t, ts, "DELETE", "/v1/bench/"+cancelled.ID, nil, nil)
+	s.benches().Wait()
+
+	var cmp bench.Comparison
+	if code := call(t, ts, "POST", "/v1/bench/compare", CompareRequest{Baseline: first.ID}, &cmp); code != 200 || cmp.Current.ID != second.ID {
+		t.Fatalf("no current: %d, compared with %s (the cancelled run is %s, want %s)", code, cmp.Current.ID, cancelled.ID, second.ID)
+	}
+	for _, req := range []CompareRequest{{Baseline: first.ID, Current: cancelled.ID}, {Baseline: cancelled.ID, Current: first.ID}} {
+		var prob struct{ Detail string }
+		if code := call(t, ts, "POST", "/v1/bench/compare", req, &prob); code != 422 || !strings.Contains(prob.Detail, "was cancelled") {
+			t.Errorf("%+v: %d %q", req, code, prob.Detail)
+		}
+	}
+	// With only one finished run there is nothing to compare it with.
+	var prob struct{ Detail string }
+	if code := call(t, ts, "POST", "/v1/bench/compare", CompareRequest{Baseline: second.ID}, &cmp); code != 200 || cmp.Current.ID != first.ID {
+		t.Fatalf("baseline is the newest: %d, %s", code, cmp.Current.ID)
+	}
+	os.Remove(filepath.Join(s.DataDir, "bench", first.ID+".json"))
+	if code := call(t, ts, "POST", "/v1/bench/compare", CompareRequest{Baseline: second.ID}, &prob); code != 422 || !strings.Contains(prob.Detail, "no other finished benchmark") {
+		t.Fatalf("%d %q", code, prob.Detail)
 	}
 }

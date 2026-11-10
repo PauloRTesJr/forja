@@ -9,13 +9,16 @@ import (
 	"testing"
 	"time"
 
+	"forja/internal/config"
 	"forja/internal/export/fakeblender"
 	"forja/internal/library"
 )
 
 func TestMain(m *testing.M) {
 	fakeblender.Main()
-	os.Exit(m.Run())
+	code := m.Run()
+	fakeblender.Cleanup()
+	os.Exit(code)
 }
 
 // twoChests saves two assets of the same name, each with its job, and returns their GLB.
@@ -43,7 +46,7 @@ func twoChests(t *testing.T, s *Server) string {
 func TestAssetsExportToGLBWithoutBlenderAndToOtherFormatsWithIt(t *testing.T) {
 	ts, s, _ := newServer(t)
 	glb := twoChests(t, s)
-	t.Setenv("FORJA_BLENDER__PATH", filepath.Join(t.TempDir(), "no-blender"))
+	t.Setenv("FORJA_BLENDER__PATH", filepath.Join(t.TempDir(), "nowhere", "blender"))
 
 	var formats ExportFormats
 	if code := call(t, ts, "GET", "/v1/export/formats", nil, &formats); code != 200 || formats.Blender != nil ||
@@ -64,7 +67,7 @@ func TestAssetsExportToGLBWithoutBlenderAndToOtherFormatsWithIt(t *testing.T) {
 		t.Fatalf("status %d", code)
 	}
 	if len(res.Assets) != 2 || res.Assets[0].Files[0] != filepath.Join(dest, "chest.glb") ||
-		res.Assets[1].Files[0] != filepath.Join(dest, "chest-2.glb") {
+		res.Assets[1].Files[0] != filepath.Join(dest, "chest (2).glb") {
 		t.Fatalf("exported %+v", res)
 	}
 	want, _ := os.ReadFile(must(s.Store.Path(glb)))
@@ -210,5 +213,39 @@ func TestAnAssetIsReadiedForDraggingOutOfTheApp(t *testing.T) {
 	}
 	if code := call(t, ts, "POST", "/v1/assets/nope/drag", nil, nil); code != 404 {
 		t.Fatalf("an unknown asset answered %d", code)
+	}
+}
+
+// Any file typed into Blender's path was run with --version, and the value could not be
+// cleared again (an empty string was saved as an empty setting).
+func TestBlenderPathTakesOnlyBlenderAndCanBeCleared(t *testing.T) {
+	ts, _, _ := newServer(t)
+	notes := filepath.Join(t.TempDir(), "notes.exe")
+	os.WriteFile(notes, []byte("x"), 0o755)
+	for path, want := range map[string]string{
+		notes:                                 "notes.exe is not Blender's program",
+		"blender":                             "full path",
+		filepath.Join(t.TempDir(), "blender"): "no Blender at",
+	} {
+		var prob struct{ Detail string }
+		if code := call(t, ts, "PATCH", "/v1/settings", map[string]any{"set": map[string]any{"blender.path": path}}, &prob); code != 422 ||
+			!strings.Contains(prob.Detail, want) {
+			t.Errorf("%s: %d %q, want %q", path, code, prob.Detail, want)
+		}
+	}
+	blender, _ := fakeblender.Use(t, "5.2.1")
+	for _, clear := range []any{nil, ""} {
+		if code := call(t, ts, "PATCH", "/v1/settings", map[string]any{"set": map[string]any{"blender.path": blender}}, nil); code != 200 {
+			t.Fatalf("a real Blender: %d", code)
+		}
+		if cfg, _ := config.Load("", nil); cfg.Blender.Path != blender {
+			t.Fatalf("not saved: %q", cfg.Blender.Path)
+		}
+		if code := call(t, ts, "PATCH", "/v1/settings", map[string]any{"set": map[string]any{"blender.path": clear}}, nil); code != 200 {
+			t.Fatalf("clearing with %#v: %d", clear, code)
+		}
+		if raw, _ := os.ReadFile(config.UserFile()); strings.Contains(string(raw), "path") || strings.Contains(string(raw), "[blender]") {
+			t.Fatalf("clearing with %#v left:\n%s", clear, raw)
+		}
 	}
 }

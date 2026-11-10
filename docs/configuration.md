@@ -28,18 +28,18 @@ forja config path                     # where the files are
 
 | Key | Default | What it does |
 |---|---|---|
-| `engine.idle_unload_minutes` | 15 | Unload models after this long without work |
-| `engine.vram_reserve_gb` | 1.0 | VRAM kept free for the desktop and other apps |
+| `engine.idle_unload_minutes` | 15 | Unload models after this long without work, 0 to 10080 minutes; 0 never unloads |
+| `engine.vram_reserve_gb` | 1.0 | VRAM kept free for the desktop and other apps, from 0 up to the size of your graphics card |
 | `engine.fit_mode` | `fit-first` | `fit-first` offloads a model that does not fit; `quality-first` refuses |
 | `routing.policy` | `prefer-local` | `prefer-local`, `cheapest`, `fastest` or `offline-only` ([routing](routing.md#routing-policies)) |
 | `routing.allow_paid_fallback` | false | Let paid providers run a stage no free one can, or take over one whose provider failed ([routing](routing.md#paid-providers)) |
-| `routing.budget_usd.per_job`, `per_day`, `per_month` | 0 | Spending limits for paid providers; 0 is none ([routing](routing.md#spending-limits)) |
+| `routing.budget_usd.per_job`, `per_day`, `per_month` | 0 | Spending limits for paid providers, 0 to 1,000,000; 0 is none ([routing](routing.md#spending-limits)) |
 | `project.export_dir` | `Assets/Generated` | Where a project's assets are copied, inside the project |
 | `project.default_preset` | `mobile-prop` | The preset jobs use when none is given |
 | `models.stubs` | false | Allow the deterministic stub models |
-| `blender.path` | empty (found by itself) | Blender's program, for exports and Open in Blender |
+| `blender.path` | empty (found by itself) | Blender's program (a file named `blender` or `blender.exe`), for exports and Open in Blender; clear it to find Blender by itself |
 
-Changing an engine setting this way restarts the engine when no job or install is running; otherwise the change applies when it next starts.
+Changing an engine setting this way restarts the engine once, a second after the last change, when no job or install is running; otherwise it restarts when the last one ends. Numbers outside their range are refused with the range in the message. Forja also writes its own log to `logs/core.log` in the data folder (the engine's is `logs/engine.log`), set aside as `core.log.1` at 2 MB. When the config folder is not the default one (`FORJA_CONFIG_DIR`), it writes its keys to a keychain group of its own, so two folders on one account do not overwrite each other's keys; keys saved earlier under the shared group are still read.
 
 ## Settings for hand editing
 

@@ -15,11 +15,11 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"forja/internal/config"
 	"forja/internal/jobs"
+	"forja/internal/plain"
 	"forja/internal/provider"
 	"forja/internal/provider/engine"
 	"forja/internal/provider/runpod"
@@ -36,6 +36,8 @@ type KeyView struct {
 	Hint   string `json:"hint,omitempty"`
 	// Store names where the key lives, such as "Windows Credential Manager".
 	Store string `json:"store"`
+	// Fixed says the key comes from an environment variable, which the app cannot replace.
+	Fixed bool `json:"fixed,omitempty"`
 }
 
 type ProviderRow struct {
@@ -49,6 +51,10 @@ type ProviderRow struct {
 	Error       string   `json:"error,omitempty"`
 	Fingerprint string   `json:"fingerprint,omitempty"`
 	Key         *KeyView `json:"key,omitempty"`
+	// Checking says a reachability check runs now; Healthy, Latency and Error are then the last
+	// known ones (nothing yet on the first load). ErrorDetail is the raw text behind Error.
+	Checking    bool   `json:"checking,omitempty"`
+	ErrorDetail string `json:"error_detail,omitempty"`
 	// Editable is false for providers set in a system or project file, which the app leaves alone.
 	Editable bool `json:"editable"`
 	// Vendor, EndpointID and the price per second describe rented GPUs (RunPod, Modal).
@@ -60,7 +66,7 @@ type ProviderRow struct {
 func (s *Server) providers(w http.ResponseWriter, r *http.Request) {
 	cfg, err := s.Runner.Config("")
 	if err != nil {
-		problem(w, 422, err.Error())
+		problem(w, 422, plain.Err(err))
 		return
 	}
 	byID := map[string]config.Provider{}
@@ -70,7 +76,7 @@ func (s *Server) providers(w http.ResponseWriter, r *http.Request) {
 	src := cfg.Sources["providers"]
 	all := s.Providers.All()
 	rows := make([]ProviderRow, len(all))
-	var wg sync.WaitGroup
+	wait := r.URL.Query().Get("wait") != ""
 	for i, p := range all {
 		pc := byID[p.ID()]
 		row := ProviderRow{ID: p.ID(), Label: pc.Label, Kind: string(p.Kind()), URL: pc.URL, Paid: p.Paid(),
@@ -82,29 +88,48 @@ func (s *Server) providers(w http.ResponseWriter, r *http.Request) {
 		if pc.Secret != "" {
 			hint, ok := secrets.Hint(pc.Secret)
 			row.Key = &KeyView{Stored: ok, Hint: hint, Store: secrets.Store()}
+			if env, fixed := secrets.EnvVar(pc.Secret); fixed {
+				row.Key.Store, row.Key.Fixed = "the environment variable "+env, true
+			}
 		}
+		s.fillHealth(r.Context(), &row, p, wait)
 		rows[i] = row
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			// Asking about the local engine must not start it.
-			if p.Kind() == provider.KindLocal && !s.Engine.Running() {
-				rows[i].Error = "idle"
-				return
-			}
-			ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
-			defer cancel()
-			start := time.Now()
-			err := p.Health(ctx)
-			rows[i].Latency = time.Since(start).Milliseconds()
-			rows[i].Healthy = err == nil
-			if err != nil {
-				rows[i].Error = err.Error()
-			}
-		}()
 	}
-	wg.Wait()
 	writeJSON(w, 200, rows)
+}
+
+// fillHealth sets what the list says of p's reachability from what is known, and starts a check
+// when that is missing or old. With wait, it answers only once the check has ended.
+func (s *Server) fillHealth(ctx context.Context, row *ProviderRow, p provider.Provider, wait bool) {
+	// Asking about the local engine must not start it.
+	if p.Kind() == provider.KindLocal {
+		switch st := s.Engine.State(); st.State {
+		case "running":
+		case "failed":
+			row.Error, row.ErrorDetail = st.Error, st.Detail
+			return
+		default:
+			row.Error = "idle"
+			return
+		}
+	}
+	rec, stale := s.reach.look(p)
+	if stale {
+		s.check(p)
+		if wait {
+			s.reach.wait(ctx, p)
+			rec, _ = s.reach.look(p)
+		} else {
+			rec.done = make(chan struct{})
+		}
+	}
+	row.Checking = rec.done != nil
+	if rec.known {
+		row.Healthy, row.Latency = rec.healthy, rec.latency
+		if rec.err != nil {
+			row.Error, row.ErrorDetail = rec.sentence(row.Label), rec.err.Error()
+		}
+	}
 }
 
 func (s *Server) providerKinds(w http.ResponseWriter, _ *http.Request) {
@@ -156,12 +181,12 @@ func (s *Server) providerTest(w http.ResponseWriter, r *http.Request) {
 	}
 	u, err := engine.NormalizeURL(body.URL)
 	if err != nil {
-		problem(w, 422, err.Error())
+		problem(w, 422, plain.Err(err))
 		return
 	}
 	probe, err := engine.Test(r.Context(), u, body.Token, "")
 	if err != nil {
-		problem(w, 422, err.Error())
+		problem(w, 422, plain.Err(err))
 		return
 	}
 	writeJSON(w, 200, probeOf(u, probe))
@@ -219,7 +244,7 @@ func (s *Server) providerAdd(w http.ResponseWriter, r *http.Request) {
 	}
 	u, err := engine.NormalizeURL(body.URL)
 	if err != nil {
-		problem(w, 422, err.Error())
+		problem(w, 422, plain.Err(err))
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
@@ -229,7 +254,7 @@ func (s *Server) providerAdd(w http.ResponseWriter, r *http.Request) {
 	case body.Code != "":
 		paired, err := engine.Pair(ctx, u, body.Code)
 		if err != nil {
-			problem(w, 422, err.Error())
+			problem(w, 422, addFailure(u, err))
 			return
 		}
 		token, fingerprint, name = paired.Token, paired.Fingerprint, paired.Name
@@ -239,7 +264,12 @@ func (s *Server) providerAdd(w http.ResponseWriter, r *http.Request) {
 	}
 	probe, err := engine.Test(ctx, u, token, fingerprint)
 	if err != nil {
-		problem(w, 422, err.Error())
+		problem(w, 422, addFailure(u, err))
+		return
+	}
+	// The person pressed Cancel (or the window closed) while the other computer answered: it
+	// must not appear in Settings afterwards.
+	if ctx.Err() != nil {
 		return
 	}
 	if fingerprint == "" {
@@ -270,7 +300,7 @@ func (s *Server) providerAdd(w http.ResponseWriter, r *http.Request) {
 	validate := func() error { _, err := config.Load("", nil); return err }
 	if err := config.AddProvider(config.UserFile(), pc, validate); err != nil {
 		_ = secrets.Delete(pc.Secret)
-		problem(w, 422, err.Error())
+		problem(w, 422, plain.Err(err))
 		return
 	}
 	// After this computer: stages use it for models this computer lacks (decision 12).
@@ -282,7 +312,7 @@ func (s *Server) providerAdd(w http.ResponseWriter, r *http.Request) {
 	}
 	p, err := providers.Build(pc, s.Store)
 	if err != nil {
-		problem(w, 500, err.Error())
+		problem(w, 500, plain.Err(err))
 		return
 	}
 	s.Providers.Add(p)
@@ -299,6 +329,14 @@ type AddedProvider struct {
 	Probe *ProbeView `json:"probe,omitempty"`
 }
 
+// addFailure is why another computer could not be added, in a sentence.
+func addFailure(u string, err error) string {
+	if text := plain.Unreached(err); text != err.Error() {
+		return "Could not reach " + u + ": " + text + ". Check the address, and that the other computer is on and sharing its GPU."
+	}
+	return err.Error()
+}
+
 func anySlice(xs []string) []any {
 	out := make([]any, len(xs))
 	for i, x := range xs {
@@ -310,7 +348,7 @@ func anySlice(xs []string) []any {
 func (s *Server) userProvider(w http.ResponseWriter, id string) (config.Provider, bool) {
 	cfg, err := s.Runner.Config("")
 	if err != nil {
-		problem(w, 422, err.Error())
+		problem(w, 422, plain.Err(err))
 		return config.Provider{}, false
 	}
 	for _, pc := range cfg.Providers {
@@ -348,12 +386,12 @@ func (s *Server) providerRemove(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(changes) > 0 {
 		if err := config.Edit(config.UserFile(), changes, nil); err != nil {
-			problem(w, 422, err.Error())
+			problem(w, 422, plain.Err(err))
 			return
 		}
 	}
 	if err := config.RemoveProvider(config.UserFile(), id, validate); err != nil {
-		problem(w, 422, err.Error())
+		problem(w, 422, plain.Err(err))
 		return
 	}
 	s.forgetSecrets(pc)
@@ -377,23 +415,27 @@ func (s *Server) providerToken(w http.ResponseWriter, r *http.Request) {
 		problem(w, 400, "send the new token")
 		return
 	}
+	if env, fixed := secrets.EnvVar(orID(pc.Secret, providers.SecretName(id))); fixed {
+		problem(w, 409, "The key of "+orID(pc.Label, id)+" comes from the environment variable "+env+", so it cannot be replaced here. Change that variable instead.")
+		return
+	}
 	token := strings.TrimSpace(body.Token)
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 	if err := s.testKey(ctx, pc, token); err != nil {
-		problem(w, 422, err.Error())
+		problem(w, 422, plain.Err(err))
 		return
 	}
 	if pc.Secret == "" {
 		pc.Secret = providers.SecretName(id)
 	}
 	if err := secrets.Set(pc.Secret, token); err != nil {
-		problem(w, 500, err.Error())
+		problem(w, 500, plain.Err(err))
 		return
 	}
 	p, err := providers.Build(pc, s.Store)
 	if err != nil {
-		problem(w, 500, err.Error())
+		problem(w, 500, plain.Err(err))
 		return
 	}
 	s.Providers.Add(p)
@@ -410,6 +452,11 @@ type ShareView struct {
 	Fingerprint string   `json:"fingerprint,omitempty"`
 	// Pending is "restart" when the change waits for running jobs to end.
 	Pending string `json:"pending,omitempty"`
+	// Error says, when sharing is on, why the engine does not serve the network (it failed to
+	// start, or the keychain or certificate was unavailable); CodeExpiresAt is when the pairing
+	// code on show stops working, while one does.
+	Error         string     `json:"error,omitempty"`
+	CodeExpiresAt *time.Time `json:"code_expires_at,omitempty"`
 }
 
 func (s *Server) share() (*ShareView, error) {
@@ -420,6 +467,17 @@ func (s *Server) share() (*ShareView, error) {
 	sh := s.Engine.Sharing()
 	view := &ShareView{Enabled: cfg.Engine.Share, Active: sh.Port != 0, Port: cfg.Engine.SharePort, Addresses: []string{},
 		Fingerprint: tlscert.Short(sh.Fingerprint)}
+	if st := s.Engine.State(); cfg.Engine.Share && !view.Active {
+		switch {
+		case st.State == "failed":
+			view.Error = st.Error
+		case st.State == "running" && sh.Problem != "":
+			view.Error = sh.Problem
+		}
+	}
+	if exp := s.Engine.PairingExpires(); view.Active && !exp.IsZero() {
+		view.CodeExpiresAt = &exp
+	}
 	for _, ip := range tlscert.Addresses() {
 		if ip.To4() != nil {
 			view.Addresses = append(view.Addresses, net.JoinHostPort(ip.String(), strconv.FormatInt(view.Port, 10)))
@@ -431,7 +489,7 @@ func (s *Server) share() (*ShareView, error) {
 func (s *Server) shareGet(w http.ResponseWriter, _ *http.Request) {
 	view, err := s.share()
 	if err != nil {
-		problem(w, 422, err.Error())
+		problem(w, 422, plain.Err(err))
 		return
 	}
 	writeJSON(w, 200, view)
@@ -451,19 +509,22 @@ func (s *Server) sharePut(w http.ResponseWriter, r *http.Request) {
 		return err
 	})
 	if err != nil {
-		problem(w, 422, err.Error())
+		problem(w, 422, plain.Err(err))
 		return
 	}
 	pending := ""
-	if s.applyEngineSettings() == "next-start" && s.Engine.Running() {
+	switch s.Engine.Apply() {
+	case "pending":
 		pending = "restart"
-	} else if body.Enabled {
-		// A shared GPU must answer even when nobody here is generating.
-		go func() { _, _, _ = s.Engine.Endpoint(context.Background()) }()
+	case "saved":
+		if body.Enabled {
+			// A shared GPU must answer even when nobody here is generating.
+			go func() { _, _, _ = s.Engine.Endpoint(context.Background()) }()
+		}
 	}
 	view, err := s.share()
 	if err != nil {
-		problem(w, 422, err.Error())
+		problem(w, 422, plain.Err(err))
 		return
 	}
 	view.Pending = pending
@@ -475,7 +536,7 @@ func (s *Server) sharePut(w http.ResponseWriter, r *http.Request) {
 func (s *Server) shareCode(w http.ResponseWriter, r *http.Request) {
 	n, err := rand.Int(rand.Reader, big.NewInt(1_000_000))
 	if err != nil {
-		problem(w, 500, err.Error())
+		problem(w, 500, plain.Err(err))
 		return
 	}
 	code := fmt.Sprintf("%06d", n.Int64())
@@ -483,7 +544,7 @@ func (s *Server) shareCode(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 90*time.Second)
 	defer cancel()
 	if err := s.Engine.Pairing(ctx, code, ttl); err != nil {
-		problem(w, 409, err.Error())
+		problem(w, 409, plain.Err(err))
 		return
 	}
 	writeJSON(w, 200, PairingCode{Code: code[:3] + " " + code[3:], ExpiresAt: time.Now().Add(ttl)})

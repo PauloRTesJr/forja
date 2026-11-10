@@ -15,7 +15,9 @@ import (
 
 func TestMain(m *testing.M) {
 	fakeblender.Main()
-	os.Exit(m.Run())
+	code := m.Run()
+	fakeblender.Cleanup()
+	os.Exit(code)
 }
 
 func TestAssetsAreExportedOpenedInBlenderAndDeleted(t *testing.T) {
@@ -30,7 +32,7 @@ func TestAssetsAreExportedOpenedInBlenderAndDeleted(t *testing.T) {
 	}
 	first, second := assets[0].ID, assets[1].ID
 
-	t.Setenv("FORJA_BLENDER__PATH", filepath.Join(h.dir, "no-blender"))
+	t.Setenv("FORJA_BLENDER__PATH", filepath.Join(h.dir, "nowhere", "blender"))
 	if out := h.ok("assets", "formats"); !strings.Contains(out, "glb     .glb    yes") ||
 		!strings.Contains(out, "needs Blender") || !strings.Contains(out, "no Blender at") {
 		t.Fatalf("formats without Blender:\n%s", out)
@@ -40,12 +42,12 @@ func TestAssetsAreExportedOpenedInBlenderAndDeleted(t *testing.T) {
 	}
 	dest := filepath.Join(h.dir, "exports")
 	out := h.ok("assets", "export", first, second, "-o", dest)
-	if want := filepath.Join(dest, "chest.glb") + "\n" + filepath.Join(dest, "chest-2.glb") + "\n"; out != want {
+	if want := filepath.Join(dest, "chest.glb") + "\n" + filepath.Join(dest, "chest (2).glb") + "\n"; out != want {
 		t.Fatalf("export printed %q, want %q", out, want)
 	}
 
 	blender, opened := fakeblender.Use(t, "4.2.0 LTS")
-	if r := h.cli("", "config", "set", "blender.path="+filepath.Join(h.dir, "nope")); r.code == 0 {
+	if r := h.cli("", "config", "set", "blender.path="+filepath.Join(h.dir, "nope", "blender")); r.code == 0 {
 		t.Fatal("a path with no Blender was saved")
 	}
 	h.ok("config", "set", "blender.path="+blender)

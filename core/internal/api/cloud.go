@@ -16,6 +16,7 @@ import (
 
 	"forja/internal/config"
 	"forja/internal/paths"
+	"forja/internal/plain"
 	"forja/internal/provider"
 	"forja/internal/provider/comfyui"
 	"forja/internal/provider/engine"
@@ -219,7 +220,7 @@ func (s *Server) cloudTest(w http.ResponseWriter, r *http.Request, raw []byte) {
 	defer cancel()
 	c, err := s.checkCloud(ctx, b)
 	if err != nil {
-		problem(w, 422, err.Error())
+		problem(w, 422, plain.Err(err))
 		return
 	}
 	writeJSON(w, 200, c.probe)
@@ -237,7 +238,7 @@ func (s *Server) cloudAdd(w http.ResponseWriter, r *http.Request, raw []byte) {
 	defer cancel()
 	c, err := s.checkCloud(ctx, b)
 	if err != nil {
-		problem(w, 422, err.Error())
+		problem(w, 422, plain.Err(err))
 		return
 	}
 	pc := c.pc
@@ -260,12 +261,12 @@ func (s *Server) cloudAdd(w http.ResponseWriter, r *http.Request, raw []byte) {
 		pc.Workflows = map[string]string{}
 		dir := filepath.Join(paths.ConfigDir(), "comfyui", pc.ID)
 		if err := os.MkdirAll(dir, 0o755); err != nil {
-			problem(w, 500, err.Error())
+			problem(w, 500, plain.Err(err))
 			return
 		}
 		for use, raw := range c.workflows {
 			if err := os.WriteFile(filepath.Join(dir, use+".json"), raw, 0o644); err != nil {
-				problem(w, 500, err.Error())
+				problem(w, 500, plain.Err(err))
 				return
 			}
 			pc.Workflows[use] = "comfyui/" + pc.ID + "/" + use + ".json"
@@ -273,7 +274,7 @@ func (s *Server) cloudAdd(w http.ResponseWriter, r *http.Request, raw []byte) {
 	}
 	if err := config.AddProvider(config.UserFile(), pc, validateUser); err != nil {
 		s.forgetSecrets(pc)
-		problem(w, 422, err.Error())
+		problem(w, 422, plain.Err(err))
 		return
 	}
 	if cfg, err := config.Load("", nil); err == nil && !slices.Contains(cfg.Routing.Priority, pc.ID) {

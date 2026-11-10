@@ -51,7 +51,7 @@ func fakeRunPodHealth(t *testing.T) {
 func providerRows(t *testing.T, ts *httptest.Server) map[string]ProviderRow {
 	t.Helper()
 	var rows []ProviderRow
-	call(t, ts, "GET", "/v1/providers", nil, &rows)
+	call(t, ts, "GET", "/v1/providers?wait=1", nil, &rows)
 	out := map[string]ProviderRow{}
 	for _, r := range rows {
 		out[r.ID] = r

@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -20,8 +21,8 @@ import (
 
 func (a *app) assetsCmd() *cobra.Command {
 	cmd := &cobra.Command{Use: "assets", Short: "Browse, export, open in Blender and delete the library's finished assets"}
-	var limit int
-	var before string
+	var limit, offset int
+	var before, sortBy string
 	ls := calls(&cobra.Command{
 		Use: "ls [search]", Short: "List assets, newest first; a search matches names and presets", Args: cobra.MaximumNArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
@@ -32,10 +33,22 @@ func (a *app) assetsCmd() *cobra.Command {
 			if len(args) == 1 {
 				q.Set("q", args[0])
 			}
-			var list []*library.Asset
-			if err := a.get("/v1/assets?"+q.Encode(), &list); err != nil {
+			if sortBy != "" {
+				q.Set("sort", sortBy)
+			}
+			if offset > 0 {
+				q.Set("offset", strconv.Itoa(offset))
+			}
+			c, err := a.client()
+			if err != nil {
 				return err
 			}
+			var list []*library.Asset
+			header, err := c.DoHeader(context.Background(), "GET", "/v1/assets?"+q.Encode(), nil, &list)
+			if err != nil {
+				return err
+			}
+			total, _ := strconv.Atoi(header.Get(api.TotalHeader))
 			a.print(list, func() {
 				a.table("ID\tNAME\tPRESET\tTRIANGLES\tRIG\tCREATED", func(row func(...any)) {
 					for _, as := range list {
@@ -43,13 +56,36 @@ func (a *app) assetsCmd() *cobra.Command {
 							as.CreatedAt.Local().Format(time.DateTime))
 					}
 				})
+				if total > offset+len(list) {
+					a.printf("Showing %d to %d of %d assets; --offset %d shows the next.\n", offset+1, offset+len(list), total, offset+len(list))
+				}
 			})
 			return nil
 		},
 	}, "GET /v1/assets")
 	ls.Flags().IntVar(&limit, "limit", 50, "how many assets (up to 500)")
 	ls.Flags().StringVar(&before, "before", "", "only assets created before this date or time")
+	ls.Flags().StringVar(&sortBy, "sort", "", "newest (the default), oldest or name")
+	ls.Flags().IntVar(&offset, "offset", 0, "skip this many assets, to read the list page by page")
 	cmd.AddCommand(ls)
+
+	cmd.AddCommand(calls(&cobra.Command{
+		Use: "rename <asset-id> <name>", Short: "Give an asset another name (files already exported keep theirs)",
+		Args: cobra.ExactArgs(2),
+		RunE: func(_ *cobra.Command, args []string) error {
+			c, err := a.client()
+			if err != nil {
+				return err
+			}
+			var as library.Asset
+			body := map[string]string{"name": args[1]}
+			if err := c.Do(context.Background(), "PATCH", "/v1/assets/"+url.PathEscape(args[0]), body, &as); err != nil {
+				return err
+			}
+			a.print(as, func() { a.printf("%s  %s\n", as.ID, as.Name) })
+			return nil
+		},
+	}, "PATCH /v1/assets/{id}"))
 
 	cmd.AddCommand(calls(&cobra.Command{
 		Use: "show <asset-id>", Short: "Show an asset: its mesh, where it was exported and the job that made it",
@@ -127,6 +163,7 @@ func (a *app) assetsCmd() *cobra.Command {
 
 func (a *app) exportCmd() *cobra.Command {
 	var format, out string
+	var replace bool
 	cmd := calls(&cobra.Command{
 		Use:   "export <asset-id>...",
 		Short: "Export assets to GLB, FBX, OBJ, glTF, USDZ, STL or a Blender file",
@@ -145,6 +182,9 @@ func (a *app) exportCmd() *cobra.Command {
 			}
 			var res api.ExportResult
 			req := api.ExportRequest{IDs: args, Format: strings.TrimPrefix(strings.ToLower(format), "."), Path: dest}
+			if replace {
+				req.OnConflict = api.ConflictReplace
+			}
 			if err := c.Do(context.Background(), "POST", "/v1/export", req, &res); err != nil {
 				return err
 			}
@@ -172,6 +212,7 @@ func (a *app) exportCmd() *cobra.Command {
 	}, "POST /v1/export")
 	cmd.Flags().StringVarP(&format, "format", "f", "glb", "glb, fbx, obj, gltf, usdz, stl or blend")
 	cmd.Flags().StringVarP(&out, "output", "o", ".", "a file of that format, or a folder to write into")
+	cmd.Flags().BoolVar(&replace, "replace", false, "in a folder, overwrite files of the same name instead of writing \"name (2)\"")
 	return cmd
 }
 

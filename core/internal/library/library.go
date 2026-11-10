@@ -52,6 +52,8 @@ type Stage struct {
 	Step     int      `json:"step"`
 	Total    int      `json:"total"`
 	Error    string   `json:"error,omitempty"`
+	// ErrorDetail is the whole error when Error is its short form for people.
+	ErrorDetail string `json:"error_detail,omitempty"`
 	// Note is what the provider last said about the running stage, such as its place in a
 	// hosted model's queue.
 	Note string `json:"note,omitempty"`
@@ -101,6 +103,36 @@ type Job struct {
 	AssetID     string            `json:"asset_id,omitempty"`
 	Stages      []Stage           `json:"stages"`
 	EstimateSec float64           `json:"estimate_seconds,omitempty"`
+	// ErrorDetail is the raw error behind Error, which is written for people.
+	ErrorDetail string `json:"error_detail,omitempty"`
+	// StartedAt is when the job first ran (not while it waited for a slot); DurationSec is the
+	// wall time from then to FinishedAt.
+	StartedAt   *time.Time `json:"started_at,omitempty"`
+	DurationSec float64    `json:"duration_seconds,omitempty"`
+	// RetryOf is the failed or cancelled job this one took the place of.
+	RetryOf string `json:"retry_of,omitempty"`
+	// Hidden jobs were taken off the list of jobs; their asset still reads them.
+	Hidden bool `json:"hidden,omitempty"`
+	// Sample marks a benchmark's job, which makes no asset and is never run again after a restart.
+	Sample bool `json:"-"`
+	// Resumes counts the times a restart ran this job again although it was saved as running
+	// (see NotStarted). Internal: no client reads it.
+	Resumes int `json:"-"`
+}
+
+// NotStarted reports whether no stage of the job has begun and no look for a sheet of views has
+// ended: all that a core that stopped meanwhile lost is the wait for a slot, so the job can run
+// again as if it had never left the queue.
+func (j *Job) NotStarted() bool {
+	if len(j.Stages) == 0 || (j.Sheet != nil && j.Sheet.Checked) {
+		return false
+	}
+	for _, s := range j.Stages {
+		if s.Status != Queued {
+			return false
+		}
+	}
+	return true
 }
 
 // Front is the image the job's front-view stages read.
@@ -186,7 +218,13 @@ CREATE TABLE IF NOT EXISTS jobs (
 	error TEXT NOT NULL DEFAULT '',
 	views TEXT NOT NULL DEFAULT '{}',
 	sheet TEXT NOT NULL DEFAULT '',
-	seed INTEGER NOT NULL DEFAULT 42
+	seed INTEGER NOT NULL DEFAULT 42,
+	started_at INTEGER,
+	error_detail TEXT NOT NULL DEFAULT '',
+	retry_of TEXT NOT NULL DEFAULT '',
+	hidden INTEGER NOT NULL DEFAULT 0,
+	sample INTEGER NOT NULL DEFAULT 0,
+	resumes INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS jobs_created ON jobs(created_at DESC);
 -- Libraries from before decision 37 hold a stage cache no job reads any more.
@@ -262,6 +300,12 @@ var added = []struct{ table, column, ddl string }{
 	{"jobs", "views", "TEXT NOT NULL DEFAULT '{}'"},
 	{"jobs", "sheet", "TEXT NOT NULL DEFAULT ''"},
 	{"jobs", "seed", "INTEGER NOT NULL DEFAULT 42"},
+	{"jobs", "started_at", "INTEGER"},
+	{"jobs", "error_detail", "TEXT NOT NULL DEFAULT ''"},
+	{"jobs", "retry_of", "TEXT NOT NULL DEFAULT ''"},
+	{"jobs", "hidden", "INTEGER NOT NULL DEFAULT 0"},
+	{"jobs", "sample", "INTEGER NOT NULL DEFAULT 0"},
+	{"jobs", "resumes", "INTEGER NOT NULL DEFAULT 0"},
 }
 
 func addColumns(db *sql.DB) error {
@@ -291,32 +335,38 @@ func (d *DB) SaveJob(ctx context.Context, j *Job) error {
 		raw, _ := json.Marshal(j.Sheet)
 		sheet = string(raw)
 	}
-	var finished any
+	var finished, started any
 	if j.FinishedAt != nil {
 		finished = j.FinishedAt.UnixMilli()
 	}
+	if j.StartedAt != nil {
+		started = j.StartedAt.UnixMilli()
+	}
 	_, err := d.sql.ExecContext(ctx, `
 		INSERT INTO jobs (id, created_at, finished_at, status, name, preset, input, project, priority, overrides, stages,
-			asset_id, error, views, sheet, seed)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			asset_id, error, views, sheet, seed, started_at, error_detail, retry_of, hidden, sample, resumes)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET finished_at=excluded.finished_at, status=excluded.status,
 			stages=excluded.stages, asset_id=excluded.asset_id, error=excluded.error, views=excluded.views,
-			sheet=excluded.sheet`,
+			sheet=excluded.sheet, started_at=excluded.started_at, error_detail=excluded.error_detail,
+			hidden=excluded.hidden, resumes=excluded.resumes`,
 		j.ID, j.CreatedAt.UnixMilli(), finished, j.Status, j.Name, j.Preset, j.Input, j.Project, j.Priority,
-		string(overrides), string(stages), j.AssetID, j.Error, string(views), sheet, j.Seed)
+		string(overrides), string(stages), j.AssetID, j.Error, string(views), sheet, j.Seed, started, j.ErrorDetail,
+		j.RetryOf, j.Hidden, j.Sample, j.Resumes)
 	return err
 }
 
 const jobColumns = `id, created_at, finished_at, status, name, preset, input, project, priority, overrides, stages,
-	asset_id, error, views, sheet, seed`
+	asset_id, error, views, sheet, seed, started_at, error_detail, retry_of, hidden, sample, resumes`
 
 func scanJob(row interface{ Scan(...any) error }) (*Job, error) {
 	var j Job
 	var created int64
-	var finished sql.NullInt64
+	var finished, started sql.NullInt64
 	var overrides, stages, views, sheet string
 	if err := row.Scan(&j.ID, &created, &finished, &j.Status, &j.Name, &j.Preset, &j.Input, &j.Project,
-		&j.Priority, &overrides, &stages, &j.AssetID, &j.Error, &views, &sheet, &j.Seed); err != nil {
+		&j.Priority, &overrides, &stages, &j.AssetID, &j.Error, &views, &sheet, &j.Seed, &started, &j.ErrorDetail,
+		&j.RetryOf, &j.Hidden, &j.Sample, &j.Resumes); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
@@ -326,6 +376,13 @@ func scanJob(row interface{ Scan(...any) error }) (*Job, error) {
 	if finished.Valid {
 		t := time.UnixMilli(finished.Int64)
 		j.FinishedAt = &t
+	}
+	if started.Valid {
+		t := time.UnixMilli(started.Int64)
+		j.StartedAt = &t
+		if j.FinishedAt != nil {
+			j.DurationSec = max(0, j.FinishedAt.Sub(t).Seconds())
+		}
 	}
 	_ = json.Unmarshal([]byte(overrides), &j.Overrides)
 	_ = json.Unmarshal([]byte(stages), &j.Stages)
@@ -343,7 +400,7 @@ func (d *DB) Job(ctx context.Context, id string) (*Job, error) {
 
 func (d *DB) Jobs(ctx context.Context, limit int, before time.Time) ([]*Job, error) {
 	rows, err := d.sql.QueryContext(ctx,
-		`SELECT `+jobColumns+` FROM jobs WHERE created_at < ? ORDER BY created_at DESC LIMIT ?`,
+		`SELECT `+jobColumns+` FROM jobs WHERE created_at < ? AND hidden = 0 ORDER BY created_at DESC, id DESC LIMIT ?`,
 		before.UnixMilli(), limit)
 	if err != nil {
 		return nil, err
@@ -360,12 +417,114 @@ func (d *DB) Jobs(ctx context.Context, limit int, before time.Time) ([]*Job, err
 	return out, rows.Err()
 }
 
-// FailUnfinished marks jobs interrupted by a core restart.
+// Interrupted is the error of a job that was running when the core stopped.
+const Interrupted = "Forja closed while this job was running, so it did not finish. Retry it."
+
+// FailUnfinished ends the jobs a core left running when it stopped: no core runs them any
+// more. Their unfinished stages end with them, so none shows as still running. Jobs that only
+// waited for their turn stay queued (the runner starts them again), and so does a job that was
+// admitted but had begun no stage, once: one found so again took the core down each time it was
+// about to start, and ends as interrupted. Waiting jobs keep waiting for their answer.
 func (d *DB) FailUnfinished(ctx context.Context) error {
-	_, err := d.sql.ExecContext(ctx,
-		`UPDATE jobs SET status = 'failed', error = 'interrupted: the core stopped while this job ran', finished_at = ?
-		 WHERE status IN ('queued', 'running')`, time.Now().UnixMilli())
-	return err
+	rows, err := d.sql.QueryContext(ctx, `SELECT `+jobColumns+` FROM jobs WHERE status = 'running'`)
+	if err != nil {
+		return err
+	}
+	var left []*Job
+	for rows.Next() {
+		j, err := scanJob(rows)
+		if err != nil {
+			rows.Close()
+			return err
+		}
+		left = append(left, j)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	now := time.Now()
+	for _, j := range left {
+		if j.NotStarted() && !j.Sample && j.Resumes == 0 {
+			j.Status, j.StartedAt, j.Resumes = Queued, nil, j.Resumes+1
+			if err := d.SaveJob(ctx, j); err != nil {
+				return err
+			}
+			continue
+		}
+		j.Status, j.Error, j.FinishedAt = Failed, Interrupted, &now
+		for i := range j.Stages {
+			if !j.Stages[i].Status.Done() {
+				j.Stages[i].Status = Cancelled
+			}
+		}
+		if err := d.SaveJob(ctx, j); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// Queued lists the jobs waiting for their turn, oldest first.
+func (d *DB) Queued(ctx context.Context) ([]*Job, error) {
+	return d.jobsWhere(ctx, `status = 'queued' ORDER BY created_at, id`)
+}
+
+// Finished lists the jobs that ended and are still on the list, oldest first.
+func (d *DB) Finished(ctx context.Context) ([]*Job, error) {
+	return d.jobsWhere(ctx, `status IN ('succeeded', 'failed', 'cancelled') AND hidden = 0 ORDER BY created_at, id`)
+}
+
+func (d *DB) jobsWhere(ctx context.Context, where string) ([]*Job, error) {
+	rows, err := d.sql.QueryContext(ctx, `SELECT `+jobColumns+` FROM jobs WHERE `+where)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*Job
+	for rows.Next() {
+		j, err := scanJob(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, j)
+	}
+	return out, rows.Err()
+}
+
+// ErrActive is a job that has not ended, where only an ended one will do.
+var ErrActive = errors.New("the job has not ended")
+
+// RemoveJob takes a job that ended off the list of jobs. One whose asset is in the library is
+// hidden, since the asset reads it; any other is deleted, and a sweep removes its files.
+func (d *DB) RemoveJob(ctx context.Context, id string) error {
+	tx, err := d.sql.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var status Status
+	if err := tx.QueryRowContext(ctx, `SELECT status FROM jobs WHERE id = ?`, id).Scan(&status); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		}
+		return err
+	}
+	if !status.Done() {
+		return ErrActive
+	}
+	var assets int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM assets WHERE job_id = ?`, id).Scan(&assets); err != nil {
+		return err
+	}
+	query := `DELETE FROM jobs WHERE id = ?`
+	if assets > 0 {
+		query = `UPDATE jobs SET hidden = 1 WHERE id = ?`
+	}
+	if _, err := tx.ExecContext(ctx, query, id); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (d *DB) RecordTiming(ctx context.Context, use, model, provider string, seconds float64) error {
@@ -443,26 +602,6 @@ func scanAsset(row interface{ Scan(...any) error }) (*Asset, error) {
 
 func (d *DB) Asset(ctx context.Context, id string) (*Asset, error) {
 	return scanAsset(d.sql.QueryRowContext(ctx, `SELECT `+assetColumns+` FROM assets WHERE id = ?`, id))
-}
-
-func (d *DB) Assets(ctx context.Context, limit int, before time.Time, query string) ([]*Asset, error) {
-	rows, err := d.sql.QueryContext(ctx,
-		`SELECT `+assetColumns+` FROM assets WHERE created_at < ? AND (? = '' OR name LIKE '%' || ? || '%' OR preset = ?)
-		 ORDER BY created_at DESC LIMIT ?`,
-		before.UnixMilli(), query, query, query, limit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []*Asset
-	for rows.Next() {
-		a, err := scanAsset(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, a)
-	}
-	return out, rows.Err()
 }
 
 // DeleteAsset removes an asset and the job that made it from the library, and returns what

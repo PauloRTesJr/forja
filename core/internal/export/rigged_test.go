@@ -234,7 +234,7 @@ func TestRealBlenderCarriesTheArmature(t *testing.T) {
 	slices.Sort(want)
 	for _, id := range []string{"fbx", "gltf", "blend", "obj", "usdz", "stl"} {
 		f, _ := LookupFormat(id)
-		out, err := ToFiles(context.Background(), b, f, []Item{{Asset: "a1", Name: "hero", GLB: src}}, filepath.Join(dir, id))
+		out, err := ToFiles(context.Background(), b, f, []Item{{Asset: "a1", Name: "hero", GLB: src}}, filepath.Join(dir, id), Options{})
 		if err != nil || out[0].Error != "" || len(out[0].Files) == 0 {
 			t.Fatalf("%s: %+v, %v", id, out, err)
 		}

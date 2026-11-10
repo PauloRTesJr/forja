@@ -11,6 +11,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"forja/internal/api"
 	"forja/internal/jobs"
 	"forja/internal/library"
 )
@@ -35,7 +36,7 @@ func pageQuery(q url.Values, limit int, before string) (url.Values, error) {
 }
 
 func (a *app) jobsCmd() *cobra.Command {
-	cmd := &cobra.Command{Use: "jobs", Short: "List, inspect, watch and cancel jobs"}
+	cmd := &cobra.Command{Use: "jobs", Short: "List, inspect, watch, cancel, retry and clear jobs"}
 	var limit int
 	var before string
 	ls := calls(&cobra.Command{
@@ -112,8 +113,90 @@ func (a *app) jobsCmd() *cobra.Command {
 		},
 	}, "DELETE /v1/jobs/{id}"))
 
-	cmd.AddCommand(a.sheetCmd())
+	cmd.AddCommand(a.sheetCmd(), a.retryCmd())
+
+	cmd.AddCommand(calls(&cobra.Command{
+		Use: "rm <job-id>...", Short: "Take finished jobs off the list (their assets stay in the library)", Args: cobra.MinimumNArgs(1),
+		RunE: func(_ *cobra.Command, args []string) error {
+			c, err := a.client()
+			if err != nil {
+				return err
+			}
+			for _, id := range args {
+				if err := c.Do(context.Background(), "POST", "/v1/jobs/"+url.PathEscape(id)+"/remove", nil, nil); err != nil {
+					return fmt.Errorf("%s: %w", id, err)
+				}
+			}
+			return nil
+		},
+	}, "POST /v1/jobs/{id}/remove"))
+
+	cmd.AddCommand(calls(&cobra.Command{
+		Use: "clear", Short: "Take every finished job off the list (their assets stay in the library)", Args: cobra.NoArgs,
+		RunE: func(*cobra.Command, []string) error {
+			c, err := a.client()
+			if err != nil {
+				return err
+			}
+			var cleared api.Cleared
+			if err := c.Do(context.Background(), "POST", "/v1/jobs/clear", nil, &cleared); err != nil {
+				return err
+			}
+			a.print(cleared, func() {
+				switch len(cleared.Removed) {
+				case 0:
+					a.printf("No finished jobs to clear.\n")
+				case 1:
+					a.printf("Cleared 1 finished job.\n")
+				default:
+					a.printf("Cleared %d finished jobs.\n", len(cleared.Removed))
+				}
+			})
+			return nil
+		},
+	}, "POST /v1/jobs/clear"))
 	return cmd
+}
+
+// retryCmd runs a failed or cancelled job again, and follows the job that takes its place.
+func (a *app) retryCmd() *cobra.Command {
+	var noWait bool
+	cmd := &cobra.Command{
+		Use:   "retry <job-id>",
+		Short: "Run a failed or cancelled job again",
+		Long: "Starts a new job from the same image, preset, seed, overrides and views, in the old job's place in the\n" +
+			"list, and follows it until it ends. With --no-wait it prints the new job and returns.",
+		Args: cobra.ExactArgs(1),
+		RunE: func(_ *cobra.Command, args []string) error {
+			var c *Client
+			var err error
+			if noWait {
+				c, err = a.daemonClient("--no-wait")
+			} else {
+				c, err = a.client()
+			}
+			if err != nil {
+				return err
+			}
+			ctx, stop := signalContext()
+			defer stop()
+			evs, err := c.Events(ctx)
+			if err != nil {
+				return err
+			}
+			var j library.Job
+			if err := c.Do(ctx, "POST", "/v1/jobs/"+url.PathEscape(args[0])+"/retry", nil, &j); err != nil {
+				return err
+			}
+			if noWait {
+				a.print(j, func() { a.printf("%s %s\n", j.ID, j.Status) })
+				return nil
+			}
+			return a.watch(ctx, c, evs, []*library.Job{&j})
+		},
+	}
+	cmd.Flags().BoolVar(&noWait, "no-wait", false, "start the job without following it")
+	return calls(cmd, append([]string{"POST /v1/jobs/{id}/retry"}, watchRoutes...)...)
 }
 
 func (a *app) showJob(j *library.Job) {

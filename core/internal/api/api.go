@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -21,6 +22,7 @@ import (
 	"forja/internal/bench"
 	"forja/internal/catalog"
 	"forja/internal/config"
+	"forja/internal/engineapi"
 	"forja/internal/events"
 	"forja/internal/glb"
 	"forja/internal/installs"
@@ -51,6 +53,8 @@ type Server struct {
 	Config    func(project string) (*config.Loaded, error)
 	Shutdown  func()
 	Log       *slog.Logger
+
+	reach healthBook
 
 	benchOnce sync.Once
 	bench     *bench.Bench
@@ -101,8 +105,12 @@ func (s *Server) routes() []route {
 		{"GET /v1/jobs/{id}", s.jobGet},
 		{"DELETE /v1/jobs/{id}", s.jobCancel},
 		{"POST /v1/jobs/{id}/sheet", s.jobSheet},
+		{"POST /v1/jobs/{id}/retry", s.jobRetry},
+		{"POST /v1/jobs/{id}/remove", s.jobRemove},
+		{"POST /v1/jobs/clear", s.jobClear},
 		{"GET /v1/assets", s.assetList},
 		{"GET /v1/assets/{id}", s.assetGet},
+		{"PATCH /v1/assets/{id}", s.assetRename},
 		{"DELETE /v1/assets/{id}", s.assetDelete},
 		{"PUT /v1/assets/{id}/thumbnail", s.assetThumbnail},
 		{"POST /v1/assets/{id}/blender", s.assetBlender},
@@ -186,7 +194,7 @@ func (s *Server) info(w http.ResponseWriter, r *http.Request) {
 	}
 	out := map[string]any{
 		"version": s.Version, "data_dir": s.DataDir, "config_files": cfg.Files, "user_config": config.UserFile(),
-		"engine": map[string]any{"running": s.Engine.Running()},
+		"engine": s.engineView(nil),
 	}
 	// The hardware the engine last reported, so Settings shows it without starting the engine.
 	if e, ok := s.Catalog.Last(jobs.LocalProvider); ok {
@@ -197,11 +205,28 @@ func (s *Server) info(w http.ResponseWriter, r *http.Request) {
 			ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
 			defer cancel()
 			if info, err := p.Info(ctx); err == nil {
-				out["engine"] = map[string]any{"running": true, "info": info}
+				out["engine"] = s.engineView(info)
 			}
 		}
 	}
 	writeJSON(w, 200, out)
+}
+
+// engineView is what /v1/info says of the local engine: whether it runs, and when it does not,
+// why (a failed start, a crash) in a sentence and in the raw text behind it.
+func (s *Server) engineView(info *engineapi.Info) map[string]any {
+	st := s.Engine.State()
+	out := map[string]any{"running": st.State == "running", "state": st.State}
+	if st.Error != "" {
+		out["error"], out["error_detail"] = st.Error, st.Detail
+	}
+	if st.RestartPending {
+		out["restart_pending"] = true
+	}
+	if info != nil {
+		out["info"] = info
+	}
+	return out
 }
 
 func (s *Server) configEffective(w http.ResponseWriter, r *http.Request) {
@@ -320,6 +345,9 @@ func (s *Server) presets(w http.ResponseWriter, r *http.Request) {
 			for _, pick := range plan {
 				v.Ready = v.Ready && !pick.Missing
 			}
+			if !v.Ready {
+				v.Error = jobs.PinProblem(plan)
+			}
 			if off, err := s.Runner.Unavailable(ctx, project, p); err == nil && len(off) > 0 {
 				v.Unavailable = make(map[string]string, len(off))
 				for id, b := range off {
@@ -376,23 +404,79 @@ func (s *Server) jobCreate(w http.ResponseWriter, r *http.Request) {
 			problem(w, 422, "views belong to one image: submit them with path, not paths")
 			return
 		}
+		paths, err := jobs.ExpandFolders(body.Paths)
+		if err != nil {
+			problem(w, 422, err.Error())
+			return
+		}
 		reqs = reqs[:0]
-		for _, p := range body.Paths {
+		for _, p := range paths {
 			req := body.SubmitRequest
 			req.Path = p
 			reqs = append(reqs, req)
 		}
 	}
-	created := make([]*library.Job, 0, len(reqs))
-	for _, req := range reqs {
-		job, err := s.Runner.Submit(r.Context(), req)
-		if err != nil {
-			problem(w, 422, err.Error())
-			return
-		}
-		created = append(created, job)
+	// Every image is checked before any job is created: one that cannot be read refuses them all.
+	created, err := s.Runner.SubmitAll(r.Context(), reqs)
+	var partial *jobs.PartialError
+	if errors.As(err, &partial) {
+		problemWith(w, 422, err.Error(), map[string]any{"created": partial.Created})
+		return
+	}
+	if err != nil {
+		problem(w, 422, err.Error())
+		return
 	}
 	writeJSON(w, 202, created)
+}
+
+// jobRetry runs a failed or cancelled job again as a new job, which takes its place.
+func (s *Server) jobRetry(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	job, err := s.Runner.Retry(r.Context(), id)
+	switch {
+	case errors.Is(err, library.ErrNotFound):
+		problem(w, 404, "no job "+id)
+	case errors.Is(err, library.ErrActive):
+		problem(w, 409, "job "+id+" has not ended; cancel it first to run it again")
+	case errors.Is(err, jobs.ErrNotRetryable):
+		problem(w, 409, err.Error())
+	case err != nil:
+		problem(w, 422, err.Error())
+	default:
+		writeJSON(w, 202, job)
+	}
+}
+
+// jobRemove takes one job that ended off the list of jobs. Its asset, if it made one, stays.
+func (s *Server) jobRemove(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	err := s.Runner.Remove(r.Context(), id)
+	switch {
+	case errors.Is(err, library.ErrNotFound):
+		problem(w, 404, "no job "+id)
+	case errors.Is(err, library.ErrActive):
+		problem(w, 409, "job "+id+" has not ended; cancel it first")
+	case err != nil:
+		problem(w, 500, err.Error())
+	default:
+		w.WriteHeader(204)
+	}
+}
+
+// Cleared lists the jobs POST /v1/jobs/clear took off the list.
+type Cleared struct {
+	Removed []string `json:"removed"`
+}
+
+// jobClear takes every job that ended off the list of jobs.
+func (s *Server) jobClear(w http.ResponseWriter, r *http.Request) {
+	removed, err := s.Runner.Clear(r.Context())
+	if err != nil {
+		problem(w, 500, err.Error())
+		return
+	}
+	writeJSON(w, 200, Cleared{Removed: removed})
 }
 
 // jobSheet answers a job waiting on a sheet of views: {"views": [{"view", "box"}...]} to cut
@@ -417,9 +501,10 @@ func (s *Server) jobSheet(w http.ResponseWriter, r *http.Request) {
 
 func page(r *http.Request) (int, time.Time) {
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	if limit <= 0 || limit > 500 {
+	if limit <= 0 {
 		limit = 100
 	}
+	limit = min(limit, 500)
 	before := time.Now().Add(time.Minute)
 	if ms, err := strconv.ParseInt(r.URL.Query().Get("before"), 10, 64); err == nil {
 		before = time.UnixMilli(ms)
@@ -469,22 +554,6 @@ func (s *Server) jobCancel(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(202)
 }
 
-func (s *Server) assetList(w http.ResponseWriter, r *http.Request) {
-	limit, before := page(r)
-	list, err := s.DB.Assets(r.Context(), limit, before, r.URL.Query().Get("q"))
-	if err != nil {
-		problem(w, 500, err.Error())
-		return
-	}
-	if list == nil {
-		list = []*library.Asset{}
-	}
-	for _, a := range list {
-		s.withStats(r.Context(), a)
-	}
-	writeJSON(w, 200, list)
-}
-
 func (s *Server) assetGet(w http.ResponseWriter, r *http.Request) {
 	a, err := s.DB.Asset(r.Context(), r.PathValue("id"))
 	if errors.Is(err, library.ErrNotFound) {
@@ -516,7 +585,8 @@ func (s *Server) assetThumbnail(w http.ResponseWriter, r *http.Request) {
 		problem(w, 500, err.Error())
 		return
 	}
-	s.Hub.Publish(jobs.EvAssetCreated, a)
+	// An update, not a new asset: clients apply it in place instead of reading the list again.
+	s.Hub.Publish(EvAssetUpdated, a)
 	writeJSON(w, 200, a)
 }
 
@@ -579,13 +649,19 @@ func (s *Server) artifactImport(w http.ResponseWriter, r *http.Request) {
 		problem(w, 400, "want {\"path\": \"<file>\"}")
 		return
 	}
+	name := filepath.Base(body.Path)
 	if st, err := os.Stat(body.Path); err != nil || !st.Mode().IsRegular() {
-		problem(w, 422, "cannot read "+body.Path)
+		problem(w, 422, name+" cannot be read at "+body.Path)
 		return
 	}
 	ref, err := s.Store.PutFile(body.Path)
 	if err != nil {
-		problem(w, 422, err.Error())
+		problem(w, 422, name+" cannot be read: "+err.Error())
+		return
+	}
+	// Said when the image is picked, not when the job it goes into is refused.
+	if why := jobs.ImageProblem(s.Store, ref); why != "" {
+		problem(w, 422, name+" "+why)
 		return
 	}
 	writeJSON(w, 201, map[string]string{"hash": ref})

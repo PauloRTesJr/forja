@@ -44,7 +44,19 @@ type ExportRequest struct {
 	IDs    []string `json:"ids"`
 	Format string   `json:"format"`
 	Path   string   `json:"path"`
+	// File says Path is the file to write (a Save dialog's answer), for one asset: the format's
+	// extension is added when Path lacks it, instead of Path becoming a folder.
+	File bool `json:"file,omitempty"`
+	// OnConflict is what happens to an asset whose file name is taken in the folder written
+	// into: ConflictRename (the default) writes "name (2)" beside it, ConflictReplace overwrites.
+	OnConflict string `json:"on_conflict,omitempty"`
 }
+
+// What an export does about a file name that is taken.
+const (
+	ConflictRename  = "rename"
+	ConflictReplace = "replace"
+)
 
 // ExportResult says what became of each asset, in the order asked.
 type ExportResult struct {
@@ -96,6 +108,14 @@ func (s *Server) exportAssets(w http.ResponseWriter, r *http.Request) {
 		problem(w, 422, "name the assets to export")
 		return
 	}
+	if req.OnConflict != "" && req.OnConflict != ConflictRename && req.OnConflict != ConflictReplace {
+		problem(w, 422, "on_conflict "+req.OnConflict+": want rename or replace")
+		return
+	}
+	if req.File && len(req.IDs) != 1 {
+		problem(w, 422, "a file takes one asset: name a folder for several")
+		return
+	}
 	// The core's working folder is not the caller's: a relative path would land elsewhere.
 	if !filepath.IsAbs(req.Path) {
 		problem(w, 422, "path must be a full path to a file or folder, not "+req.Path)
@@ -127,7 +147,8 @@ func (s *Server) exportAssets(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	done, err := export.ToFiles(r.Context(), b, f, items, req.Path)
+	done, err := export.ToFiles(r.Context(), b, f, items, req.Path,
+		export.Options{File: req.File, Replace: req.OnConflict == ConflictReplace})
 	if err != nil {
 		problem(w, 422, err.Error())
 		return
@@ -196,7 +217,8 @@ func (s *Server) assetDrag(w http.ResponseWriter, r *http.Request) {
 	path := filepath.Join(dir, export.FileName(a.Name)+".glb")
 	if st, err := os.Stat(path); err != nil || st.Size() != src.Size() {
 		f, _ := export.LookupFormat("glb")
-		done, err := export.ToFiles(r.Context(), nil, f, []export.Item{{Asset: a.ID, Name: a.Name, GLB: glb}}, dir)
+		done, err := export.ToFiles(r.Context(), nil, f, []export.Item{{Asset: a.ID, Name: a.Name, GLB: glb}}, dir,
+			export.Options{Replace: true})
 		if err == nil && done[0].Error != "" {
 			err = errors.New(done[0].Error)
 		}
@@ -230,6 +252,7 @@ func (s *Server) assetDelete(w http.ResponseWriter, r *http.Request) {
 		problem(w, 500, err.Error())
 		return
 	}
+	dropDrag(a.ID)
 	s.Hub.Publish(EvAssetDeleted, AssetDeleted{ID: a.ID, Job: a.JobID})
 	s.Sweeper.Nudge()
 	w.WriteHeader(204)

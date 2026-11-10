@@ -6,6 +6,7 @@ package provider
 
 import (
 	"context"
+	"errors"
 	"io"
 	"slices"
 	"sync"
@@ -41,6 +42,11 @@ type Provider interface {
 	Run(ctx context.Context, req engineapi.RunRequest, events chan<- engineapi.Event) (*engineapi.Run, error)
 	Cancel(ctx context.Context, runID string) error
 }
+
+// ErrRunLost is a run its provider no longer knows: the engine stopped, or crashed, in the
+// middle of it and came back without it. It is the engine that failed, not the request, so the
+// error carries no status the provider answered with, and the stages may run elsewhere.
+var ErrRunLost = errors.New("the engine stopped in the middle of the run and lost it")
 
 // Installer is implemented by providers that manage models on their own machine (engines).
 // Callers type-assert for it; a managed API has nothing to install.

@@ -24,10 +24,18 @@ type Client struct {
 func NewClient(addr string) *Client { return &Client{addr: addr, http: ipc.HTTPClient(addr)} }
 
 func (c *Client) Do(ctx context.Context, method, path string, in, out any) error {
-	body, err := c.Open(ctx, method, path, in)
+	_, err := c.DoHeader(ctx, method, path, in, out)
+	return err
+}
+
+// DoHeader is Do for answers that say something in their headers too, such as how many
+// assets a list holds in all.
+func (c *Client) DoHeader(ctx context.Context, method, path string, in, out any) (http.Header, error) {
+	resp, err := c.send(ctx, method, path, in)
 	if err != nil {
-		return err
+		return nil, err
 	}
+	body := resp.Body
 	defer body.Close()
 	if out != nil {
 		err = json.NewDecoder(body).Decode(out)
@@ -35,12 +43,21 @@ func (c *Client) Do(ctx context.Context, method, path string, in, out any) error
 			err = nil
 		}
 	}
-	return err
+	return resp.Header, err
 }
 
 // Open sends a request and returns the answer's body, for answers that are not JSON (an
 // artifact, the diagnostics report). The caller closes it.
 func (c *Client) Open(ctx context.Context, method, path string, in any) (io.ReadCloser, error) {
+	resp, err := c.send(ctx, method, path, in)
+	if err != nil {
+		return nil, err
+	}
+	return resp.Body, nil
+}
+
+// send sends a request; an answer of 400 or more comes back as an *APIError.
+func (c *Client) send(ctx context.Context, method, path string, in any) (*http.Response, error) {
 	var body io.Reader
 	if in != nil {
 		raw, err := json.Marshal(in)
@@ -70,7 +87,7 @@ func (c *Client) Open(ctx context.Context, method, path string, in any) (io.Read
 		}
 		return nil, e
 	}
-	return resp.Body, nil
+	return resp, nil
 }
 
 // APIError is a problem document from the core; Body holds its extension members.

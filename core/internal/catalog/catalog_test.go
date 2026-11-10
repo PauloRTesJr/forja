@@ -85,3 +85,45 @@ func TestAnswersSurviveARestart(t *testing.T) {
 		t.Fatalf("a running provider is asked: asked %d", f.asked)
 	}
 }
+
+// Resolving the presets asks about each provider once per stage. A provider that could not
+// answer was asked again every time: a computer that is switched off cost its connection
+// timeout forty times over, and an engine that could not start was started as often.
+func TestAProviderThatCannotAnswerIsNotAskedAgainAtOnce(t *testing.T) {
+	f := &fake{down: true}
+	reg := provider.NewRegistry()
+	reg.Add(f)
+	c := New(reg, memStore{}, nil, nil)
+	for range 40 {
+		if _, err := c.Get(context.Background(), "local"); err == nil {
+			t.Fatal("a provider that is down answered")
+		}
+	}
+	if f.asked != 1 {
+		t.Fatalf("a provider that is down was asked %d times in a row, want once", f.asked)
+	}
+	// Asking outright (the Models screen's refresh, an engine that just came up) still asks,
+	// and an answer clears the failure.
+	f.down = false
+	if _, err := c.Ask(context.Background(), "local"); err != nil || f.asked != 2 {
+		t.Fatalf("asked %d, err %v", f.asked, err)
+	}
+	if e, err := c.Get(context.Background(), "local"); err != nil || e == nil {
+		t.Fatalf("after it answered: %v %v", e, err)
+	}
+}
+
+// A request the app dropped says nothing about the provider.
+func TestACallerGivingUpIsNotTheProvidersFailure(t *testing.T) {
+	f := &fake{down: true}
+	reg := provider.NewRegistry()
+	reg.Add(f)
+	c := New(reg, memStore{}, nil, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, _ = c.Get(ctx, "local")
+	f.down = false
+	if _, err := c.Get(context.Background(), "local"); err != nil {
+		t.Fatalf("the next caller was answered with the dropped request's failure: %v", err)
+	}
+}

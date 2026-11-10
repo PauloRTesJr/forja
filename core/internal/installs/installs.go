@@ -23,6 +23,9 @@ const EvUpdated = "install.updated"
 // ErrNoInstaller is a provider that has nothing to install (a managed API).
 var ErrNoInstaller = errors.New("this provider does not manage models")
 
+// ErrUnknownProvider is an id no provider has.
+var ErrUnknownProvider = errors.New("no such provider")
+
 // Entry is a task and the provider it runs on.
 type Entry struct {
 	Provider string `json:"provider"`
@@ -34,6 +37,8 @@ type Tracker struct {
 	catalog   *catalog.Catalog
 	hub       *events.Hub
 	log       *slog.Logger
+	// OnDone, when set, is called after a task of a provider ended and its final state was published.
+	OnDone func(providerID string)
 
 	mu      sync.Mutex
 	entries map[string]*Entry // by provider + "/" + task id
@@ -49,7 +54,7 @@ func New(providers *provider.Registry, cat *catalog.Catalog, hub *events.Hub, lo
 func (t *Tracker) Installer(id string) (provider.Installer, error) {
 	p, ok := t.providers.Get(id)
 	if !ok {
-		return nil, fmt.Errorf("provider %q is not configured", id)
+		return nil, fmt.Errorf("%w: %s", ErrUnknownProvider, id)
 	}
 	inst, ok := p.(provider.Installer)
 	if !ok {
@@ -142,6 +147,9 @@ func (t *Tracker) follow(inst provider.Installer, providerID, taskID string) {
 	if !refreshed {
 		t.finished(providerID)
 	}
+	if t.OnDone != nil {
+		t.OnDone(providerID)
+	}
 }
 
 // finished refreshes what the provider runs, which publishes models.changed when it differs.
@@ -151,6 +159,18 @@ func (t *Tracker) finished(providerID string) {
 	if _, err := t.catalog.Ask(ctx, providerID); err != nil {
 		t.log.Warn("refreshing models after an install", "provider", providerID, "err", err)
 	}
+}
+
+// Busy reports whether a task of the provider is still running.
+func (t *Tracker) Busy(providerID string) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	for _, e := range t.entries {
+		if e.Provider == providerID && !e.Task.Done() {
+			return true
+		}
+	}
+	return false
 }
 
 // Cancel asks the provider to stop a task.

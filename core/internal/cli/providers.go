@@ -25,7 +25,7 @@ func (a *app) providersCmd() *cobra.Command {
 		Use: "ls", Short: "List providers with their health and keys",
 		RunE: func(*cobra.Command, []string) error {
 			var rows []api.ProviderRow
-			if err := a.get("/v1/providers", &rows); err != nil {
+			if err := a.get("/v1/providers?wait=1", &rows); err != nil {
 				return err
 			}
 			a.print(rows, func() {
@@ -231,6 +231,13 @@ func (a *app) providersCmd() *cobra.Command {
 	return cmd
 }
 
+func lowerFirst(s string) string {
+	if s == "" {
+		return s
+	}
+	return strings.ToLower(s[:1]) + s[1:]
+}
+
 func (a *app) showProbe(p api.ProbeView) {
 	a.printf("  %s  forja-engine %s, %d ms", p.URL, p.Version, p.Latency)
 	if p.GPU != "" {
@@ -250,6 +257,8 @@ func (a *app) shareCmd() *cobra.Command {
 				a.printf("Saved: it applies once the running jobs finish and the engine restarts.\n")
 			case v.Active:
 				a.printf("Sharing this computer's GPU on port %d.\n", v.Port)
+			case v.Enabled && v.Error != "":
+				a.printf("Sharing is on, but %s\n", lowerFirst(v.Error))
 			case v.Enabled:
 				a.printf("Sharing is on; the engine serves the network once it runs (open the app or run forja daemon).\n")
 			default:
@@ -263,6 +272,9 @@ func (a *app) shareCmd() *cobra.Command {
 					a.printf("  certificate  %s\n", v.Fingerprint)
 				}
 				a.printf("On the other computer: forja providers add <address> --code <code from forja share code>\n")
+				if v.CodeExpiresAt != nil {
+					a.printf("A pairing code is on show until %s.\n", v.CodeExpiresAt.Local().Format("15:04"))
+				}
 			}
 		})
 	}

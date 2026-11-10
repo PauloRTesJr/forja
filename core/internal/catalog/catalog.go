@@ -56,13 +56,23 @@ type Catalog struct {
 
 	mu   sync.Mutex
 	last map[string]*Entry
+	// failed is when each provider last could not answer, and how.
+	failed map[string]failure
 }
 
-// fresh is how long an answer serves repeated questions without asking again.
+type failure struct {
+	err error
+	at  time.Time
+}
+
+// fresh is how long an answer serves repeated questions without asking again, a failure to
+// answer included: resolving a list of presets asks about a provider once per stage, and a
+// computer that is switched off takes seconds to not answer each time.
 const fresh = 5 * time.Second
 
 func New(providers *provider.Registry, store Store, idle func(id string) bool, changed func(id string)) *Catalog {
-	c := &Catalog{providers: providers, store: store, idle: idle, changed: changed, last: map[string]*Entry{}}
+	c := &Catalog{providers: providers, store: store, idle: idle, changed: changed, last: map[string]*Entry{},
+		failed: map[string]failure{}}
 	if idle == nil {
 		c.idle = func(string) bool { return false }
 	}
@@ -88,17 +98,18 @@ func (c *Catalog) Ask(ctx context.Context, id string) (*Entry, error) {
 	}
 	info, err := p.Info(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("provider %s did not say what it runs: %w", id, err)
+		return nil, c.fail(ctx, id, fmt.Errorf("provider %s did not say what it runs: %w", id, err))
 	}
 	models, err := p.Models(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("provider %s did not list its models: %w", id, err)
+		return nil, c.fail(ctx, id, fmt.Errorf("provider %s did not list its models: %w", id, err))
 	}
 	e := &Entry{Stages: info.Stages, Unavailable: info.Unavailable, Models: models, System: info.System,
 		At: time.Now(), Live: true}
 	c.mu.Lock()
 	prev := c.last[id]
 	c.last[id] = e
+	delete(c.failed, id)
 	c.mu.Unlock()
 	if raw, err := json.Marshal(e); err == nil {
 		_ = c.store.SaveCatalog(context.WithoutCancel(ctx), id, raw)
@@ -111,14 +122,31 @@ func (c *Catalog) Ask(ctx context.Context, id string) (*Entry, error) {
 	return e, nil
 }
 
+// fail remembers that a provider could not answer, unless it was the caller who gave up.
+func (c *Catalog) fail(ctx context.Context, id string, err error) error {
+	if ctx.Err() == nil {
+		c.mu.Lock()
+		c.failed[id] = failure{err, time.Now()}
+		c.mu.Unlock()
+	}
+	return err
+}
+
 // Get answers from memory when the provider is idle or was asked a moment ago, and asks it
 // otherwise. A provider that cannot answer is described by its last answer, if any.
+// One that could not answer a moment ago is not asked again yet.
 func (c *Catalog) Get(ctx context.Context, id string) (*Entry, error) {
 	c.mu.Lock()
-	last := c.last[id]
+	last, failed := c.last[id], c.failed[id]
 	c.mu.Unlock()
 	if last != nil && (c.idle(id) || (last.Live && time.Since(last.At) < fresh)) {
 		return last, nil
+	}
+	if failed.err != nil && time.Since(failed.at) < fresh {
+		if last != nil {
+			return last, nil
+		}
+		return nil, failed.err
 	}
 	e, err := c.Ask(ctx, id)
 	if err != nil && last != nil {
@@ -139,6 +167,7 @@ func (c *Catalog) Last(id string) (*Entry, bool) {
 func (c *Catalog) Forget(id string) {
 	c.mu.Lock()
 	delete(c.last, id)
+	delete(c.failed, id)
 	c.mu.Unlock()
 	_ = c.store.ForgetCatalog(context.Background(), id)
 	c.changed(id)

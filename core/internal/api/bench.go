@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"path/filepath"
@@ -92,7 +93,8 @@ func (s *Server) benchReport(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(page)
 }
 
-// CompareRequest names two results, each by id or by the full path of a result file. A
+// CompareRequest names two results, each by id or by the full path of a result file. Current
+// may be left out: the newest finished run of the core's own is then compared with Baseline. A
 // threshold left at 0 takes the bench section of the config.
 type CompareRequest struct {
 	Baseline   string            `json:"baseline"`
@@ -123,6 +125,18 @@ func (s *Server) benchCompare(w http.ResponseWriter, r *http.Request) {
 			t.MinVRAMMB = q.MinVRAMMB
 		}
 	}
+	if req.Baseline == "" {
+		problem(w, 422, "name the run to compare against")
+		return
+	}
+	if req.Current == "" {
+		id, err := s.newestFinishedRun(req.Baseline)
+		if err != nil {
+			problem(w, 422, err.Error())
+			return
+		}
+		req.Current = id
+	}
 	var sides [2]*bench.Result
 	for i, ref := range []string{req.Baseline, req.Current} {
 		if sides[i], err = s.benches().Load(ref); err != nil {
@@ -133,11 +147,46 @@ func (s *Server) benchCompare(w http.ResponseWriter, r *http.Request) {
 			problem(w, status, err.Error())
 			return
 		}
+		if why := unusable(sides[i]); why != "" {
+			problem(w, 422, why)
+			return
+		}
 	}
 	c, err := bench.Compare(sides[0], sides[1], t)
 	if err != nil {
 		problem(w, 422, err.Error())
 		return
 	}
+	for _, r := range sides {
+		if r.Status == bench.Failed {
+			c.Warnings = append(c.Warnings, fmt.Sprintf("run %s had samples that failed; its numbers cover the others", r.ID))
+		}
+	}
 	writeJSON(w, 200, c)
+}
+
+// unusable says why a run cannot be compared; "" when it can. A cancelled run measured only some
+// of its samples, so it would read as a faster, smaller run.
+func unusable(r *bench.Result) string {
+	switch r.Status {
+	case bench.Cancelled:
+		return "Run " + r.ID + " was cancelled before it finished, so its numbers are partial. Compare a finished run."
+	case bench.Running:
+		return "Run " + r.ID + " is still running. Compare it when it has finished."
+	}
+	return ""
+}
+
+// newestFinishedRun is the id of the newest benchmark that finished, other than skip.
+func (s *Server) newestFinishedRun(skip string) (string, error) {
+	list, err := s.benches().List()
+	if err != nil {
+		return "", err
+	}
+	for _, e := range list.Results { // newest first
+		if e.Status == bench.Succeeded && e.ID != skip {
+			return e.ID, nil
+		}
+	}
+	return "", errors.New("there is no other finished benchmark to compare with yet: run the benchmark first")
 }

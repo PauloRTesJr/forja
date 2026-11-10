@@ -85,6 +85,9 @@ func (g *procGroup) interrupt() {
 	_ = g.cmd.Process.Kill()
 }
 
+// kill is interrupt here: there is nothing gentler to try first.
+func (g *procGroup) kill() { g.interrupt() }
+
 // close releases the job, killing anything the engine left running.
 func (g *procGroup) close() {
 	g.mu.Lock()

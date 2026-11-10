@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"math"
 	"os"
 	"path/filepath"
 	"sort"
@@ -340,6 +341,17 @@ func merge(dst, src map[string]any, layer, prefix string, sources map[string]str
 }
 
 func (c *Config) validate() error {
+	if c.Engine.IdleUnloadMinutes < 0 {
+		return fmt.Errorf("engine.idle_unload_minutes: %d is below 0; use 0 to never unload", c.Engine.IdleUnloadMinutes)
+	}
+	if v := c.Engine.VRAMReserveGB; v < 0 || math.IsNaN(v) || math.IsInf(v, 0) {
+		return fmt.Errorf("engine.vram_reserve_gb: %v is not a number of 0 or more", v)
+	}
+	for key, v := range map[string]float64{"per_job": c.Routing.Budget.PerJob, "per_day": c.Routing.Budget.PerDay, "per_month": c.Routing.Budget.PerMonth} {
+		if v < 0 || math.IsNaN(v) || math.IsInf(v, 0) {
+			return fmt.Errorf("routing.budget_usd.%s: %v is not an amount of 0 or more", key, v)
+		}
+	}
 	switch c.Engine.FitMode {
 	case "fit-first", "quality-first":
 	default:

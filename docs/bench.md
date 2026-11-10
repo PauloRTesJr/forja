@@ -142,11 +142,11 @@ The report is one self-contained HTML file, thumbnails of the inputs included, s
 ## Compare two runs
 
 ```sh
-forja bench compare <baseline> <current>
+forja bench compare <baseline> [current]
 forja bench compare baseline/bench.json results/bench.json --threshold 5
 ```
 
-Each side is a result file or the id of a result the core keeps. The comparison reads, per preset, the failures and the median image-to-GLB time; per stage, the median time and the peak VRAM; and the median core overhead per job.
+Each side is a result file or the id of a result the core keeps. Without `current`, the newest finished run the core keeps is used; a cancelled run is refused (its numbers are partial) and a run with failed samples is compared with a warning. The comparison reads, per preset, the failures and the median image-to-GLB time; per stage, the median time and the peak VRAM; and the median core overhead per job.
 
 A value is a regression when it grows by more than the threshold, in percent, **and** by at least its noise floor: a 20 ms stage that takes 30 ms once is noise, not a 50% regression. A preset with more failed samples than the baseline is always a regression.
 

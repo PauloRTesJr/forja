@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/BurntSushi/toml"
 )
@@ -175,12 +176,23 @@ func removeProviderLines(text, id string) (string, bool) {
 		}
 		if match {
 			start, end = i, j
+			// Comment lines right above the next table are that table's, not this one's.
+			for end < len(lines) && end > start+1 && strings.HasPrefix(strings.TrimSpace(lines[end-1]), "#") {
+				end--
+			}
+			for end < len(lines) && end > start+1 && strings.TrimSpace(lines[end-1]) == "" {
+				end--
+			}
 			break
 		}
 		i = j - 1
 	}
 	if start < 0 {
 		return text, true
+	}
+	// The comment lines right above the table describe it, and go with it.
+	for start > 0 && strings.HasPrefix(strings.TrimSpace(lines[start-1]), "#") {
+		start--
 	}
 	if start > 0 && strings.TrimSpace(lines[start-1]) == "" {
 		start--
@@ -190,7 +202,13 @@ func removeProviderLines(text, id string) (string, bool) {
 
 // rewrite changes one config file: change describes the result as data, lineEdit tries to
 // produce it as text. When the text decodes to something else, the file is encoded anew.
+// writeMu serializes edits: two settings writes that arrive together must each read the file the
+// other wrote, and a failed validation must not put back a file older than the other's write.
+var writeMu sync.Mutex
+
 func rewrite(path string, change func(map[string]any), lineEdit func(string) (string, bool), validate func() error) error {
+	writeMu.Lock()
+	defer writeMu.Unlock()
 	before, err := os.ReadFile(path)
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return err
@@ -324,6 +342,7 @@ func editLines(text string, changes map[string]any) (string, bool) {
 		if v == nil {
 			if found >= 0 {
 				lines = append(lines[:found], lines[found+1:]...)
+				lines = dropEmptyTable(lines, tbl)
 			}
 			continue
 		}
@@ -335,7 +354,8 @@ func editLines(text string, changes map[string]any) (string, bool) {
 		switch {
 		case found >= 0:
 			indent := lines[found].text[:len(lines[found].text)-len(strings.TrimLeft(lines[found].text, " \t"))]
-			entry.text = indent + entry.text
+			// What the user wrote beside the value stays beside the new one.
+			entry.text = indent + entry.text + trailingComment(lines[found].text)
 			lines[found] = entry
 		default:
 			lines = insertKey(lines, entry)
@@ -347,6 +367,57 @@ func editLines(text string, changes map[string]any) (string, bool) {
 		b.WriteByte('\n')
 	}
 	return b.String(), true
+}
+
+// trailingComment is the comment after a key line's value, with the space before it; "" when
+// there is none. A # inside a quoted string is not a comment.
+func trailingComment(line string) string {
+	quote := byte(0)
+	for i := 0; i < len(line); i++ {
+		switch c := line[i]; {
+		case quote == '"' && c == '\\':
+			i++
+		case quote != 0:
+			if c == quote {
+				quote = 0
+			}
+		case c == '"' || c == '\'':
+			quote = c
+		case c == '#':
+			start := len(strings.TrimRight(line[:i], " \t"))
+			return line[start:]
+		}
+	}
+	return ""
+}
+
+// dropEmptyTable removes the header of a table whose last key was just removed, with the blank
+// line before it, so an unpinned model or a price put back leaves no empty [table] behind. A
+// table that still holds a comment, or has tables under it, stays.
+func dropEmptyTable(lines []tomlLine, table string) []tomlLine {
+	head := -1
+	for i, l := range lines {
+		switch {
+		case l.array:
+		case l.head && l.table == table:
+			head = i
+		case l.table == table && strings.TrimSpace(l.text) != "":
+			return lines // a key or a comment is left in it
+		case l.head && strings.HasPrefix(l.table, table+"."):
+			return lines
+		}
+	}
+	if head < 0 || table == "" {
+		return lines
+	}
+	end := head + 1
+	for end < len(lines) && !lines[end].head && strings.TrimSpace(lines[end].text) == "" {
+		end++
+	}
+	if end == len(lines) && head > 0 && strings.TrimSpace(lines[head-1].text) == "" {
+		head--
+	}
+	return append(lines[:head], lines[end:]...)
 }
 
 // insertKey puts a new key at the end of its table's keys, creating the table when needed.

@@ -8,10 +8,10 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"math"
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"slices"
 	"sort"
@@ -21,6 +21,8 @@ import (
 	"forja/internal/config"
 	"forja/internal/export"
 	"forja/internal/jobs"
+	"forja/internal/paths"
+	"forja/internal/plain"
 )
 
 // EvSettingsChanged tells clients to re-read settings and anything that depends on them.
@@ -49,13 +51,20 @@ type SettingView struct {
 	Default any    `json:"default"`
 	// Source is the layer that set the value: default, system, user, project, env or flag.
 	Source string `json:"source"`
+	// SourceDetail names where it comes from: the environment variable, or the file.
+	SourceDetail string `json:"source_detail,omitempty"`
+	// Min and Max bound a number setting; Max is absent when nothing bounds it.
+	Min *float64 `json:"min,omitempty"`
+	Max *float64 `json:"max,omitempty"`
 }
 
 type SettingsView struct {
 	Settings []SettingView     `json:"settings"`
 	Files    map[string]string `json:"files"`
 	DataDir  string            `json:"data_dir"`
-	// Engine says when engine settings take effect: "restarted", "next-start" or "".
+	// Engine says what became of engine settings: "saved" (no engine runs; it reads them when it
+	// starts), "restarted" (an idle engine restarts with them now) or "pending" (a job or an
+	// install uses it; it restarts when that ends). GET says "pending" while that restart waits.
 	Engine string `json:"engine,omitempty"`
 }
 
@@ -72,6 +81,22 @@ func lookup(tree map[string]any, key string) any {
 	return cur
 }
 
+// sourceDetail is the real place a setting's value comes from: the environment variable that
+// sets it, or the file that does.
+func sourceDetail(source, key, project string) string {
+	switch source {
+	case "env":
+		return "FORJA_" + strings.ToUpper(strings.ReplaceAll(key, ".", "__"))
+	case "user":
+		return config.UserFile()
+	case "system":
+		return paths.SystemConfigFile()
+	case "project":
+		return filepath.Join(project, "forja.toml")
+	}
+	return ""
+}
+
 func (s *Server) settingsFor(project string) (*SettingsView, error) {
 	cfg, err := s.Runner.Config(project)
 	if err != nil {
@@ -81,6 +106,9 @@ func (s *Server) settingsFor(project string) (*SettingsView, error) {
 	effective := map[string]any{}
 	_ = json.Unmarshal(raw, &effective)
 	view := &SettingsView{Files: map[string]string{"user": config.UserFile()}, DataDir: s.DataDir}
+	if s.Engine != nil && s.Engine.State().RestartPending {
+		view.Engine = "pending"
+	}
 	if project != "" {
 		view.Files["project"] = filepath.Join(project, "forja.toml")
 	}
@@ -89,9 +117,12 @@ func (s *Server) settingsFor(project string) (*SettingsView, error) {
 		if src == "" {
 			src = "default"
 		}
-		view.Settings = append(view.Settings, SettingView{
-			Key: key, Value: lookup(effective, key), Default: lookup(config.Defaults(), key), Source: src,
-		})
+		sv := SettingView{Key: key, Value: lookup(effective, key), Default: lookup(config.Defaults(), key), Source: src}
+		sv.SourceDetail = sourceDetail(src, key, project)
+		if _, lo, hi, ok := s.limits(key); ok {
+			sv.Min, sv.Max = &lo, &hi
+		}
+		view.Settings = append(view.Settings, sv)
 	}
 	sort.Slice(view.Settings, func(i, j int) bool { return view.Settings[i].Key < view.Settings[j].Key })
 	return view, nil
@@ -100,30 +131,26 @@ func (s *Server) settingsFor(project string) (*SettingsView, error) {
 func (s *Server) settingsGet(w http.ResponseWriter, r *http.Request) {
 	view, err := s.settingsFor(r.URL.Query().Get("project"))
 	if err != nil {
-		problem(w, 422, err.Error())
+		problem(w, 422, plain.Err(err))
 		return
 	}
 	writeJSON(w, 200, view)
 }
 
 // coerce turns a JSON value into the setting's type; nil means "remove, use the default".
-func coerce(key string, v any) (any, error) {
+func (s *Server) coerce(key string, v any) (any, error) {
 	if v == nil {
 		return nil, nil
 	}
 	switch settingKinds[key] {
 	case "int":
-		f, ok := v.(float64)
-		if !ok || f != math.Trunc(f) || f < 0 {
-			return nil, fmt.Errorf("%s: want a whole number of 0 or more", key)
+		f, err := s.number(key, v, true)
+		if err != nil {
+			return nil, err
 		}
 		return int64(f), nil
 	case "float":
-		f, ok := v.(float64)
-		if !ok || f < 0 {
-			return nil, fmt.Errorf("%s: want a number of 0 or more", key)
-		}
-		return f, nil
+		return s.number(key, v, false)
 	case "bool":
 		b, ok := v.(bool)
 		if !ok {
@@ -153,9 +180,9 @@ func (s *Server) settingsPatch(w http.ResponseWriter, r *http.Request) {
 	changes := map[string]any{}
 	engine := false
 	for k, v := range body.Set {
-		val, err := coerce(k, v)
+		val, err := s.coerce(k, v)
 		if err != nil {
-			problem(w, 422, err.Error())
+			problem(w, 422, plain.Err(err))
 			return
 		}
 		changes[k] = val
@@ -168,20 +195,22 @@ func (s *Server) settingsPatch(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if path, ok := changes["blender.path"].(string); ok && path != "" {
-		if !filepath.IsAbs(path) {
-			problem(w, 422, "Blender's path must be a full path to its program")
+	if path, ok := changes["blender.path"].(string); ok && path == "" {
+		changes["blender.path"] = nil // empty means find it automatically
+	} else if ok {
+		if err := export.CheckBlenderPath(path); err != nil {
+			problem(w, 422, plain.Err(err))
 			return
 		}
 		if _, err := export.FindBlender(path); err != nil {
-			problem(w, 422, err.Error())
+			problem(w, 422, plain.Err(err))
 			return
 		}
 	}
 	if id, ok := changes["project.default_preset"].(string); ok {
 		all, err := s.Runner.Presets(body.Project)
 		if err != nil {
-			problem(w, 422, err.Error())
+			problem(w, 422, plain.Err(err))
 			return
 		}
 		if _, ok := all[id]; !ok {
@@ -198,36 +227,19 @@ func (s *Server) settingsPatch(w http.ResponseWriter, r *http.Request) {
 		return err
 	})
 	if err != nil {
-		problem(w, 422, err.Error())
+		problem(w, 422, plain.Err(err))
 		return
 	}
 	view, err := s.settingsFor(body.Project)
 	if err != nil {
-		problem(w, 422, err.Error())
+		problem(w, 422, plain.Err(err))
 		return
 	}
-	if engine && s.Engine != nil {
-		view.Engine = s.applyEngineSettings()
+	if engine && body.Project == "" && s.Engine != nil {
+		view.Engine = s.Engine.Apply()
 	}
 	s.Hub.Publish(EvSettingsChanged, map[string]string{"project": body.Project})
 	writeJSON(w, 200, view)
-}
-
-// applyEngineSettings restarts an idle local engine so new engine settings take effect; a
-// busy one keeps running and picks them up the next time it starts.
-func (s *Server) applyEngineSettings() string {
-	if !s.Engine.Running() {
-		return "next-start"
-	}
-	busy := s.Runner.Busy()
-	for _, t := range s.Installs.List() {
-		busy = busy || (t.Provider == jobs.LocalProvider && !t.Task.Done())
-	}
-	if busy {
-		return "next-start"
-	}
-	s.Engine.Stop() // it starts again, with the new settings, when next needed
-	return "restarted"
 }
 
 // settingsFile makes sure the user's config.toml exists and returns its path, for opening
@@ -236,13 +248,13 @@ func (s *Server) settingsFile(w http.ResponseWriter, _ *http.Request) {
 	path := config.UserFile()
 	if _, err := os.Stat(path); errors.Is(err, fs.ErrNotExist) {
 		header := "# Forja settings. The app edits the keys it shows and keeps everything else,\n" +
-			"# comments included. Every key is described in the spec, section 11.\n"
+			"# comments included. Every key is described in docs/configuration.md.\n"
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-			problem(w, 500, err.Error())
+			problem(w, 500, plain.Err(err))
 			return
 		}
 		if err := os.WriteFile(path, []byte(header), 0o644); err != nil {
-			problem(w, 500, err.Error())
+			problem(w, 500, plain.Err(err))
 			return
 		}
 	}
@@ -275,7 +287,15 @@ func (s *Server) diagnostics(w http.ResponseWriter, r *http.Request) {
 	}
 	if cfg, err := s.Runner.Config(""); err == nil {
 		section("Config files", cfg.Files)
-		section("Providers", cfg.Providers)
+		type provider struct {
+			ID, Kind, Vendor, Label string
+			Paid                    bool
+		}
+		var ps []provider
+		for _, p := range cfg.Providers {
+			ps = append(ps, provider{p.ID, p.Kind, p.Vendor, p.Label, p.Paid})
+		}
+		section("Providers (addresses and endpoints left out)", ps)
 	}
 	var rows []map[string]any
 	for _, p := range s.Providers.All() {
@@ -295,13 +315,34 @@ func (s *Server) diagnostics(w http.ResponseWriter, r *http.Request) {
 	b.WriteString("## Engine log (last 80 lines)\n")
 	b.WriteString(tail(filepath.Join(s.DataDir, "logs", "engine.log"), 80))
 	out := b.String()
-	if home, err := os.UserHomeDir(); err == nil && home != "" {
-		out = strings.ReplaceAll(out, home, "~")
-		out = strings.ReplaceAll(out, filepath.ToSlash(home), "~")
-		out = strings.ReplaceAll(out, strings.ReplaceAll(home, `\`, `\\`), "~")
-	}
+	out = maskPrivate(out)
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	_, _ = io.WriteString(w, out)
+}
+
+var (
+	address  = regexp.MustCompile(`\b\d{1,3}(?:\.\d{1,3}){3}(?::\d+)?\b|https?://[^\s"')]+`)
+	loopback = "127.0.0.1"
+)
+
+// maskPrivate hides what a bug report must not carry: the home folder (any case on Windows, where
+// paths are case-insensitive), and the addresses of other computers.
+func maskPrivate(out string) string {
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		for _, form := range []string{home, filepath.ToSlash(home), strings.ReplaceAll(home, `\`, `\\`)} {
+			if runtime.GOOS == "windows" {
+				out = regexp.MustCompile("(?i)"+regexp.QuoteMeta(form)).ReplaceAllLiteralString(out, "~")
+			} else {
+				out = strings.ReplaceAll(out, form, "~")
+			}
+		}
+	}
+	return address.ReplaceAllStringFunc(out, func(a string) string {
+		if strings.Contains(a, loopback) || strings.Contains(a, "localhost") {
+			return a
+		}
+		return "<address>"
+	})
 }
 
 func tail(path string, n int) string {

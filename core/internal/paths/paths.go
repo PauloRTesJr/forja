@@ -9,16 +9,21 @@ import (
 
 const app = "forja"
 
-// ConfigDir holds config.toml and user presets.
-func ConfigDir() string {
-	if d := os.Getenv("FORJA_CONFIG_DIR"); d != "" {
-		return d
-	}
+// DefaultConfigDir is where the config folder is when nothing moves it.
+func DefaultConfigDir() string {
 	base, err := os.UserConfigDir()
 	if err != nil {
 		base = "."
 	}
 	return filepath.Join(base, app)
+}
+
+// ConfigDir holds config.toml and user presets.
+func ConfigDir() string {
+	if d := os.Getenv("FORJA_CONFIG_DIR"); d != "" {
+		return d
+	}
+	return DefaultConfigDir()
 }
 
 // DataDir holds the library database and the object store.

@@ -15,7 +15,7 @@ func TestOnWindowsBlenderIsItsExeAndNotAScriptThatStartsIt(t *testing.T) {
 	if err := os.WriteFile(shim, []byte(`@"C:\Blender\blender.exe" %*`), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := FindBlender(shim); err == nil || !strings.Contains(err.Error(), "not blender.exe") {
+	if _, err := FindBlender(shim); err == nil || !strings.Contains(err.Error(), "is not Blender's program") {
 		t.Fatalf("a .cmd shim: %v", err)
 	}
 	for cmd, want := range map[string]string{

@@ -24,7 +24,7 @@ func (a *app) hubsCmd() *cobra.Command {
 		Use: "ls", Short: "List connected hubs",
 		RunE: func(*cobra.Command, []string) error {
 			var rows []api.ProviderRow
-			if err := a.get("/v1/providers", &rows); err != nil {
+			if err := a.get("/v1/providers?wait=1", &rows); err != nil {
 				return err
 			}
 			hubs := []api.ProviderRow{}

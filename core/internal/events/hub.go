@@ -13,9 +13,10 @@ type Event struct {
 }
 
 type Hub struct {
-	mu   sync.RWMutex
-	subs map[chan Event]struct{}
-	seq  atomic.Uint64
+	mu     sync.RWMutex
+	subs   map[chan Event]struct{}
+	closed bool
+	seq    atomic.Uint64
 }
 
 func NewHub() *Hub { return &Hub{subs: map[chan Event]struct{}{}} }
@@ -38,15 +39,31 @@ func (h *Hub) Publish(typ string, data any) {
 func (h *Hub) Subscribe() (<-chan Event, func()) {
 	ch := make(chan Event, 256)
 	h.mu.Lock()
-	h.subs[ch] = struct{}{}
+	if h.closed {
+		close(ch)
+	} else {
+		h.subs[ch] = struct{}{}
+	}
 	h.mu.Unlock()
-	var once sync.Once
 	return ch, func() {
-		once.Do(func() {
-			h.mu.Lock()
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		// Close took the channel already if it is no longer among the subscribers.
+		if _, ok := h.subs[ch]; ok {
 			delete(h.subs, ch)
-			h.mu.Unlock()
 			close(ch)
-		})
+		}
+	}
+}
+
+// Close ends every subscription, now and later: the streams that carry events to clients
+// end with it, so a core that stops does not wait for them.
+func (h *Hub) Close() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.closed = true
+	for ch := range h.subs {
+		delete(h.subs, ch)
+		close(ch)
 	}
 }

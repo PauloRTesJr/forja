@@ -19,12 +19,16 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"forja/internal/config"
 )
 
 const listeningPrefix = "FORJA_ENGINE_LISTENING "
+
+// ErrClosed answers a caller that needs the engine after the core began to stop.
+var ErrClosed = errors.New("Forja is closing, so the engine was not started")
 
 type Manager struct {
 	// load reads the configuration each time the engine starts, so settings apply on restart.
@@ -34,51 +38,148 @@ type Manager struct {
 	log      *slog.Logger
 	// Started runs in its own goroutine each time the engine comes up; set before first use.
 	Started func()
+	// Exited runs in its own goroutine each time an engine that was up ends, asked to or not.
+	Exited func()
+	// Changed runs in its own goroutine whenever what State reports changes.
+	Changed func()
+	// WhenIdle runs fn only while nothing uses the engine (no job, no install), holding off
+	// whatever would start meanwhile, and says whether it ran. Without it the engine counts as idle.
+	WhenIdle func(fn func()) bool
+	// ApplyDelay is how long a burst of settings changes may go on before the engine restarts
+	// once for all of them; zero means DefaultApplyDelay.
+	ApplyDelay time.Duration
 
-	mu       sync.Mutex
-	stopping bool
-	cmd      *exec.Cmd
-	group    *procGroup
-	url      string
-	token    string
-	share    Share
-	exit     chan struct{}
+	// mu guards the fields below. It is never held while an engine starts or stops: asking
+	// whether the engine runs must not wait for either.
+	mu     sync.Mutex
+	closed bool
+	// proc is the engine that came up, until it exits; pending is a start under way.
+	proc    *process
+	pending *launch
+	// failure is why the engine is not up, until it starts or is stopped on purpose.
+	failure *startError
+	// restartPending: settings changed that the running engine has not read; settle is the
+	// timer that restarts it.
+	restartPending bool
+	settle         *time.Timer
+	// pairProc is the engine the pairing code on show was given to, and pairExpires its end.
+	pairProc    *process
+	pairExpires time.Time
+}
+
+// process is one engine process.
+type process struct {
+	group *procGroup
+	url   string
+	token string
+	share Share
+	exit  chan struct{}
+	// asked is set before the core ends the process, so its exit is not reported as a crash.
+	asked atomic.Bool
+}
+
+func (p *process) alive() bool {
+	select {
+	case <-p.exit:
+		return false
+	default:
+		return true
+	}
+}
+
+// launch is one start of the engine, shared by everyone who needs the engine meanwhile.
+type launch struct {
+	done   chan struct{}
+	cancel context.CancelFunc
+	proc   *process
+	err    error
 }
 
 func New(load func() (*config.Loaded, error), storeDir, logDir string, log *slog.Logger) *Manager {
 	return &Manager{load: load, storeDir: storeDir, logPath: filepath.Join(logDir, "engine.log"), log: log}
 }
 
-// Endpoint returns the running engine's URL and token, starting it if needed.
+// Endpoint returns the running engine's URL and token, starting it if needed. Callers that
+// arrive while it starts wait for that one start and share its outcome. A start belongs to
+// the manager, not to whoever asked first: a caller that gives up only stops waiting, and the
+// engine keeps starting for the next one.
 func (m *Manager) Endpoint(ctx context.Context) (string, string, error) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.running() {
-		return m.url, m.token, nil
+	if p := m.proc; p != nil && p.alive() {
+		m.mu.Unlock()
+		return p.url, p.token, nil
 	}
-	m.stopping = false
-	if err := m.start(ctx); err != nil {
+	if m.closed {
+		m.mu.Unlock()
+		return "", "", ErrClosed
+	}
+	// A caller that already gave up (a request the app dropped) must not start an engine.
+	if err := ctx.Err(); err != nil {
+		m.mu.Unlock()
 		return "", "", err
 	}
-	return m.url, m.token, nil
+	l := m.pending
+	if l == nil {
+		l = m.launch()
+	}
+	m.mu.Unlock()
+	select {
+	case <-l.done:
+		if l.err != nil {
+			return "", "", l.err
+		}
+		return l.proc.url, l.proc.token, nil
+	case <-ctx.Done():
+		return "", "", ctx.Err()
+	}
 }
 
+// launch begins a start; the caller holds mu.
+func (m *Manager) launch() *launch {
+	ctx, cancel := context.WithCancel(context.Background())
+	l := &launch{done: make(chan struct{}), cancel: cancel}
+	m.pending = l
+	m.failure = nil
+	m.changed()
+	go func() {
+		defer cancel()
+		p, err := m.start(ctx)
+		m.mu.Lock()
+		l.proc, l.err = p, err
+		m.pending = nil
+		switch {
+		case err == nil:
+			m.proc = p
+		case ctx.Err() == nil:
+			m.failure = asStartError(err)
+		}
+		m.mu.Unlock()
+		close(l.done)
+		m.changed()
+		if err != nil {
+			m.log.Warn("engine did not start", "err", err)
+			return
+		}
+		m.log.Info("engine ready", "url", p.url)
+		if m.Started != nil {
+			go m.Started()
+		}
+	}()
+	return l
+}
+
+// Running reports whether an engine is up. It never waits, not even for a start under way.
 func (m *Manager) Running() bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.running()
+	return m.proc != nil && m.proc.alive()
 }
 
-func (m *Manager) running() bool {
-	if m.cmd == nil || m.exit == nil {
-		return false
-	}
-	select {
-	case <-m.exit:
-		return false
-	default:
-		return true
-	}
+// Starting reports whether the engine is being started now.
+func (m *Manager) Starting() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.pending != nil
 }
 
 // Command resolves how to launch the engine: config, then forja-engine on PATH, then the
@@ -127,14 +228,16 @@ func findRepoEngine() string {
 	return ""
 }
 
-func (m *Manager) start(ctx context.Context) error {
+// start runs the engine and waits until it listens. ctx is the manager's own: it ends when
+// Stop or Close calls the start off.
+func (m *Manager) start(ctx context.Context) (*process, error) {
 	cfg, err := m.load()
 	if err != nil {
-		return err
+		return nil, explained("Forja could not read its settings, so the engine did not start. Fix config.toml and try again.", err)
 	}
 	base, err := Command(cfg)
 	if err != nil {
-		return err
+		return nil, explained("Forja could not find the engine program. Reinstall Forja, or set the engine's command in config.toml.", err)
 	}
 	token := randomToken()
 	args := append(append([]string{}, base[1:]...),
@@ -155,6 +258,7 @@ func (m *Manager) start(ctx context.Context) error {
 	if cfg.Engine.Share {
 		if share, tok, err := m.prepareShare(cfg.Engine.SharePort); err != nil {
 			m.log.Warn("not sharing this GPU", "err", err)
+			sharing = Share{Problem: shareProblem(err)}
 		} else {
 			token, sharing = tok, share
 			args = append(args, "--share-host", "0.0.0.0", "--share-port", strconv.FormatInt(share.Port, 10),
@@ -169,42 +273,64 @@ func (m *Manager) start(ctx context.Context) error {
 	cmd.Env = append(os.Environ(), "FORJA_ENGINE_TOKEN="+token, "PYTHONUNBUFFERED=1", "NoDefaultCurrentDirectoryInExePath=1")
 	cmd.Env = append(cmd.Env, Env(cfg)...)
 	if err := os.MkdirAll(filepath.Dir(m.logPath), 0o755); err != nil {
-		return err
+		return nil, err
 	}
 	logFile, err := os.OpenFile(m.logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
-		return err
+		return nil, err
+	}
+	// Where this start's lines begin, to quote the engine's last words if it does not come up.
+	logged := int64(0)
+	if st, err := logFile.Stat(); err == nil {
+		logged = st.Size()
 	}
 	cmd.Stderr = logFile
-	stdout, err := cmd.StdoutPipe()
+	// A pipe of the core's own, not cmd.StdoutPipe: Wait closes that one as soon as the process
+	// exits, which can lose what the engine said last, the lines that explain a failed start.
+	stdout, stdoutW, err := os.Pipe()
 	if err != nil {
-		return err
-	}
-	configureProcess(cmd)
-	if err := cmd.Start(); err != nil {
 		logFile.Close()
-		return fmt.Errorf("starting engine: %w", err)
+		return nil, err
+	}
+	cmd.Stdout = stdoutW
+	configureProcess(cmd)
+	err = cmd.Start()
+	stdoutW.Close()
+	if err != nil {
+		stdout.Close()
+		logFile.Close()
+		return nil, explained("The engine program could not be run. Check that Forja is installed completely.",
+			fmt.Errorf("could not run the engine (%s): %w", base[0], err))
 	}
 	group, err := attach(cmd)
 	if group == nil {
 		_ = cmd.Process.Kill()
 		_ = cmd.Wait()
+		stdout.Close()
 		logFile.Close()
-		return fmt.Errorf("starting engine: %w", err)
+		return nil, explained("The engine program could not be run. Check that Forja is installed completely.",
+			fmt.Errorf("could not run the engine: %w", err))
 	}
 	if err != nil {
 		m.log.Warn(err.Error())
 	}
 	m.log.Info("engine starting", "pid", cmd.Process.Pid, "cmd", strings.Join(base, " "))
 
+	p := &process{group: group, token: token, share: sharing, exit: make(chan struct{})}
 	portCh := make(chan int, 1)
+	scanned := make(chan struct{})
 	go func() {
+		defer close(scanned)
+		defer stdout.Close()
 		sc := bufio.NewScanner(stdout)
 		for sc.Scan() {
 			line := sc.Text()
-			if p, ok := strings.CutPrefix(line, listeningPrefix); ok {
-				if port, err := strconv.Atoi(strings.TrimSpace(p)); err == nil {
-					portCh <- port
+			if port, ok := strings.CutPrefix(line, listeningPrefix); ok {
+				if port, err := strconv.Atoi(strings.TrimSpace(port)); err == nil {
+					select {
+					case portCh <- port:
+					default:
+					}
 				}
 				continue
 			}
@@ -212,58 +338,141 @@ func (m *Manager) start(ctx context.Context) error {
 		}
 		_, _ = io.Copy(io.Discard, stdout)
 	}()
-	exit := make(chan struct{})
+	var ready atomic.Bool
 	go func() {
 		err := cmd.Wait()
 		group.close()
-		logFile.Close()
-		if m.stopping {
-			m.log.Info("engine stopped")
-		} else {
-			m.log.Warn("engine exited unexpectedly; it restarts on the next local job", "err", err, "log", m.logPath)
+		// The pipe ends once everything the engine started is gone too. Whatever outlives it
+		// (possible where there is no job object) must not hold the exit back.
+		drained := time.NewTimer(2 * time.Second)
+		select {
+		case <-scanned:
+		case <-drained.C:
 		}
-		close(exit)
+		drained.Stop()
+		logFile.Close()
+		switch {
+		case p.asked.Load():
+			m.log.Info("engine stopped")
+		case ready.Load():
+			m.log.Warn("engine exited unexpectedly; it restarts on the next local job", "err", err, "log", m.logPath)
+		default:
+			m.log.Warn("engine exited while starting", "err", err, "log", m.logPath)
+		}
+		close(p.exit)
+		if ready.Load() {
+			if !p.asked.Load() {
+				m.mu.Lock()
+				m.failure = explained("The engine stopped unexpectedly. It starts again when a job needs it.", fmt.Errorf("the engine exited unexpectedly: %v", err))
+				m.mu.Unlock()
+			}
+			m.changed()
+			if m.Exited != nil {
+				go m.Exited()
+			}
+		}
 	}()
 
 	timeout, _ := time.ParseDuration(cfg.Engine.StartTimeout)
 	if timeout <= 0 {
 		timeout = 60 * time.Second
 	}
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
 	select {
 	case port := <-portCh:
-		m.cmd, m.group, m.exit, m.token, m.share = cmd, group, exit, token, sharing
-		m.url = "http://127.0.0.1:" + strconv.Itoa(port)
-		m.log.Info("engine ready", "url", m.url)
-		if m.Started != nil {
-			go m.Started()
+		p.url = "http://127.0.0.1:" + strconv.Itoa(port)
+		ready.Store(true)
+		return p, nil
+	case <-p.exit:
+		if said := lastLine(m.logPath, logged); said != "" {
+			return nil, explained(exitedWhileStarting, fmt.Errorf("the engine exited while starting: %s (full log: %s)", said, m.logPath))
 		}
-		return nil
-	case <-exit:
-		return fmt.Errorf("engine exited during startup; see %s", m.logPath)
-	case <-time.After(timeout):
-		_ = cmd.Process.Kill()
-		return fmt.Errorf("engine did not start within %s; see %s", timeout, m.logPath)
+		return nil, explained(exitedWhileStarting, fmt.Errorf("the engine exited while starting; see %s", m.logPath))
+	case <-timer.C:
+		end(p)
+		return nil, explained("The engine did not start in time. Try again, or raise the engine's start timeout in config.toml.",
+			fmt.Errorf("the engine did not start within %s; see %s, or raise engine.start_timeout in config.toml", timeout, m.logPath))
 	case <-ctx.Done():
-		_ = cmd.Process.Kill()
-		return ctx.Err()
+		end(p)
+		return nil, errors.New("the engine was stopped while it was starting")
 	}
 }
 
-// Stop asks the engine to exit, then kills it after a grace period.
-func (m *Manager) Stop() {
+// end stops a process and everything it started, at once, and waits until it is gone.
+func end(p *process) {
+	p.asked.Store(true)
+	p.group.kill()
+	<-p.exit
+}
+
+// lastLine is the last thing the engine wrote to its log from offset on, shortened to fit a
+// message; "" when it wrote nothing.
+func lastLine(path string, offset int64) string {
+	f, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+	if _, err := f.Seek(offset, io.SeekStart); err != nil {
+		return ""
+	}
+	raw, _ := io.ReadAll(io.LimitReader(f, 1<<20))
+	lines := strings.Split(strings.TrimSpace(string(raw)), "\n")
+	last := strings.TrimSpace(lines[len(lines)-1])
+	if r := []rune(last); len(r) > 300 {
+		last = string(r[:300]) + "…"
+	}
+	return last
+}
+
+// Stop ends the engine, and a start under way; the next caller of Endpoint starts it again.
+// It asks first, then kills after a grace period.
+func (m *Manager) Stop() { m.stop(stopGrace) }
+
+// stopGrace is how long an engine gets to finish by itself when asked to stop; closeGrace is the
+// shorter wait when the core itself is going, which the app waits for before it ends the process.
+const (
+	stopGrace  = 10 * time.Second
+	closeGrace = 3 * time.Second
+)
+
+func (m *Manager) stop(grace time.Duration) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
-	if !m.running() {
+	m.failure = nil
+	m.mu.Unlock()
+	m.mu.Lock()
+	l := m.pending
+	m.mu.Unlock()
+	if l != nil {
+		l.cancel()
+		<-l.done
+	}
+	m.mu.Lock()
+	p := m.proc
+	m.mu.Unlock()
+	if p == nil || !p.alive() {
 		return
 	}
-	m.stopping = true
-	m.group.interrupt()
+	p.asked.Store(true)
+	p.group.interrupt()
+	timer := time.NewTimer(grace)
+	defer timer.Stop()
 	select {
-	case <-m.exit:
-	case <-time.After(10 * time.Second):
-		_ = m.cmd.Process.Kill()
-		<-m.exit
+	case <-p.exit:
+	case <-timer.C:
+		p.group.kill()
+		<-p.exit
 	}
+}
+
+// Close stops the engine for good: Endpoint starts none afterwards. The core calls it when it
+// stops, so a job still running then cannot start an engine that would outlive the core.
+func (m *Manager) Close() {
+	m.mu.Lock()
+	m.closed = true
+	m.mu.Unlock()
+	m.stop(closeGrace)
 }
 
 func randomToken() string {

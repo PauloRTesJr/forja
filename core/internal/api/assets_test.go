@@ -57,7 +57,7 @@ func TestAssetsMadeBeforeTheCoreReadStatsGetThemOnce(t *testing.T) {
 	if code := call(t, ts, "GET", "/v1/assets/old", nil, &one); code != 200 || one.Stats["triangles"] != 12.0 {
 		t.Fatalf("status %d, stats %v", code, one.Stats)
 	}
-	if code := call(t, ts, "PATCH", "/v1/assets/old", map[string]any{"stats": map[string]any{"triangles": 1}}, nil); code != 405 {
+	if code := call(t, ts, "PATCH", "/v1/assets/old", map[string]any{"stats": map[string]any{"triangles": 1}}, nil); code != 400 {
 		t.Fatalf("PATCH answered %d: the stats come from the GLB now", code)
 	}
 }

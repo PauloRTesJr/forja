@@ -6,31 +6,72 @@ package secrets
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"regexp"
 	"runtime"
 	"strings"
 	"sync"
 
 	"github.com/zalando/go-keyring"
+
+	"forja/internal/paths"
 )
 
-const service = "forja"
+const baseService = "forja"
+
+// service is the keychain entry group of this config folder. The default folder keeps "forja", so
+// the keys of an ordinary install stay where they were; a folder moved by FORJA_CONFIG_DIR gets
+// its own, so two data folders on one account do not read and overwrite each other's keys.
+func service() string {
+	dir := paths.ConfigDir()
+	def := paths.DefaultConfigDir()
+	if a, err := filepath.Abs(dir); err == nil {
+		dir = a
+	}
+	if a, err := filepath.Abs(def); err == nil {
+		def = a
+	}
+	dir, def = filepath.Clean(dir), filepath.Clean(def)
+	if dir == def || runtime.GOOS == "windows" && strings.EqualFold(dir, def) {
+		return baseService
+	}
+	key := dir
+	if runtime.GOOS == "windows" {
+		key = strings.ToLower(key)
+	}
+	sum := sha256.Sum256([]byte(key))
+	return baseService + "-" + hex.EncodeToString(sum[:4])
+}
 
 var ErrNotFound = errors.New("secret not found")
 
 // Name is what a secret may be called: short, lowercase, no spaces.
 var Name = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
 
-// Get checks FORJA_SECRET_<NAME> first (headless servers, CI), then the OS keychain.
+// Get checks FORJA_SECRET_<NAME> first (headless servers, CI), then the OS keychain. A config
+// folder with a group of its own falls back to the legacy "forja" group, which every build wrote
+// to before groups existed, and copies what it finds there into its own; the legacy entry stays,
+// since the default folder's install may use it. A secret deleted here is not fetched back.
 func Get(name string) (string, error) {
 	if v := os.Getenv(envName(name)); v != "" {
 		remember(v)
 		return v, nil
 	}
-	v, err := keyring.Get(service, name)
+	svc := service()
+	v, err := keyring.Get(svc, name)
+	if errors.Is(err, keyring.ErrNotFound) && svc != baseService {
+		if _, gone := keyring.Get(svc, tombstone(name)); gone == nil {
+			return "", ErrNotFound
+		}
+		if v, err = keyring.Get(baseService, name); err == nil {
+			_ = keyring.Set(svc, name, v)
+		}
+	}
 	if errors.Is(err, keyring.ErrNotFound) {
 		return "", ErrNotFound
 	}
@@ -40,13 +81,30 @@ func Get(name string) (string, error) {
 	return v, err
 }
 
+// tombstone is the entry that records a deletion in a group that falls back to the legacy one.
+func tombstone(name string) string { return "~deleted:" + name }
+
 func Set(name, value string) error {
 	remember(value)
-	return keyring.Set(service, name, value)
+	svc := service()
+	if err := keyring.Set(svc, name, value); err != nil {
+		return err
+	}
+	if svc != baseService {
+		_ = keyring.Delete(svc, tombstone(name))
+	}
+	return nil
 }
 
 func Delete(name string) error {
-	err := keyring.Delete(service, name)
+	svc := service()
+	err := keyring.Delete(svc, name)
+	if svc != baseService {
+		// The legacy entry is not ours to remove; remember not to fall back to it.
+		if terr := keyring.Set(svc, tombstone(name), "1"); terr != nil && (err == nil || errors.Is(err, keyring.ErrNotFound)) {
+			err = terr
+		}
+	}
 	if errors.Is(err, keyring.ErrNotFound) {
 		return nil
 	}
@@ -151,3 +209,10 @@ func (r redacting) WithGroup(name string) slog.Handler { return redacting{r.Hand
 
 // InMemory keeps secrets in this process instead of the keychain, for tests.
 func InMemory() { keyring.MockInit() }
+
+// EnvVar returns the environment variable that supplies the secret, when it is set: such a
+// secret cannot be replaced from the app.
+func EnvVar(name string) (string, bool) {
+	v := envName(name)
+	return v, os.Getenv(v) != ""
+}
