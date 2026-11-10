@@ -1,12 +1,13 @@
 import { useMutation, useQuery } from '@tanstack/react-query'
-import { useRef, type KeyboardEvent } from 'react'
 import { api, fetchModels, pinModel, type Estimate, type Model, type Preset } from '../lib/api'
-import { describeEstimate, whereItRan } from '../lib/estimate'
+import { describeEstimate } from '../lib/estimate'
 import { keys } from '../lib/events'
 import { money, stageLabel } from '../lib/format'
 import { transition, useNavigate } from '../lib/nav'
 import { useToast } from '../lib/toast'
 import { ErrorBlock, Hint, Pill, Switch } from './Controls'
+import { FinishPhaseIcon, PaintPhaseIcon, PreparePhaseIcon, RigPhaseIcon, ShapePhaseIcon } from './icons'
+import { SectionHead } from './ScreenHead'
 import { StageSetup } from './StageSetup'
 
 interface Config {
@@ -87,46 +88,23 @@ export function EstimateNote({ estimate }: { estimate?: Estimate | null }) {
   )
 }
 
-/** The presets as one choice: a radio group that Tab enters once and the arrow keys move through. */
-function Quality({ presets, value, onChange }: { presets: Preset[]; value: string; onChange: (id: string) => void }) {
-  const buttons = useRef<(HTMLButtonElement | null)[]>([])
-  const onKey = (e: KeyboardEvent, i: number): void => {
-    const last = presets.length - 1
-    const to = { ArrowRight: i + 1, ArrowDown: i + 1, ArrowLeft: i - 1, ArrowUp: i - 1, Home: 0, End: last }[e.key]
-    if (to === undefined) return
-    e.preventDefault()
-    const next = (to + presets.length) % presets.length
-    onChange(presets[next]!.id)
-    buttons.current[next]?.focus()
-  }
-  // Tab must land somewhere even while the chosen preset is not among them yet.
-  const tabbable = presets.some((p) => p.id === value) ? value : presets[0]?.id
-  return (
-    <div className="choices two" role="radiogroup" aria-labelledby="quality-label">
-      {presets.map((p, i) => (
-        <button
-          key={p.id}
-          ref={(el) => {
-            buttons.current[i] = el
-          }}
-          type="button"
-          role="radio"
-          aria-checked={p.id === value}
-          tabIndex={p.id === tabbable ? 0 : -1}
-          className={`choice ${p.ready ? '' : 'unready'}`}
-          onClick={() => onChange(p.id)}
-          onKeyDown={(e) => onKey(e, i)}
-        >
-          <strong>{p.name}</strong>
-          {!p.ready && <Pill tone="warn">Needs setup</Pill>}
-        </button>
-      ))}
-    </div>
-  )
+/** The icon of the phase a stage belongs to, so a model row is told apart by more than its name. */
+function StageIcon({ use }: { use: string }) {
+  const Icon =
+    use === 'background-removal' || use === 'framing'
+      ? PreparePhaseIcon
+      : use === 'texture' || use.startsWith('texture.') || use === 'bake'
+        ? PaintPhaseIcon
+        : use === 'rig'
+          ? RigPhaseIcon
+          : use === 'mesh.lods' || use === 'export'
+            ? FinishPhaseIcon
+            : ShapePhaseIcon
+  return <Icon size={18} />
 }
 
 /**
- * How an image becomes an asset: the quality (a preset's budget), the model of each step and
+ * How an image becomes an asset: the preset (a budget of quality), the model of each step and
  * the optional steps. A model chosen here is the same setting as "Use for this stage" on the
  * Models screen, so it holds for every later job.
  */
@@ -165,17 +143,24 @@ export function Composer({
   return (
     <div className="composer">
       <div className="composer-block">
-        <span className="composer-heading" id="quality-label">
-          Quality
-        </span>
-        <Quality presets={presets} value={preset} onChange={onPreset} />
-        <p className="composer-note">{current.description}</p>
+        <SectionHead>Preset</SectionHead>
+        <select className="input preset-select" aria-label="Preset" aria-describedby="preset-note" value={preset} onChange={(e) => onPreset(e.target.value)}>
+          {presets.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.name}
+              {p.ready ? '' : ' · Needs setup'}
+            </option>
+          ))}
+        </select>
+        <p className="composer-note" id="preset-note">
+          {!current.ready && <Pill tone="warn">Needs setup</Pill>} {current.description}
+        </p>
       </div>
 
       {rows.length > 0 && (
         <div className="composer-block">
-          <span className="composer-heading">Models</span>
-          <div className="composer-rows">
+          <SectionHead>Models</SectionHead>
+          <div className="opt-list stages">
             {rows.map((row) => {
               const by = row.by ? byStage.get(row.by) : undefined
               const pinned = pins[row.use]
@@ -186,17 +171,20 @@ export function Composer({
               const groups = groupsFor(list, row.use, stubs, pinned)
               // Nothing to choose until a model is installed; a pinned one that is gone keeps its select, to be unpinned.
               const none = !!models.data && !pinned && groups.every(([, g]) => g.every((m) => !ready(m)))
-              const where = row.skipped ? undefined : whereItRan(row)
+              const where = row.skipped || row.problem || row.missing ? undefined : row.provider_label || (row.provider && row.provider !== 'local' ? row.provider : 'This computer')
               return (
-                <div key={row.stage} className="composer-row">
+                <div key={row.stage} className="opt stage-row">
+                  <span className="opt-icon">
+                    <StageIcon use={row.use} />
+                  </span>
                   {row.skipped || row.problem ? (
-                    <span className="composer-label">{stageLabel(row.use)}</span>
+                    <span className="opt-stage">{stageLabel(row.use)}</span>
                   ) : (
-                    <label className="composer-label" htmlFor={`model-${row.stage}`}>
+                    <label className="opt-stage" htmlFor={`model-${row.stage}`}>
                       {stageLabel(row.use)}
                     </label>
                   )}
-                  <div className="composer-control">
+                  <div className="opt-main">
                     {row.skipped ? (
                       <span className="composer-skip">
                         Done by {by?.model_name || by?.model} in the {stageLabel(by?.use ?? '').toLowerCase()} step
@@ -206,7 +194,7 @@ export function Composer({
                     ) : (
                       <select
                         id={`model-${row.stage}`}
-                        className="input"
+                        className="model-pick"
                         value={chosen ? `${chosen.provider}|${chosen.id}` : ''}
                         // Until the list is here there is nothing to choose from.
                         disabled={pin.isPending || !models.data || !config.data || none}
@@ -227,7 +215,6 @@ export function Composer({
                         ))}
                       </select>
                     )}
-                    {where && <span className="composer-where">Runs on {where}</span>}
                     {row.missing && pinned && !row.problem && (
                       <span className="composer-where">
                         {chosen?.name ?? pinned} is not installed.{' '}
@@ -237,6 +224,7 @@ export function Composer({
                       </span>
                     )}
                   </div>
+                  {where && <span className="opt-where">{where}</span>}
                 </div>
               )
             })}
@@ -252,16 +240,16 @@ export function Composer({
 
       {options.length > 0 && (
         <div className="composer-block">
-          <span className="composer-heading">Options</span>
-          <div className="composer-rows">
+          <SectionHead>Options</SectionHead>
+          <div className="opt-list">
             {options.map((s) => {
               const optional = s.optional!
               const cannot = current.unavailable?.[s.id]
               const on = isOn(s.id, optional.default) && !cannot
               return (
-                <div key={s.id} className="composer-row option">
-                  <span className="composer-option">
-                    <label className="composer-label" htmlFor={`option-${s.id}`}>
+                <div key={s.id} className="opt option">
+                  <span className="opt-line">
+                    <label className="opt-name" htmlFor={`option-${s.id}`}>
                       {optional.label}
                     </label>
                     {optional.help && <Hint>{optional.help}</Hint>}

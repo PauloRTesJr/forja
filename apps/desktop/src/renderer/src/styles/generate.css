@@ -6,7 +6,7 @@
 .generate > .setup,
 .activity {
   max-width: 1180px;
-  margin-bottom: var(--s-4);
+  margin-bottom: var(--s-5);
 }
 
 /* The notice's buttons sit side by side at its right edge, not stacked like its text. */
@@ -16,11 +16,11 @@
   gap: var(--s-2);
 }
 
-/* What goes in on the left, the settings it goes through on the right. Both fit side by side
-   down to the smallest window, so the workspace never restacks. */
+/* What goes in on the left (three parts), the settings it goes through on the right (two). Both
+   fit side by side down to the smallest window, so the workspace never restacks. */
 .workspace {
   display: grid;
-  grid-template-columns: minmax(280px, 1fr) 360px;
+  grid-template-columns: minmax(0, 3fr) minmax(300px, 2fr);
   align-items: start;
   gap: var(--s-5);
   max-width: 1180px;
@@ -35,16 +35,19 @@
 .workspace-settings {
   display: flex;
   flex-direction: column;
-  gap: var(--s-4);
+  gap: 20px;
   min-width: 0;
+  container-type: inline-size;
 }
 
-/* Image target: where the images wait until "Generate". */
+/* Image target: where the images wait until "Generate". Brass brackets on the corners. */
 .target {
   position: relative;
   display: flex;
   flex-direction: column;
-  min-height: 320px;
+  gap: var(--s-4);
+  min-height: 400px;
+  padding: var(--s-4);
   border: 1px solid var(--border);
   /* Square, so the brackets sit on the corners; clipped one pixel past the padding box so they
      are not cut by the border. */
@@ -102,17 +105,31 @@
 .target-over.on {
   opacity: 1;
 }
+/* What is staged, what it makes, and the ways to change it. */
 .target-head {
   display: flex;
   align-items: center;
-  gap: var(--s-2);
-  padding: var(--s-2) var(--s-2) var(--s-2) var(--s-3);
-  border-bottom: 1px solid var(--border-soft);
+  gap: var(--s-3);
+}
+.target-summary {
+  display: flex;
+  flex: 1;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 var(--s-3);
+  min-width: 0;
 }
 .target-count {
-  flex: 1;
-  color: var(--text-2);
   font: var(--t-strong);
+}
+.target-each {
+  color: var(--text-3);
+  font: var(--t-caption);
+}
+.target-tip {
+  margin-top: auto;
+  color: var(--text-3);
+  font: var(--t-caption);
 }
 
 /* One staged image, shown large. */
@@ -120,6 +137,7 @@
   flex: 1;
   display: flex;
   flex-direction: column;
+  gap: var(--s-2);
   margin: 0;
 }
 /* The picture is laid over the well, so its own size never pushes the footer or the side
@@ -127,8 +145,12 @@
 .single-well {
   position: relative;
   flex: 1 1 auto;
-  height: min(440px, 60vh);
+  height: min(420px, 46vh);
   min-height: 160px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r-1);
+  background: var(--surface);
+  overflow: hidden;
 }
 .single-well img {
   position: absolute;
@@ -149,7 +171,6 @@
   font: var(--t-caption);
   text-align: center;
 }
-.tile-well,
 .side-well {
   position: relative;
 }
@@ -158,37 +179,38 @@
   align-items: center;
   justify-content: space-between;
   gap: var(--s-2);
-  padding: var(--s-1) var(--s-2) var(--s-1) var(--s-3);
-  border-top: 1px solid var(--border-soft);
   color: var(--text-2);
+  font: var(--t-caption);
 }
 .single-foot > span {
   flex: 1;
   min-width: 0;
 }
 
-/* Several staged images: a tile each. */
+/* Several staged images: a square well each with its name under it, and the tile that adds more. */
 .tiles {
-  flex: 1;
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   align-content: start;
-  gap: var(--s-2);
+  gap: var(--s-3);
   margin: 0;
-  padding: var(--s-3);
+  padding: 0;
   list-style: none;
-  overflow-y: auto;
 }
 .tile {
   position: relative;
   display: flex;
   flex-direction: column;
-  gap: var(--s-1);
+  gap: 6px;
   min-width: 0;
 }
 .tile-well {
+  position: relative;
+  display: grid;
+  place-items: center;
   aspect-ratio: 1;
-  border-radius: var(--r-2);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r-1);
   background: var(--surface);
   overflow: hidden;
 }
@@ -196,12 +218,12 @@
   display: block;
   width: 100%;
   height: 100%;
-  padding: var(--s-1);
+  padding: 12%;
   object-fit: contain;
 }
 .tile-well.folder {
-  display: grid;
-  place-items: center;
+  align-content: center;
+  gap: 2px;
   color: var(--text-3);
 }
 .tile-kind {
@@ -228,13 +250,45 @@
 .tile-remove:focus-visible {
   opacity: 1;
 }
+.tile-slot {
+  align-self: start;
+}
+.tile-add {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--s-2);
+  width: 100%;
+  aspect-ratio: 1;
+  padding: 0;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--r-1);
+  background: none;
+  color: var(--text-2);
+  font: 500 12px/16px var(--font);
+  cursor: pointer;
+}
+.tile-add:hover:not(:disabled) {
+  background: var(--surface);
+  color: var(--text);
+}
+.tile-add:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+@container (max-width: 300px) {
+  .tiles {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
 
 /* The other views of a single image, for a shape model that reads them. */
 .sides {
   display: flex;
   flex-direction: column;
   gap: var(--s-2);
-  padding: var(--s-3);
+  padding-top: var(--s-3);
   border-top: 1px solid var(--border-soft);
 }
 .sides-head {
@@ -382,59 +436,32 @@
   margin-top: 1px;
 }
 
-/* Settings: quality, then a row per model, the optional steps as switches. */
+/* Settings: the preset, a row per model, the optional steps as switches. Each is a labelled
+   section of hairline-separated rows. */
 .composer {
   display: flex;
   flex-direction: column;
-  gap: var(--s-4);
+  gap: 20px;
 }
 .composer-block {
   display: flex;
   flex-direction: column;
   gap: var(--s-2);
 }
-.composer-heading {
-  color: var(--text-2);
-  font: var(--t-section);
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-.composer-label {
-  color: var(--text);
-  font: var(--t-body);
+.composer .section-head {
+  margin: 0 0 var(--s-1);
 }
 .composer-note {
   color: var(--text-2);
   font: var(--t-caption);
 }
-.composer-rows {
-  display: flex;
-  flex-direction: column;
-  border-bottom: 1px solid var(--border-soft);
+.composer-note .pill {
+  margin-right: var(--s-1);
+  vertical-align: 1px;
 }
-.composer-row {
-  display: grid;
-  grid-template-columns: 96px minmax(0, 1fr);
-  align-items: center;
-  gap: var(--s-1) var(--s-3);
-  min-height: 44px;
-  padding: 6px 0;
-  border-top: 1px solid var(--border-soft);
-}
-.composer-row.option {
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  justify-content: center;
-}
-.composer-control {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-}
-.composer-control .input {
+.preset-select {
   width: 100%;
+  font-weight: 500;
 }
 .composer-where {
   color: var(--text-3);
@@ -444,52 +471,178 @@
   color: var(--text-2);
   font: var(--t-caption);
 }
-/* The option's name and hint on the left, its switch on the right. */
-.composer-option {
+
+/* A row of settings: hairlines between, none after the last. */
+.opt-list {
+  display: flex;
+  flex-direction: column;
+}
+.opt {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-height: 36px;
+  border-bottom: 1px solid var(--border-soft);
+}
+.opt:last-child {
+  border-bottom: 0;
+}
+.option {
+  gap: 2px;
+  padding-bottom: 2px;
+}
+.option > :last-child:not(.opt-line) {
+  margin-bottom: var(--s-1);
+}
+.opt-line {
   display: flex;
   align-items: center;
   gap: var(--s-2);
+  min-height: 36px;
 }
-.composer-option label {
+.opt-name {
+  color: var(--text);
+  font: var(--t-body);
   cursor: pointer;
 }
-.composer-option .switch {
+.opt-line .switch {
   margin-left: auto;
 }
-/* A preset that cannot run yet says so in its own card. */
-.choice .pill {
-  align-self: flex-start;
-}
 
-/* The estimate, then the one button the screen exists for. */
-.generate-foot {
-  display: flex;
-  flex-direction: column;
-  gap: var(--s-3);
+/* A model row: the stage's icon and name, the model (a real select that reads as text until it
+   is hovered or focused), and where it runs. */
+/* The rows share one set of columns, so the names line up whatever the longest stage is called. */
+.opt-list.stages {
+  display: grid;
+  grid-template-columns: 18px minmax(64px, max-content) minmax(0, 1fr) auto;
+  column-gap: var(--s-3);
 }
-.generate-foot .btn {
-  width: 100%;
-  justify-content: center;
+.stage-row {
+  display: grid;
+  grid-template-columns: subgrid;
+  grid-column: 1 / -1;
+  align-items: center;
+  padding: 4px 0;
 }
-.generate-why {
-  margin-top: calc(var(--s-1) - var(--s-3));
+.opt-icon {
+  display: grid;
   color: var(--text-3);
-  font: var(--t-caption);
-  text-align: center;
 }
-.estimate {
+.opt-stage {
+  color: var(--text-2);
+  font: var(--t-body);
+}
+.opt-main {
   display: flex;
   flex-direction: column;
   gap: 2px;
+  min-width: 0;
+}
+.opt-where {
+  color: var(--text-3);
+  font: var(--t-caption);
+  white-space: nowrap;
+}
+.model-pick {
+  width: calc(100% + 6px);
+  min-width: 0;
+  height: var(--h-sm);
+  margin-left: -6px;
+  padding: 0 22px 0 6px;
+  border: 1px solid transparent;
+  border-radius: var(--r-1);
+  appearance: none;
+  background: transparent no-repeat right 7px center;
+  color: var(--text);
+  font: 500 13px/20px var(--font);
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+.model-pick:hover:not(:disabled),
+.model-pick:focus-visible {
+  border-color: var(--border);
+  background-color: var(--bg-deep);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23b3ab9f' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+}
+.model-pick:disabled {
+  color: var(--text-3);
+  cursor: default;
+}
+/* In a narrow column, where it runs goes under the model. */
+@container (max-width: 340px) {
+  .opt-list.stages {
+    grid-template-columns: 18px minmax(64px, max-content) minmax(0, 1fr);
+  }
+  .opt-where {
+    grid-column: 3;
+    margin-top: -2px;
+  }
+}
+
+/* The switch of an option: the mockup's 30 by 16 square, an ember thumb when on. */
+.opt .switch-track {
+  box-sizing: border-box;
+  width: 30px;
+  border: 1px solid var(--border);
+}
+.opt .switch-track::after {
+  width: 10px;
+  height: 10px;
+  background: var(--text-3);
+}
+.opt .switch:hover:not(:disabled) .switch-track {
+  border-color: var(--border-strong);
+  background: var(--surface-3);
+}
+.opt .switch[aria-checked='true'] .switch-track,
+.opt .switch[aria-checked='true']:hover:not(:disabled) .switch-track {
+  border-color: color-mix(in oklab, var(--accent) 50%, transparent);
+  background: var(--accent-soft);
+}
+.opt .switch[aria-checked='true'] .switch-track::after {
+  background: var(--accent);
+  transform: translateX(14px);
+}
+
+/* The estimate on the left, the one button the screen exists for on the right. */
+.generate-foot {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+.generate-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-3) var(--s-4);
+  padding-top: var(--s-1);
+}
+.generate-row .btn.primary {
+  height: 38px;
+  margin-left: auto;
+  padding: 0 20px;
+  clip-path: polygon(9px 0, 100% 0, 100% calc(100% - 9px), calc(100% - 9px) 100%, 0 100%, 0 9px);
+}
+.generate-why {
+  color: var(--text-3);
+  font: var(--t-caption);
+  text-align: right;
+}
+.estimate {
+  display: flex;
+  flex: 1 1 140px;
+  flex-direction: column;
+  gap: 2px;
   color: var(--text-2);
+  font: var(--t-caption);
   animation: fade-in var(--dur-2) var(--ease-out) both;
 }
 .estimate.skeleton {
-  height: 20px;
+  height: 16px;
 }
 .estimate strong {
-  color: var(--text);
-  font: var(--t-strong);
+  color: inherit;
+  font-weight: 500;
 }
 .estimate .error {
   margin-top: var(--s-2);
@@ -506,29 +659,62 @@
   padding: var(--s-3) 0 var(--s-1);
 }
 
-/* The jobs started here: one compact row each, a sheet's check opening under its row. */
+/* The jobs started here, as the mockup's card: a well with the image, its name and state, the
+   track of its stages. A sheet's check opens under its row. */
+.activity {
+  container-type: inline-size;
+}
 .activity-row {
   display: grid;
-  grid-template-columns: 32px minmax(0, 1fr) auto;
+  grid-template-columns: 48px minmax(0, 1fr) minmax(0, 2fr) auto;
+  grid-template-areas: 'thumb text track actions';
   align-items: center;
-  gap: var(--s-3);
-  min-height: 48px;
-  padding: var(--s-2) var(--s-3);
+  gap: var(--s-4);
+  padding: var(--s-3) var(--s-4);
 }
-.activity-row:has(.bar) {
-  grid-template-columns: 32px minmax(0, 1fr) minmax(64px, 160px) auto;
+.activity-row > .thumb {
+  grid-area: thumb;
+  border: 1px solid var(--border-soft);
+  background: var(--surface);
 }
-.activity-row .thumb {
-  width: 32px;
-  height: 32px;
-  border-radius: var(--r-1);
+.activity-row > .activity-text {
+  grid-area: text;
+}
+/* A row with no track (a question, a failure, a finished job) gives its room to the text. */
+.activity-row:not(:has(> :is(.track, .activity-bar))) {
+  grid-template-columns: 48px minmax(0, 1fr) auto;
+  grid-template-areas: 'thumb text actions';
+}
+.activity-row > :is(.track, .activity-bar) {
+  grid-area: track;
+  min-width: 0;
+}
+.activity-row > .activity-actions {
+  grid-area: actions;
+}
+/* No room beside the text: the track takes a line of its own under it. */
+@container (max-width: 700px) {
+  .activity-row {
+    grid-template-columns: 48px minmax(0, 1fr) auto;
+    grid-template-areas:
+      'thumb text actions'
+      'track track track';
+    row-gap: var(--s-3);
+  }
 }
 .activity-text {
   display: flex;
   flex-direction: column;
+  gap: 2px;
   min-width: 0;
 }
-.activity-text strong {
+.activity-name {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  min-width: 0;
+}
+.activity-name strong {
   font: var(--t-strong);
 }
 .activity-status {
@@ -537,6 +723,7 @@
   gap: 6px;
   color: var(--text-2);
   font: var(--t-caption);
+  font-variant-numeric: tabular-nums;
 }
 .activity-status > span {
   min-width: 0;
@@ -550,19 +737,16 @@
   color: var(--bad-hi);
   user-select: text;
 }
-.activity-item.done .activity-status {
-  color: var(--ok);
-}
 .activity-actions {
   display: flex;
   align-items: center;
   gap: var(--s-1);
 }
 .activity-item > .sheet-card {
-  padding: 0 var(--s-3) var(--s-3) calc(var(--s-3) + 32px + var(--s-3));
+  padding: 0 var(--s-4) var(--s-4) calc(var(--s-4) + 48px + var(--s-4));
 }
 .activity-more {
-  padding: var(--s-2) var(--s-3);
+  padding: var(--s-2) var(--s-4);
   color: var(--text-2);
   font: var(--t-caption);
 }

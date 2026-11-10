@@ -121,9 +121,10 @@ describe('generateLabel', () => {
 
   it('says what pressing it will start', () => {
     expect(generateLabel(draft([]))).toBe('Forge')
-    expect(generateLabel(draft([file('a.png')]))).toBe('Forge')
+    expect(generateLabel(draft([file('a.png')]))).toBe('Forge 1 asset')
     expect(generateLabel(draft([file('a.png')], { back: file('b.png'), left: file('l.png') }))).toBe('Forge from 3 views')
-    expect(generateLabel(draft([file('a.png'), file('b.png')], { back: file('k.png') }))).toBe('Forge 2 images')
+    expect(generateLabel(draft([file('a.png'), file('b.png')], { back: file('k.png') }))).toBe('Forge 2 assets')
+    expect(generateLabel(draft([file('a.png'), file('b.png'), file('c.png')]))).toBe('Forge 3 assets')
   })
 })
 

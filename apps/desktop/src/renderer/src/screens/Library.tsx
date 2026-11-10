@@ -409,7 +409,7 @@ export function Library() {
       </div>
       <div className="selection-bar" data-open={selecting} inert={!selecting} role="toolbar" aria-label="Selected assets">
         <span className="selection-count" aria-live="polite">
-          {chosen.length} selected{hidden > 0 && <span className="dim"> · {hidden} hidden</span>}
+          <span className="mono">{chosen.length}</span> selected{hidden > 0 && <span className="dim"> · <span className="mono">{hidden}</span> hidden</span>}
         </span>
         {chosen.length < list.length && (
           <button className="btn ghost sm" onClick={() => libraryView.set({ selected: new Set(list.map((a) => a.id)) })}>
@@ -478,7 +478,6 @@ interface CardProps {
 function AssetCard({ asset, caption, selected, leaving, tabStop, onOpen, onToggle, onFocusCard, onPress, onDragOut }: CardProps) {
   const tris = asset.stats?.triangles
   const error = asset.thumbnail ? undefined : thumbnailError(asset)
-  const line = typeof tris === 'number' ? `${caption} · ${count(tris)} tris` : caption
   return (
     <div className={`card ${selected ? 'selected' : ''} ${leaving ? 'leaving' : ''}`} data-id={asset.id}>
       <button
@@ -498,7 +497,7 @@ function AssetCard({ asset, caption, selected, leaving, tabStop, onOpen, onToggl
           else onOpen(asset.id)
         }}
       >
-        <div className="card-img">
+        <div className="card-img well">
           {asset.thumbnail ? (
             <img src={artifactURL(asset.thumbnail, 'image/webp')} alt="" decoding="async" draggable={false} />
           ) : error ? (
@@ -513,7 +512,15 @@ function AssetCard({ asset, caption, selected, leaving, tabStop, onOpen, onToggl
         </div>
         <div className="card-body">
           <strong>{asset.name}</strong>
-          <span className="dim">{line}</span>
+          <span className="dim">
+            {caption}
+            {typeof tris === 'number' && (
+              <>
+                {' · '}
+                <span className="mono">{count(tris)}</span> tris
+              </>
+            )}
+          </span>
         </div>
       </button>
       <button

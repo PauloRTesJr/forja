@@ -48,6 +48,7 @@ export function ImageTarget({
   const n = images.length
   const empty = n === 0 && reading === 0
   const only = n === 1 && reading === 0 && !images[0]!.folder ? images[0] : undefined
+  const folders = images.some((s) => s.folder)
   return (
     <section className={`target brackets ${empty ? 'empty' : ''} ${blocked ? 'blocked' : ''}`} aria-label="Images to generate from" aria-busy={reading > 0}>
       {empty ? (
@@ -64,13 +65,18 @@ export function ImageTarget({
       ) : (
         <>
           <header className="target-head">
-            <span className="target-count">{reading > 0 && n === 0 ? 'Reading…' : stagedCount(images)}</span>
-            <button className="btn sm" onClick={onBrowse} disabled={busy}>
-              Add images…
-            </button>
+            <div className="target-summary">
+              <strong className="target-count">{reading > 0 && n === 0 ? 'Reading…' : stagedCount(images)}</strong>
+              <span className="target-each">{only ? 'One asset is made from it.' : folders ? 'One asset is made from each image, in folders too.' : 'One asset is made from each.'}</span>
+            </div>
+            {only && (
+              <button className="btn ghost sm target-add" onClick={onBrowse} disabled={busy}>
+                Add images…
+              </button>
+            )}
             {n > 1 && (
-              <button className="btn ghost sm" onClick={onClear} disabled={busy}>
-                Clear all
+              <button className="btn ghost sm target-clear" aria-label="Clear all images" onClick={onClear} disabled={busy}>
+                Clear
               </button>
             )}
           </header>
@@ -96,13 +102,19 @@ export function ImageTarget({
               {images.map((s) => (
                 <li key={s.id} className="tile enter">
                   <div className={`tile-well ${s.folder ? 'folder' : ''}`}>
-                    {s.folder ? <FolderIcon size={24} /> : <Thumb image={s} alt="" />}
+                    {s.folder ? (
+                      <>
+                        <FolderIcon size={24} />
+                        <span className="tile-kind">Folder</span>
+                      </>
+                    ) : (
+                      <Thumb image={s} alt="" />
+                    )}
                   </div>
                   <span className="tile-name truncate" title={s.path ?? s.name}>
                     {s.name}
                   </span>
-                  {s.folder && <span className="tile-kind dim">Folder</span>}
-                  <button className="btn ghost sm icon tile-remove" aria-label={`Remove ${s.name}`} onClick={() => onRemove(s.id)} disabled={busy}>
+                  <button className="btn sm icon tile-remove" aria-label={`Remove ${s.name}`} onClick={() => onRemove(s.id)} disabled={busy}>
                     <CloseIcon />
                   </button>
                 </li>
@@ -113,6 +125,12 @@ export function ImageTarget({
                   <span className="tile-name skeleton" />
                 </li>
               ))}
+              <li className="tile-slot">
+                <button className="tile-add" onClick={onBrowse} disabled={busy} aria-label="Add images">
+                  <UploadIcon size={22} />
+                  <span>Add images</span>
+                </button>
+              </li>
             </ul>
           )}
           {only && reader && (
@@ -130,6 +148,7 @@ export function ImageTarget({
               </div>
             </div>
           )}
+          <p className="target-tip">Drop images or folders anywhere on this screen, or paste a screenshot.</p>
         </>
       )}
       <div className={`target-over ${over && !blocked ? 'on' : ''}`} aria-hidden>

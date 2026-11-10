@@ -7,7 +7,6 @@ import { ExportMenu } from '../components/ExportMenu'
 import { BackIcon, ChevronIcon, DragHandleIcon, FolderIcon, NoResultsIcon, Open3DIcon, RenameIcon } from '../components/icons'
 import { MenuItem, MoreMenu } from '../components/Menu'
 import { StageList } from '../components/StageTrack'
-import { SectionHead } from '../components/ScreenHead'
 import { api, ApiError, artifactURL, deleteAsset, fetchExportFormats, fetchPresets, openInBlender, rigOf, type Asset, type Job } from '../lib/api'
 import { assetCountKey, lodCount, nameProblem, renameAsset, statNumber, withAsset, withoutAssets } from '../lib/assets'
 import { dragOut, readyDrag } from '../lib/drag'
@@ -130,73 +129,75 @@ export function AssetDetail({ id }: { id: string }) {
     <div className="screen asset">
       <header className="asset-head">
         <BackButton onClick={back} />
-        <AssetTitle
-          name={a?.name}
-          editing={renaming}
-          saving={rename.isPending}
-          error={rename.error?.message}
-          onEdit={() => {
-            rename.reset()
-            setRenaming(true)
-          }}
-          onSave={(name) => rename.mutate(name)}
-          onCancel={() => {
-            rename.reset()
-            setRenaming(false)
-          }}
-        />
-        {rig && (
-          <Pill title={`${rig.bones} bones${rig.skeleton === 'humanoid' ? ', named for humanoid retargeting' : ''}`}>Rigged</Pill>
-        )}
-        <div className="asset-actions">
-          <ExportMenu assets={a ? [a] : []} primary />
-          <button
-            className="btn"
-            aria-label="Open in Blender"
-            title={blenderProblem ? `${blenderProblem} Set the Blender path in Settings.` : 'Open this asset in Blender'}
-            onClick={() => blender.mutate()}
-            disabled={!a || blender.isPending || !!blenderProblem}
-          >
-            <Open3DIcon />
-            <span className="btn-label">Open in Blender</span>
-          </button>
-          {a && (
-            <button
-              className="btn drag-out"
-              draggable
-              aria-label="Drag to another app"
-              title="Drag this asset into Blender, Unity or a folder. Without a mouse, use Export."
-              onPointerEnter={() => readyDrag(a)}
-              onPointerDown={() => readyDrag(a)}
-              onDragStart={(e) => dragOut(e, [a.id])}
-              onClick={() => toast('Drag this button into Blender, Unity or a folder. Export saves a file without dragging.')}
-            >
-              <DragHandleIcon />
-              <span className="btn-label">Drag to app</span>
-            </button>
+        <div className="asset-bar">
+          <AssetTitle
+            name={a?.name}
+            editing={renaming}
+            saving={rename.isPending}
+            error={rename.error?.message}
+            onEdit={() => {
+              rename.reset()
+              setRenaming(true)
+            }}
+            onSave={(name) => rename.mutate(name)}
+            onCancel={() => {
+              rename.reset()
+              setRenaming(false)
+            }}
+          />
+          {rig && (
+            <Pill title={`${rig.bones} bones${rig.skeleton === 'humanoid' ? ', named for humanoid retargeting' : ''}`}>Rigged</Pill>
           )}
-          <MoreMenu label="More actions">
-            {(menu) => (
-              <>
-                <MenuItem menu={menu} onClick={() => setRenaming(true)} disabled={!a}>
-                  Rename
-                </MenuItem>
-                <MenuItem menu={menu} disabled={!exported} onClick={() => exported && void window.forja.showItem(exported.file)}>
-                  Show last export in folder
-                </MenuItem>
-                <MenuItem
-                  menu={menu}
-                  disabled={!a}
-                  onClick={() => a && remakeThumbnail(a, (u) => qc.setQueriesData({ queryKey: ['assets'] }, (cache) => withAsset(cache, u)))}
-                >
-                  Refresh thumbnail
-                </MenuItem>
-                <MenuItem menu={menu} danger disabled={!a || remove.isPending} onClick={() => setConfirming(true)}>
-                  Delete
-                </MenuItem>
-              </>
+          <div className="asset-actions">
+            <button
+              className="btn"
+              aria-label="Open in Blender"
+              title={blenderProblem ? `${blenderProblem} Set the Blender path in Settings.` : 'Open this asset in Blender'}
+              onClick={() => blender.mutate()}
+              disabled={!a || blender.isPending || !!blenderProblem}
+            >
+              <Open3DIcon />
+              <span className="btn-label">Open in Blender</span>
+            </button>
+            {a && (
+              <button
+                className="btn drag-out"
+                draggable
+                aria-label="Drag to another app"
+                title="Drag this asset into Blender, Unity or a folder. Without a mouse, use Export."
+                onPointerEnter={() => readyDrag(a)}
+                onPointerDown={() => readyDrag(a)}
+                onDragStart={(e) => dragOut(e, [a.id])}
+                onClick={() => toast('Drag this button into Blender, Unity or a folder. Export saves a file without dragging.')}
+              >
+                <DragHandleIcon />
+                <span className="btn-label">Drag to app</span>
+              </button>
             )}
-          </MoreMenu>
+            <MoreMenu label="More actions">
+              {(menu) => (
+                <>
+                  <MenuItem menu={menu} onClick={() => setRenaming(true)} disabled={!a}>
+                    Rename
+                  </MenuItem>
+                  <MenuItem menu={menu} disabled={!exported} onClick={() => exported && void window.forja.showItem(exported.file)}>
+                    Show last export in folder
+                  </MenuItem>
+                  <MenuItem
+                    menu={menu}
+                    disabled={!a}
+                    onClick={() => a && remakeThumbnail(a, (u) => qc.setQueriesData({ queryKey: ['assets'] }, (cache) => withAsset(cache, u)))}
+                  >
+                    Refresh thumbnail
+                  </MenuItem>
+                  <MenuItem menu={menu} danger disabled={!a || remove.isPending} onClick={() => setConfirming(true)}>
+                    Delete
+                  </MenuItem>
+                </>
+              )}
+            </MoreMenu>
+            <ExportMenu assets={a ? [a] : []} primary />
+          </div>
         </div>
       </header>
       {confirming && a && (
@@ -215,20 +216,23 @@ export function AssetDetail({ id }: { id: string }) {
             url={a ? artifactURL(a.glb) : undefined}
             name={a?.name}
             rigged={!!rig}
+            expectedLods={lods}
             placeholder={a?.thumbnail ? artifactURL(a.thumbnail, 'image/webp') : undefined}
             onStats={setStats}
           />
         </div>
         <aside className="inspector" aria-label="Properties">
           <div className="stat-bar" aria-hidden />
-          {/* The name and preset are on the page already (the heading, Details); this is the stat block's title. */}
+          {/* The name is the page's heading already; this is the stat block's title, so it is hidden from a screen reader. */}
           <div className="stat-head" aria-hidden>
             {a ? (
               <>
                 <p className="stat-name" title={a.name}>
                   {a.name}
                 </p>
-                <p className="stat-sub">{[presetName(a.preset, presets.data), rig && 'Rigged'].filter(Boolean).join(' · ')}</p>
+                <p className="stat-sub">
+                  {rig ? 'Rigged character' : 'Static prop'}, made with {presetName(a.preset, presets.data)}
+                </p>
               </>
             ) : (
               <span className="skeleton stat-head-wait" />
@@ -246,19 +250,9 @@ export function AssetDetail({ id }: { id: string }) {
               <Stat label="Textures" value={texLine} title={stats?.maps.map((m) => `${m.name} ${m.size}`).join('\n')} wait />
             </dl>
           </section>
-          {rig && (
-            <section>
-              <div className="stat-taper" aria-hidden />
-              <SectionHead>Rig</SectionHead>
-              <dl className="kv asset-kv">
-                <Row label="Bones" value={count(rig.bones)} />
-                <Row label="Skeleton" value={skeletonName(rig)} />
-              </dl>
-            </section>
-          )}
+          <div className="stat-taper" aria-hidden />
           <section>
-            <div className="stat-taper" aria-hidden />
-            <SectionHead>Details</SectionHead>
+            <h2 className="sr-only">Details</h2>
             <dl className="kv asset-kv">
               <Row label="Preset" value={a ? presetName(a.preset, presets.data) : undefined} wait={!a} />
               <Row label="Created" value={a ? relative(a.created_at) : undefined} title={a ? new Date(a.created_at).toLocaleString() : undefined} wait={!a} />
@@ -278,20 +272,34 @@ export function AssetDetail({ id }: { id: string }) {
                   )
                 }
               />
-              {a && (
-                <Row
-                  label="Source image"
-                  value={
-                    <span className="thumb">
-                      <img src={artifactURL(a.input)} alt="" onError={(e) => (e.currentTarget.style.visibility = 'hidden')} />
-                    </span>
-                  }
-                />
-              )}
+              <Row
+                label="Rig"
+                wait={!a}
+                value={a && (rig ? `${count(rig.bones)} bones · ${skeletonName(rig)}` : 'None')}
+                title={rig ? `${rig.bones} bones` : undefined}
+              />
             </dl>
           </section>
+          {a && (
+            <>
+              <div className="stat-taper" aria-hidden />
+              <section className="asset-source" aria-label="Source image">
+                <span className="well asset-source-well">
+                  <img src={artifactURL(a.input)} alt="" onError={(e) => (e.currentTarget.style.visibility = 'hidden')} />
+                </span>
+                <div className="asset-source-text">
+                  <span className="muted">Source image</span>
+                  {job.data?.name && (
+                    <span className="mono truncate" title={job.data.name}>
+                      {job.data.name}
+                    </span>
+                  )}
+                </div>
+              </section>
+            </>
+          )}
           {job.data && job.data.stages.length > 0 && (
-            <section>
+            <section className="asset-stages">
               <div className="stat-taper" aria-hidden />
               <button className="disclosure" aria-expanded={stagesOpen} onClick={() => setStagesOpen(!stagesOpen)}>
                 <ChevronIcon size={14} />
@@ -312,7 +320,7 @@ const fmt = (n: number | undefined, f: (n: number) => string = count): string | 
 function BackButton({ onClick }: { onClick: () => void }) {
   return (
     <button className="back" aria-label="Back to Library" onClick={onClick}>
-      <BackIcon />
+      <BackIcon size={14} />
       Library
     </button>
   )

@@ -3,7 +3,7 @@ import { memo, useCallback, useEffect, useId, useMemo, useRef, useState, type CS
 import { ErrorBlock, Pill, StatusPill } from '../components/Controls'
 import { Dialog, DialogActions } from '../components/Dialog'
 import { Empty } from '../components/Empty'
-import { AlertIcon, ChevronIcon, CloseIcon, ImageIcon, NoJobsIcon } from '../components/icons'
+import { ChevronIcon, CloseIcon, FailedIcon, ImageIcon, NoJobsIcon } from '../components/icons'
 import { ScreenHead, SectionHead } from '../components/ScreenHead'
 import { SheetCard } from '../components/SheetCard'
 import { StageList, StageTrack } from '../components/StageTrack'
@@ -197,10 +197,10 @@ export function Queue() {
   )
 
   return (
-    <div className="screen capped">
+    <div className="screen capped queue">
       <ScreenHead title="Queue" sub={(offline && core && connectionLabel(core)) || queueSummary(s)}>
         {active.length > 1 && (
-          <button className="btn ghost danger" disabled={offline} onClick={() => setConfirm({ kind: 'cancel-all', ids: active.map((j) => j.id) })}>
+          <button className="btn ghost" disabled={offline} onClick={() => setConfirm({ kind: 'cancel-all', ids: active.map((j) => j.id) })}>
             Cancel all
           </button>
         )}
@@ -401,7 +401,7 @@ const JobRow = memo(function JobRow({ job, index, state, lead, place, preset, of
             {(state === 'done' || state === 'failed' || state === 'cancelled') && (
               <>
                 {' · '}
-                <span className={state === 'failed' ? 'job-stopped' : undefined}>{outcomeLine(job)}</span>
+                {outcomeLine(job)}
                 {' · '}
                 <Ago at={job.finished_at ?? job.created_at} />
               </>
@@ -460,7 +460,7 @@ const JobRow = memo(function JobRow({ job, index, state, lead, place, preset, of
       )}
       {failure && (
         <div className="job-more job-failure" role="group" aria-label="What went wrong">
-          <AlertIcon />
+          <FailedIcon size={18} />
           <div>
             <p className="selectable">{failure.summary}</p>
             {failure.detail && (

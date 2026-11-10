@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { activity, isPreparing, queuedMessage, rowProgress, rowState, rowStatus, stillTracked } from './activity'
+import { activity, isPreparing, queuedMessage, rowProgress, rowState, rowStatus, runningCaption, stillTracked } from './activity'
 import type { Job, Stage } from './api'
 
 let n = 0
@@ -142,5 +142,29 @@ describe('queuedMessage', () => {
   it('names one job and counts several', () => {
     expect(queuedMessage([{ name: 'knight' }])).toBe('knight added to the queue')
     expect(queuedMessage([{ name: 'a' }, { name: 'b' }, { name: 'c' }])).toBe('3 images added to the queue')
+  })
+})
+
+describe('rowStatus for jobs that wait or ended', () => {
+  it('adds to the pill instead of repeating it', () => {
+    expect(rowStatus({ job: job('queued'), state: 'queued' })).toBe('Waiting for its turn')
+    expect(rowStatus({ job: job('succeeded', { duration_seconds: 3.2 }), state: 'done' })).toBe('Took 3.2 s')
+    expect(rowStatus({ job: job('succeeded'), state: 'done' })).toBe('Finished')
+  })
+})
+
+describe('runningCaption', () => {
+  const running = (extra: Partial<Job> = {}): Job => job('running', { stages: [stage('background-removal', 'succeeded'), stage('shape', 'running'), stage('texture', 'queued')], ...extra })
+
+  it('names the stage, the time it has run and the time that is left', () => {
+    expect(runningCaption(running({ estimate_seconds: 300 }), 72)).toBe('Shape · 1:12 · about 4 min left')
+  })
+
+  it('leaves out what it does not know', () => {
+    expect(runningCaption(running(), undefined)).toBe('Shape')
+    expect(runningCaption(running(), 5)).toBe('Shape · 0:05')
+    // An estimate that has passed says nothing about what is left.
+    expect(runningCaption(running({ estimate_seconds: 60 }), 90)).toBe('Shape · 1:30')
+    expect(runningCaption(job('running'), 3)).toBe('Forging · 0:03')
   })
 })

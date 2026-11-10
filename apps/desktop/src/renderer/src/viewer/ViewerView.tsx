@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react'
 import { Progress } from '../components/Controls'
-import { AlertIcon, BendTestIcon, ResetViewIcon, SkeletonIcon, TurntableIcon } from '../components/icons'
+import { AlertIcon } from '../components/icons'
 import { count } from '../lib/format'
 import { Viewer, type MeshStats, type ViewMode } from './scene'
 
@@ -26,6 +26,7 @@ export function ViewerView({
   name,
   rigged = false,
   placeholder,
+  expectedLods,
   onStats,
 }: {
   url: string | undefined
@@ -33,6 +34,8 @@ export function ViewerView({
   rigged?: boolean
   /** A picture to show, blurred, while the model loads. */
   placeholder?: string
+  /** How many levels of detail the library counted in the file, to reserve the level select before it loads. */
+  expectedLods?: number
   onStats?: (s: MeshStats) => void
 }) {
   const stage = useRef<HTMLDivElement>(null)
@@ -143,130 +146,134 @@ export function ViewerView({
   }
 
   const showRig = rigged || hasBones
+  // With levels in the file the select is there before it loads, so the toolbar does not move when it does.
+  const levels = lods.length > 1 ? lods : (expectedLods ?? 0) > 1 ? [] : null
   return (
     <div className="viewer">
-      <div
-        ref={stage}
-        className="viewer-stage"
-        role="group"
-        tabIndex={0}
-        aria-label={`3D view${name ? ` of ${name}` : ''}. Arrow keys turn it, plus and minus zoom, 0 frames it.`}
-        onKeyDown={onKey}
-        onDoubleClick={() => viewer.current?.resetView()}
-      />
-      {state.kind === 'loading' && (
-        <div className="viewer-status">
-          {placeholder && <img className="viewer-placeholder" src={placeholder} alt="" />}
-          <div className="viewer-progress">
-            <Progress label="Loading the model" />
+      <div className="viewer-canvas">
+        <div
+          ref={stage}
+          className="viewer-stage"
+          role="group"
+          tabIndex={0}
+          aria-label={`3D view${name ? ` of ${name}` : ''}. Arrow keys turn it, plus and minus zoom, 0 frames it.`}
+          onKeyDown={onKey}
+          onDoubleClick={() => viewer.current?.resetView()}
+        />
+        {state.kind === 'loading' && (
+          <div className="viewer-status">
+            {placeholder && <img className="viewer-placeholder" src={placeholder} alt="" />}
+            <div className="viewer-progress">
+              <Progress label="Loading the model" />
+            </div>
           </div>
-        </div>
-      )}
-      {state.kind === 'error' && (
-        <div className="viewer-status" role="alert">
-          <AlertIcon size={20} />
-          <strong>This model could not be shown</strong>
-          <span className="selectable">{state.reason}</span>
-          <button className="btn sm" onClick={retry}>
-            Try again
-          </button>
-        </div>
-      )}
-      {lods.length > 1 && (
-        <select
-          className="input sm viewer-lod"
-          aria-label="Level of detail"
-          title="The level of detail to look at. Game engines switch to the lower ones at a distance."
-          value={lod}
-          disabled={!ready}
-          onChange={(e) => {
-            const level = Number(e.target.value)
-            setLod(level)
-            viewer.current?.setLod(level)
-          }}
-        >
-          {lods.map((tris, level) => (
-            <option key={level} value={level}>
-              LOD {level} · {count(tris)} tris
-            </option>
-          ))}
-        </select>
-      )}
-      <div className="viewer-tools" role="toolbar" aria-label="View">
-        <button
-          className="btn ghost icon sm"
-          aria-label="Turntable"
-          title="Turn the model slowly"
-          aria-pressed={spin}
-          disabled={!ready}
-          onClick={() => {
-            setSpin(!spin)
-            viewer.current?.setTurntable(!spin)
-          }}
-        >
-          <TurntableIcon />
-        </button>
-        {showRig && (
-          <>
-            <button
-              className="btn ghost icon sm"
-              aria-label="Skeleton"
-              title="Show the bones over the mesh"
-              aria-pressed={bones}
-              disabled={!ready || !hasBones}
-              onClick={() => {
-                setBones(!bones)
-                viewer.current?.setSkeleton(!bones)
-              }}
-            >
-              <SkeletonIcon />
-            </button>
-            <button
-              className="btn ghost icon sm"
-              aria-label="Bend test"
-              title="Flex the limbs to check how the skin follows the bones"
-              aria-pressed={bending}
-              disabled={!ready || !hasBones || bending}
-              onClick={() => {
-                const v = viewer.current
-                if (!v) return
-                setBending(true)
-                void v.playBend().then(() => {
-                  if (viewer.current === v) setBending(false)
-                })
-              }}
-            >
-              <BendTestIcon />
-            </button>
-          </>
         )}
-        <button
-          className="btn ghost icon sm"
-          aria-label="Reset view"
-          title="Frame the model again (0)"
-          disabled={!ready}
-          onClick={() => {
-            viewer.current?.resetView()
-          }}
-        >
-          <ResetViewIcon />
-        </button>
+        {state.kind === 'error' && (
+          <div className="viewer-status" role="alert">
+            <AlertIcon size={20} />
+            <strong>This model could not be shown</strong>
+            <span className="selectable">{state.reason}</span>
+            <button className="btn sm" onClick={retry}>
+              Try again
+            </button>
+          </div>
+        )}
       </div>
-      <div className="viewer-modes" role="toolbar" aria-label="Shading">
-        {modes.map((m) => (
-          <button
-            key={m.id}
-            title={m.title}
-            aria-pressed={mode === m.id}
-            disabled={!ready}
-            onClick={() => {
-              setMode(m.id)
-              viewer.current?.setMode(m.id)
+      <div className="viewer-bar">
+        {levels && (
+          <select
+            className="input sm viewer-lod"
+            aria-label="Level of detail"
+            title="The level of detail to look at. Game engines switch to the lower ones at a distance."
+            value={lod}
+            disabled={!ready || levels.length === 0}
+            onChange={(e) => {
+              const level = Number(e.target.value)
+              setLod(level)
+              viewer.current?.setLod(level)
             }}
           >
-            {m.label}
+            {levels.length === 0 && <option value={0}>LOD 0</option>}
+            {levels.map((tris, level) => (
+              <option key={level} value={level}>
+                LOD {level} · {count(tris)} tris
+              </option>
+            ))}
+          </select>
+        )}
+        <div className="viewer-group" role="toolbar" aria-label="Shading">
+          {modes.map((m) => (
+            <button
+              key={m.id}
+              className="btn sm"
+              title={m.title}
+              aria-pressed={mode === m.id}
+              disabled={!ready}
+              onClick={() => {
+                setMode(m.id)
+                viewer.current?.setMode(m.id)
+              }}
+            >
+              {m.label}
+            </button>
+          ))}
+        </div>
+        <div className="viewer-group grow" role="toolbar" aria-label="View">
+          <button
+            className="btn sm"
+            title="Turn the model slowly"
+            aria-pressed={spin}
+            disabled={!ready}
+            onClick={() => {
+              setSpin(!spin)
+              viewer.current?.setTurntable(!spin)
+            }}
+          >
+            Turntable
           </button>
-        ))}
+          {showRig && (
+            <>
+              <button
+                className="btn sm"
+                title="Show the bones over the mesh"
+                aria-pressed={bones}
+                disabled={!ready || !hasBones}
+                onClick={() => {
+                  setBones(!bones)
+                  viewer.current?.setSkeleton(!bones)
+                }}
+              >
+                Skeleton
+              </button>
+              <button
+                className="btn sm"
+                title="Flex the limbs to check how the skin follows the bones"
+                aria-pressed={bending}
+                disabled={!ready || !hasBones || bending}
+                onClick={() => {
+                  const v = viewer.current
+                  if (!v) return
+                  setBending(true)
+                  void v.playBend().then(() => {
+                    if (viewer.current === v) setBending(false)
+                  })
+                }}
+              >
+                Bend test
+              </button>
+            </>
+          )}
+          <button
+            className="btn ghost sm viewer-reset"
+            title="Frame the model again (0)"
+            disabled={!ready}
+            onClick={() => {
+              viewer.current?.resetView()
+            }}
+          >
+            Reset view
+          </button>
+        </div>
       </div>
     </div>
   )

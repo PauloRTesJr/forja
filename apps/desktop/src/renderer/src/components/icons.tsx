@@ -151,6 +151,8 @@ export const AlertIcon = icon(
     <Solid d="M12 16l1 1-1 1-1-1z" />
   </>,
 )
+/** A job that stopped: a diamond struck through. */
+export const FailedIcon = icon(<path d="M12 2.5l9.5 9.5-9.5 9.5L2.5 12zM9.5 9.5l5 5M14.5 9.5l-5 5" />)
 export const CheckIcon = icon(<path d="M4.5 12.5l5 5L19.5 7" />)
 /** A value set somewhere the app cannot change. */
 export const LockedIcon = icon(<path d="M6 11h12v9.5H6zM8.5 11V7l2-3h3l2 3v4" />)

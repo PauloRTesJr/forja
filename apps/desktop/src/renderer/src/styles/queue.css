@@ -5,14 +5,27 @@
 .jobs {
   container-type: inline-size;
 }
+/* The page's own rhythm: 24 between sections, 10 from a heading to its panel, and the title
+   sharing its line with the actions. */
+.screen.queue .screen-head {
+  align-items: flex-end;
+}
+.screen.queue .screen-title {
+  flex: 1 1 240px;
+}
+.screen.queue .section {
+  margin-top: var(--s-5);
+}
+.screen.queue .section-head {
+  margin: 0 0 10px;
+}
 /* A row keeps one height in every state, so a job that starts, moves on or ends shifts nothing.
    What opens under it (stages, a failure's details, the views to check) opens on a click. */
 .job {
-  padding: var(--s-2) var(--s-4);
   /* Rows far from the screen cost no layout or paint; a long history stays light. The size
      held for them is a closed row's, so nothing moves when one comes into view. */
   content-visibility: auto;
-  contain-intrinsic-size: auto 48px;
+  contain-intrinsic-size: auto 68px;
 }
 /* The running row is always near the top, and taller: it is never skipped. */
 .job[data-lead] {
@@ -22,8 +35,9 @@
   display: grid;
   grid-template-columns: 48px minmax(0, 1fr) auto auto;
   align-items: center;
-  gap: var(--s-4);
-  min-height: 48px;
+  gap: var(--s-3);
+  min-height: 68px;
+  padding: 10px var(--s-3);
 }
 .job-text {
   display: flex;
@@ -45,11 +59,17 @@
   font: var(--t-caption);
   font-variant-numeric: tabular-nums;
 }
+.job-meta .num {
+  font-family: var(--mono);
+}
 .job-now {
   color: var(--text);
 }
-.job-stopped {
-  color: var(--bad-hi);
+/* The thumbnail well: a little lighter than the window, hairline-edged, the image inset. */
+.job-thumb {
+  padding: 3px;
+  border: 1px solid var(--border-soft);
+  background: color-mix(in oklab, var(--bg) 50%, var(--surface));
 }
 /* The sparks of a finished job start at the thumbnail's centre; the thumb itself clips, so they
    live beside it, inside the row (the row's content-visibility clips paint to it). */
@@ -79,7 +99,7 @@
   opacity: 1;
 }
 .job-bar {
-  width: 144px;
+  width: 180px;
 }
 .job-actions {
   /* Always the last column, with or without the small track before it. */
@@ -87,7 +107,7 @@
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: var(--s-1);
+  gap: var(--s-3);
 }
 .job-toggle svg {
   transition: transform var(--dur-2) var(--ease-out);
@@ -97,7 +117,7 @@
 }
 /* Under the row, in line with its text. */
 .job-more {
-  margin: var(--s-2) 0 var(--s-2) calc(48px + var(--s-4));
+  margin: 0 var(--s-3) var(--s-3) calc(48px + 2 * var(--s-3));
   min-width: 0;
   animation: fade-in var(--dur-3) var(--ease-out) both;
 }
@@ -108,12 +128,13 @@
 .job-failure {
   display: flex;
   align-items: flex-start;
-  gap: var(--s-2);
-  color: var(--bad-hi);
+  gap: 10px;
+  color: var(--text-2);
 }
 .job-failure > svg {
   flex: none;
-  margin-top: 2px;
+  margin-top: 1px;
+  color: var(--bad);
 }
 .job-failure > div {
   min-width: 0;
@@ -153,16 +174,19 @@
   min-height: var(--h);
   margin-top: var(--s-3);
 }
+/* A narrower list: the small track shrinks so the line of text beside it keeps its words. */
+@container (max-width: 760px) {
+  .job-bar {
+    width: 96px;
+  }
+}
 /* A narrow window: the row keeps its name and its actions, and gives up the small track. */
 @container (max-width: 620px) {
   .job-bar {
     display: none;
   }
-  .job-row {
-    gap: var(--s-3);
-  }
   .job-more {
-    margin-left: 0;
+    margin-left: var(--s-3);
   }
 }
 
@@ -170,7 +194,7 @@
    Cold iron waits (the well), ember is being worked (the heat fill), steel is finished. */
 .track {
   display: flex;
-  gap: var(--s-3);
+  gap: 10px;
   min-width: 0;
 }
 .track.compact {
@@ -181,7 +205,7 @@
   min-width: 56px;
   display: flex;
   flex-direction: column;
-  gap: var(--s-1);
+  gap: 6px;
 }
 .track.compact .track-phase {
   min-width: 0;
@@ -192,34 +216,23 @@
   justify-content: space-between;
   gap: var(--s-2);
   color: var(--text-3);
-  font: var(--t-caption);
+  font: 500 11px/16px var(--font);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
   overflow: hidden;
 }
 .track-name {
-  display: flex;
-  align-items: center;
-  gap: var(--s-1);
   min-width: 0;
-}
-.track-name > svg {
-  flex: none;
-}
-.track-name > span {
   overflow: hidden;
   text-overflow: ellipsis;
 }
 .track-tally {
-  font: 400 11px/16px var(--mono);
+  font-family: var(--mono);
 }
-.track-phase.done .track-name {
+.track-phase.done .track-head {
   color: var(--text-2);
 }
-.track-phase.running {
-  --icon-hot: var(--accent-hi);
-}
-.track-phase.running :is(.track-name, .track-tally) {
+.track-phase.running .track-head {
   color: var(--accent-hi);
 }
 .track-phase.failed .track-tally {
@@ -274,9 +287,8 @@
   background: var(--bad);
   transform: none;
 }
-/* A track that is not moving stays readable without calling for attention: a finished job's,
-   and one that waits its turn after a first step. Nothing in it is hot or moves. */
-.job:is(.succeeded, .failed, .cancelled) .seg.succeeded,
+/* A track that is not moving stays readable without calling for attention: a stopped job's,
+   and one that waits its turn after a first step, which also goes grey. Nothing in it is hot or moves. */
 .job:is([data-state='queued'], [data-state='cancelling']) .seg.succeeded {
   background: var(--text-3);
 }
@@ -291,14 +303,32 @@
   display: none;
 }
 
-/* The full stage list, expanded in place. */
-.stage-list {
+/* The full stage list, expanded in place: quiet until a stage is finished or running. */
+.table.stage-list {
+  font: var(--t-caption);
   animation: fade-in var(--dur-3) var(--ease-out) both;
+}
+.table.stage-list th {
+  padding-block: 6px;
+  letter-spacing: 0.08em;
+}
+.table.stage-list td {
+  padding-block: 6px;
+  color: var(--text-3);
+}
+.table.stage-list .succeeded td {
+  color: var(--text-2);
+}
+.table.stage-list .running td {
+  color: var(--text);
+}
+.table.stage-list td.n {
+  font-family: var(--mono);
 }
 .stage-name {
   display: flex;
   align-items: center;
-  gap: var(--s-2);
+  gap: 10px;
 }
 .stage-dot {
   flex: none;
@@ -317,26 +347,19 @@
 .stage-list .failed .stage-dot {
   background: var(--bad);
 }
-.stage-list :is(.queued, .cancelled) :is(.stage-name, .stage-time) {
-  color: var(--text-3);
-}
-.stage-list .failed .stage-time {
+.table.stage-list .failed td.stage-time {
   color: var(--bad-hi);
-}
-.stage-list .running .stage-time {
-  color: var(--accent-hi);
 }
 .stage-model {
   max-width: 280px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: var(--text-2);
 }
 .stage-note {
   display: block;
-  padding-left: 14px;
-  color: var(--text-2);
+  padding-left: 16px;
+  color: var(--text-3);
   font: var(--t-caption);
 }
 .stage-note.warn {

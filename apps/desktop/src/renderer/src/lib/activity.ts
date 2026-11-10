@@ -1,7 +1,9 @@
 // What Generate shows of the jobs it started, between "Generate" and the queue: each one being
 // prepared, asking about its views, running, done or failed. Pure, so the rules have tests.
 import type { Job } from './api'
-import { jobFraction, needsAnswer } from './jobs'
+import { stageName } from './format'
+import { currentStage, jobFraction, needsAnswer, outcomeLine, secondsLeft } from './jobs'
+import { about, stopwatch } from './time'
 
 /**
  * A job still looking for several views in its image, which may need the user in a moment.
@@ -93,11 +95,19 @@ export function rowStatus({ job, state }: ActivityRow): string {
       return job.stages.find((s) => s.status === 'failed')?.error ?? job.error ?? 'It failed without saying why.'
     case 'running':
       return `Forging · ${Math.round(jobFraction(job) * 100)}%`
+    // The pill beside the name already says "Queued" or "Done"; the line says what else is true.
     case 'queued':
-      return 'Queued'
+      return 'Waiting for its turn'
     case 'done':
-      return 'Done'
+      return outcomeLine(job)
   }
+}
+
+/** The line under a running job's name: the stage it is at, how long it has run and how long it should still take. */
+export function runningCaption(job: Job, elapsed: number | undefined): string {
+  const at = currentStage(job)
+  const left = secondsLeft(job, elapsed)
+  return [at ? stageName(at) : 'Forging', elapsed !== undefined && stopwatch(elapsed), left !== undefined && `${about(left)} left`].filter(Boolean).join(' · ')
 }
 
 /** 0..1 for a row's progress bar; undefined when there is no measure of it yet. */

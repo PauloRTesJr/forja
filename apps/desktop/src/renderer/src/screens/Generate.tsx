@@ -323,7 +323,7 @@ export function Generate() {
           )}
         </div>
 
-        <div className="workspace-settings">
+        <section className="workspace-settings" aria-label="Settings">
           {presets.isPending && <div className="skeleton" style={{ height: 320 }} />}
           {presets.error && (
             <ErrorBlock>
@@ -336,11 +336,13 @@ export function Generate() {
           {shown && <Composer presets={shown} preset={preset} onPreset={choose} isOn={isOn} onToggle={toggle} />}
           {shown && (
             <div className="generate-foot">
-              <EstimateNote estimate={blocked || estimate.isError ? null : estimate.data} />
-              <button className="btn primary lg" onClick={generate} disabled={!canGenerate || busy} aria-describedby={why ? 'generate-why' : undefined}>
-                <GenerateIcon />
-                {busy ? 'Queuing…' : generateLabel(draft)}
-              </button>
+              <div className="generate-row">
+                <EstimateNote estimate={blocked || estimate.isError ? null : estimate.data} />
+                <button className="btn primary" onClick={generate} disabled={!canGenerate || busy} aria-describedby={why ? 'generate-why' : undefined}>
+                  <GenerateIcon />
+                  {busy ? 'Queuing…' : generateLabel(draft)}
+                </button>
+              </div>
               {why && (
                 <span className="generate-why" id="generate-why">
                   {why}
@@ -348,7 +350,7 @@ export function Generate() {
               )}
             </div>
           )}
-        </div>
+        </section>
       </div>
     </div>
   )

@@ -51,6 +51,8 @@
   pointer-events: none;
 }
 .btn.primary::before {
+  /* Under the label: the button's clip-path makes its own stacking context to hold it. */
+  z-index: -1;
   background: linear-gradient(180deg, var(--accent-hi), var(--accent-top));
 }
 .btn.primary:hover:not(:active)::before {

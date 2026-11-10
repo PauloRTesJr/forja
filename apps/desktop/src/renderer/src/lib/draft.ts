@@ -119,13 +119,14 @@ export function stagedCount(images: readonly Pick<Staged, 'folder'>[]): string {
   return parts.filter(Boolean).join(' and ')
 }
 
-/** What the primary button says for what is staged. */
+/** What the primary button says for what is staged: the assets it will make, or what it takes in when that is not countable. */
 export function generateLabel(d: Pick<Draft, 'images' | 'sides'>): string {
   const n = d.images.length
   if (d.images.some((s) => s.folder)) return `Forge ${stagedCount(d.images)}`
-  if (n > 1) return `Forge ${n} images`
+  if (n === 0) return 'Forge'
+  if (n > 1) return `Forge ${n} assets`
   const views = sideViews(d).length
-  return views > 0 ? `Forge from ${views + 1} views` : 'Forge'
+  return views > 0 ? `Forge from ${views + 1} views` : 'Forge 1 asset'
 }
 
 /**
