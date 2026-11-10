@@ -46,9 +46,12 @@
   flex-direction: column;
   min-height: 320px;
   border: 1px solid var(--border);
-  border-radius: var(--r-3);
+  /* Square, so the brackets sit on the corners; clipped one pixel past the padding box so they
+     are not cut by the border. */
+  border-radius: 0;
   background: var(--bg-deep);
-  overflow: hidden;
+  overflow: clip;
+  overflow-clip-margin: 1px;
 }
 .target.empty {
   border: 1px dashed var(--border-strong);
@@ -393,6 +396,8 @@
 .composer-heading {
   color: var(--text-2);
   font: var(--t-section);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
 .composer-label {
   color: var(--text);

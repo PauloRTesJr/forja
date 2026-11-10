@@ -309,7 +309,7 @@
   bottom: 0;
   width: 40%;
   height: 2px;
-  background: var(--accent);
+  background: var(--heat);
   animation: export-sweep 1.2s var(--ease-in-out) infinite;
 }
 @keyframes export-sweep {

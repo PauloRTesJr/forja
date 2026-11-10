@@ -49,7 +49,7 @@ function createWindow(): BrowserWindow {
     show: false, // shown on ready-to-show, so the first frame is never blank
     // The page's --bg (styles/tokens.css). The app has one dark theme, whatever the OS uses, so
     // the window never flashes light before the page paints.
-    backgroundColor: '#0f1012',
+    backgroundColor: '#131110',
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     trafficLightPosition: { x: 16, y: 18 },
     // macOS ignores this for the bundle's icon; Windows gets the .ico for its hand-drawn small sizes.

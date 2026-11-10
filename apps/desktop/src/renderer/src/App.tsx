@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { lazy, Suspense, useCallback, useEffect, useRef, useState, type CSSProperties } from 'react'
-import { BrandMark, GenerateIcon, LibraryIcon, ModelsIcon, QueueIcon, SettingsIcon } from './components/icons'
+import { BrandMark, ForgingIcon, GenerateIcon, LibraryIcon, ModelsIcon, QueueIcon, SettingsIcon } from './components/icons'
 import { CoreDown } from './components/CoreDown'
 import { useInstalls } from './components/Install'
 import { ScreenBoundary } from './components/ScreenBoundary'
@@ -55,6 +55,7 @@ export function App() {
   const generating = jobs.data?.some((j) => j.status === 'running' || j.status === 'queued') ?? false
   const installs = useInstalls()
   const install = installs.data?.find((t) => t.kind === 'install' && !taskDone(t))
+  const forging = !away && (generating || !!install)
   const installPct = install?.progress?.total ? Math.round((install.progress.done / install.progress.total) * 100) : undefined
   // The name the Models screen shows, from what it already loaded; the id until then.
   const installing = install && (qc.getQueryData<Model[]>(keys.models)?.find((m) => m.id === install.target)?.name ?? install.target)
@@ -81,7 +82,7 @@ export function App() {
     <CoreContext.Provider value={core}>
     <NavContext.Provider value={navigate}>
       <div className="app" data-platform={window.forja.platform}>
-        <nav className="sidebar" aria-label="Main">
+        <nav className="sidebar" aria-label="Main" data-forging={forging ? '' : undefined}>
           <div className="brand">
             <BrandMark />
             <span className="brand-name">Forja</span>
@@ -94,7 +95,7 @@ export function App() {
                 aria-current={activeTab === screen ? 'page' : undefined}
                 onClick={() => transition(() => setRoute({ screen }))}
               >
-                <Icon />
+                <Icon size={18} />
                 <span>{label}</span>
                 {screen === 'queue' && badge.count > 0 && (
                   <span className={`badge ${generating ? 'live' : ''}`} aria-label={badge.label}>
@@ -105,13 +106,13 @@ export function App() {
             ))}
           </div>
           <div className="sidebar-foot">
-            <div className="conn" role="status">
-              <span className={`dot ${away ? (core.phase === 'starting' ? 'live' : 'bad') : generating || install ? 'live' : 'ok'}`} />
+            <div className="conn" role="status" data-lit={forging ? '' : undefined}>
+              {away ? <span className={`dot ${core.phase === 'starting' ? 'live' : 'bad'}`} /> : <ForgingIcon size={16} className="flame" />}
               <span>
                 {away
                   ? away
                   : generating
-                    ? 'Generating'
+                    ? 'Forging'
                     : install
                       ? `Installing ${installing}${installPct !== undefined ? ` · ${installPct}%` : ''}`
                       : 'Ready'}

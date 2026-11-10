@@ -114,16 +114,16 @@ describe('planSubmit', () => {
 describe('generateLabel', () => {
   it('counts a folder beside the images, truthfully', () => {
     const folder: Staged = { id: 'f', name: 'set', path: '/art/set', ref: '', folder: true }
-    expect(generateLabel(draft([folder]))).toBe('Generate 1 folder')
-    expect(generateLabel(draft([file('a.png'), file('b.png'), folder]))).toBe('Generate 2 images and 1 folder')
-    expect(generateLabel(draft([file('a.png'), folder]))).toBe('Generate 1 image and 1 folder')
+    expect(generateLabel(draft([folder]))).toBe('Forge 1 folder')
+    expect(generateLabel(draft([file('a.png'), file('b.png'), folder]))).toBe('Forge 2 images and 1 folder')
+    expect(generateLabel(draft([file('a.png'), folder]))).toBe('Forge 1 image and 1 folder')
   })
 
   it('says what pressing it will start', () => {
-    expect(generateLabel(draft([]))).toBe('Generate')
-    expect(generateLabel(draft([file('a.png')]))).toBe('Generate')
-    expect(generateLabel(draft([file('a.png')], { back: file('b.png'), left: file('l.png') }))).toBe('Generate from 3 views')
-    expect(generateLabel(draft([file('a.png'), file('b.png')], { back: file('k.png') }))).toBe('Generate 2 images')
+    expect(generateLabel(draft([]))).toBe('Forge')
+    expect(generateLabel(draft([file('a.png')]))).toBe('Forge')
+    expect(generateLabel(draft([file('a.png')], { back: file('b.png'), left: file('l.png') }))).toBe('Forge from 3 views')
+    expect(generateLabel(draft([file('a.png'), file('b.png')], { back: file('k.png') }))).toBe('Forge 2 images')
   })
 })
 

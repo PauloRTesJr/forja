@@ -27,13 +27,52 @@
 .btn > svg {
   flex: none;
 }
+/* The forged button: cut corners, struck on press. Overlays carry hover and press, so no background animates. */
 .btn.primary {
-  border-color: transparent;
-  background: var(--accent);
+  --icon-hot: var(--on-accent);
+  position: relative;
+  border: 0;
+  border-radius: 0;
+  background: linear-gradient(180deg, var(--accent-top), var(--accent-bottom));
   color: var(--on-accent);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  clip-path: polygon(8px 0, 100% 0, 100% calc(100% - 8px), calc(100% - 8px) 100%, 0 100%, 0 8px);
 }
-.btn.primary:hover {
-  background: var(--accent-hi);
+.btn.primary.lg {
+  clip-path: polygon(9px 0, 100% 0, 100% calc(100% - 9px), calc(100% - 9px) 100%, 0 100%, 0 9px);
+}
+.btn.primary::before,
+.btn.primary::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+.btn.primary::before {
+  background: linear-gradient(180deg, var(--accent-hi), var(--accent-top));
+}
+.btn.primary:hover:not(:active)::before {
+  opacity: 1;
+}
+.btn.primary::after {
+  background: rgb(255 255 255);
+  transition: opacity var(--dur-2) var(--ease-out);
+}
+.btn.primary:active {
+  transform: scale(0.97);
+}
+.btn.primary:active::after {
+  opacity: 0.25;
+  transition-duration: 0ms;
+}
+/* clip-path would cut an outline, so the ring is drawn inside. */
+.btn.primary:focus-visible {
+  outline: none;
+  box-shadow:
+    inset 0 0 0 2px var(--on-accent),
+    inset 0 0 0 4px var(--accent-hi);
 }
 .btn.ghost {
   border-color: transparent;
@@ -167,7 +206,7 @@ textarea.input {
 select.input {
   appearance: none;
   padding-right: 28px;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23a8adb5' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23b3ab9f' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
   background-repeat: no-repeat;
   background-position: right 9px center;
   text-overflow: ellipsis;
@@ -262,7 +301,7 @@ select.input:disabled {
   flex: none;
   width: 28px;
   height: 16px;
-  border-radius: 8px;
+  border-radius: 2px;
   background: var(--surface-3);
 }
 .switch-track::after {
@@ -272,7 +311,7 @@ select.input:disabled {
   left: 2px;
   width: 12px;
   height: 12px;
-  border-radius: 50%;
+  border-radius: 0;
   background: var(--text-2);
   transition: transform var(--dur-2) var(--ease-out);
 }
@@ -408,7 +447,7 @@ select.input:disabled {
   gap: 6px;
   height: 20px;
   padding: 0 var(--s-2);
-  border-radius: var(--r-1);
+  border-radius: 2px;
   background: var(--surface-2);
   color: var(--text-2);
   font: 500 11.5px/20px var(--font);
@@ -417,10 +456,11 @@ select.input:disabled {
 }
 .pill > i {
   flex: none;
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
+  width: 5px;
+  height: 5px;
+  border-radius: 0;
   background: currentColor;
+  transform: rotate(45deg);
 }
 .pill.accent {
   background: var(--accent-soft);
@@ -450,10 +490,11 @@ select.input:disabled {
 /* A state without words: the connection, a provider's health. */
 .dot {
   flex: none;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
+  width: 6px;
+  height: 6px;
+  border-radius: 0;
   background: var(--text-3);
+  transform: rotate(45deg);
 }
 .dot.ok {
   background: var(--ok);
@@ -470,7 +511,7 @@ select.input:disabled {
 .bar {
   position: relative;
   height: 4px;
-  border-radius: 2px;
+  border-radius: 1px;
   background: var(--surface-3);
   overflow: hidden;
 }
@@ -478,7 +519,7 @@ select.input:disabled {
   position: absolute;
   inset: 0;
   border-radius: inherit;
-  background: var(--accent);
+  background: var(--heat);
   transform: scaleX(var(--p, 0));
   transform-origin: left;
   transition: transform var(--dur-3) var(--ease-out);
@@ -495,7 +536,7 @@ select.input:disabled {
   place-items: center;
   width: 48px;
   height: 48px;
-  border-radius: var(--r-2);
+  border-radius: var(--r-1);
   background: var(--bg-deep);
   color: var(--text-3);
   overflow: hidden;
@@ -656,6 +697,9 @@ select.input:disabled {
   overflow-y: auto;
   outline: none;
   animation: enter-up var(--dur-3) var(--ease-out) both;
+}
+.dialog h2 {
+  font: var(--t-dialog);
 }
 .dialog.narrow {
   width: min(420px, 100%);
@@ -926,6 +970,38 @@ pre.code {
   font: var(--t-mono);
   overflow: auto;
   user-select: text;
+}
+
+/* Brass corner brackets on a hero surface (the drop target, the 3D viewer). */
+.brackets {
+  position: relative;
+}
+.brackets::before {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  z-index: 1;
+  pointer-events: none;
+  background-image: linear-gradient(var(--brass), var(--brass)), linear-gradient(var(--brass), var(--brass)), linear-gradient(var(--brass), var(--brass)), linear-gradient(var(--brass), var(--brass)), linear-gradient(var(--brass), var(--brass)), linear-gradient(var(--brass), var(--brass)), linear-gradient(var(--brass), var(--brass)), linear-gradient(var(--brass), var(--brass));
+  background-repeat: no-repeat;
+  background-size:
+    12px 2px,
+    2px 12px,
+    12px 2px,
+    2px 12px,
+    12px 2px,
+    2px 12px,
+    12px 2px,
+    2px 12px;
+  background-position:
+    top left,
+    top left,
+    top right,
+    top right,
+    bottom left,
+    bottom left,
+    bottom right,
+    bottom right;
 }
 
 /* Infinite motion stops entirely; the duration tokens already zero the one-shot transitions. */

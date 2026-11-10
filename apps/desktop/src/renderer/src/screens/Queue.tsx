@@ -257,8 +257,8 @@ export function Queue() {
         </section>
       )}
       {s.running && (
-        <section className="section" aria-label="Running">
-          <SectionHead>Running</SectionHead>
+        <section className="section" aria-label="On the anvil">
+          <SectionHead>On the anvil</SectionHead>
           <ul className="jobs group" role="list">
             {row(s.running, 0, { lead: true })}
           </ul>
@@ -356,6 +356,14 @@ const JobRow = memo(function JobRow({ job, index, state, lead, place, preset, of
   const name = useId()
   const stages = useId()
   const [details, setDetails] = useState(false)
+  // A row that reaches "done" while it is on screen throws sparks once. Derived during render, as
+  // the lead row is above; under reduced motion there is nothing to play, so it never starts.
+  const [prevState, setPrevState] = useState(state)
+  const [burst, setBurst] = useState(false)
+  if (prevState !== state) {
+    setPrevState(state)
+    if (state === 'done' && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) setBurst(true)
+  }
   const live = state === 'running' || state === 'starting' || state === 'queued' || state === 'asking' || state === 'cancelling'
   const failure = failureOf(job)
   // A stage that moved to another provider after a failure says so, even while collapsed.
@@ -369,7 +377,7 @@ const JobRow = memo(function JobRow({ job, index, state, lead, place, preset, of
   return (
     <li className={`job enter ${job.status}`} data-state={state} data-lead={lead || undefined} aria-labelledby={name} style={{ '--i': Math.min(index, 8) } as CSSProperties}>
       <div className="job-row">
-        <Thumb hash={job.input} />
+        <Thumb hash={job.input} burst={burst} onBurstEnd={() => setBurst(false)} />
         <div className="job-text">
           <div className="job-title">
             <strong id={name} className="truncate" title={job.name}>
@@ -519,18 +527,36 @@ function StatePill({ state, offline }: { state: RowState; offline: boolean }) {
 }
 
 /** The job's image at thumbnail size; an image that cannot be drawn leaves an icon, not a broken picture. */
-function Thumb({ hash }: { hash: string }) {
+function Thumb({ hash, burst, onBurstEnd }: { hash: string; burst: boolean; onBurstEnd: () => void }) {
   const [state, setState] = useState<'loading' | 'shown' | 'broken'>('loading')
   return (
-    <div className="thumb job-thumb">
-      {state === 'broken' ? (
-        <ImageIcon />
-      ) : (
-        <img src={artifactURL(hash)} alt="" loading="lazy" decoding="async" data-shown={state === 'shown' || undefined} onLoad={() => setState('shown')} onError={() => setState('broken')} />
+    <div className="job-thumb-wrap">
+      <div className="thumb job-thumb">
+        {state === 'broken' ? (
+          <ImageIcon />
+        ) : (
+          <img src={artifactURL(hash)} alt="" loading="lazy" decoding="async" data-shown={state === 'shown' || undefined} onLoad={() => setState('shown')} onError={() => setState('broken')} />
+        )}
+      </div>
+      {burst && (
+        <span className="sparks" aria-hidden>
+          {SPARKS.map(([x, y], i) => (
+            <i key={i} style={{ '--x': `${x}px`, '--y': `${y}px`, animationDelay: `${i * 15}ms` } as CSSProperties} onAnimationEnd={i === SPARKS.length - 1 ? onBurstEnd : undefined} />
+          ))}
+        </span>
       )}
     </div>
   )
 }
+
+/** Where each spark lands from the thumbnail's centre: right and a little up or down, so they stay inside the row. */
+const SPARKS: ReadonlyArray<readonly [number, number]> = [
+  [14, -16],
+  [26, -9],
+  [34, 0],
+  [26, 10],
+  [16, 16],
+]
 
 /** How long the running job has run, and what is left of the core's estimate, on the shared clock. */
 function Elapsed({ job }: { job: Job }) {

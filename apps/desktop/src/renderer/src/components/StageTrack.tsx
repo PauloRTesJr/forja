@@ -2,7 +2,15 @@ import type { CSSProperties } from 'react'
 import type { Stage } from '../lib/api'
 import { whereItRan } from '../lib/estimate'
 import { stageName } from '../lib/format'
+import { PaintPhaseIcon, PreparePhaseIcon, RigPhaseIcon, FinishPhaseIcon, ShapePhaseIcon } from './icons'
 import { phaseState, phasesOf, progressText, stageFraction, stageTime } from '../lib/jobs'
+
+const phaseIcons = { prepare: PreparePhaseIcon, shape: ShapePhaseIcon, paint: PaintPhaseIcon, rig: RigPhaseIcon, finish: FinishPhaseIcon }
+
+function PhaseIcon({ id }: { id: keyof typeof phaseIcons }) {
+  const Icon = phaseIcons[id]
+  return <Icon size={14} />
+}
 
 /**
  * The pipeline as a segmented bar: a segment per stage, grouped by phase. Each segment fills
@@ -30,7 +38,10 @@ export function StageTrack({ stages, compact, label = 'Stages' }: { stages: Stag
           <div key={p.stages[0]!.id} className={`track-phase ${state}`} style={{ '--size': size } as CSSProperties}>
             {!compact && (
               <div className="track-head">
-                <span className="track-name">{p.label}</span>
+                <span className="track-name">
+                  <PhaseIcon id={p.id} />
+                  <span>{p.label}</span>
+                </span>
                 <span className="track-tally">{state === 'failed' ? 'stopped' : `${finished}/${p.stages.length}`}</span>
               </div>
             )}

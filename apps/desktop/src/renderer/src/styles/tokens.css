@@ -1,30 +1,39 @@
-/* Design tokens. One dark theme: neutral graphite surfaces, hairline borders, one amber accent.
-   DESIGN.md says when to use each. */
+/* Design tokens. One dark theme, a working forge: warm soot and iron surfaces, one ember accent,
+   brass for ornament, steel for what has cooled. DESIGN.md says when to use each. */
 :root {
   color-scheme: dark;
 
   --font: 'Inter Variable', 'Inter', system-ui, 'Segoe UI', sans-serif;
+  --display: 'Marcellus', Georgia, serif; /* brand name, screen and dialog titles only */
   --mono: 'JetBrains Mono Variable', ui-monospace, 'Cascadia Code', 'SF Mono', monospace;
 
   /* Surfaces, darkest to lightest. */
-  --bg: #0f1012; /* window; keep in step with backgroundColor in src/main/index.ts */
-  --bg-deep: #0b0c0d; /* sidebar, viewer, thumbnail wells, inputs */
-  --surface: #16181b; /* cards, panels, rows */
-  --surface-2: #1d2024; /* hover, selected, raised */
-  --surface-3: #262a2f; /* pressed, active control */
+  --bg: #131110; /* window; keep in step with backgroundColor in src/main/index.ts */
+  --bg-deep: #0d0c0b; /* sidebar, viewer, thumbnail wells, inputs */
+  --surface: #1a1816; /* cards, panels, rows */
+  --surface-2: #23201d; /* hover, selected, raised */
+  --surface-3: #2d2a26; /* pressed, active control */
 
-  --border-soft: #202328; /* row rules, quiet dividers */
-  --border: #2b2f35; /* card and control borders */
-  --border-strong: #3d434b; /* hovered control, dashed drop targets */
+  --border-soft: #25221f; /* row rules, quiet dividers */
+  --border: #34302b; /* card and control borders */
+  --border-strong: #4b463f; /* hovered control, dashed drop targets */
 
-  --text: #e9ebee;
-  --text-2: #a8adb5;
-  --text-3: #7e848d; /* the dimmest text allowed: 4.5:1 on --bg */
+  --text: #ece7df;
+  --text-2: #b3ab9f;
+  --text-3: #8f877b; /* the dimmest text allowed: 4.5:1 on --bg */
 
-  --accent: #f0a04b; /* primary action, selection, focus, progress */
-  --accent-hi: #f6b872;
+  --accent: #f0934a; /* primary action, selection, focus, progress */
+  --accent-hi: #ffc27d;
   --accent-soft: color-mix(in oklab, var(--accent) 14%, transparent);
-  --on-accent: #1b1204;
+  --accent-deep: #b8552a;
+  --accent-top: #f8a961; /* the primary button's gradient */
+  --accent-bottom: #e8823a;
+  --on-accent: #1c0f05;
+
+  /* Work in progress: a stage, a progress bar. */
+  --heat: linear-gradient(90deg, var(--accent-deep), var(--accent) 55%, var(--accent-hi));
+  --brass: #b99a5e; /* ornament only: brackets, bullets, rules. Never text or a state. */
+  --steel: #9fb1ba; /* a finished, cooled stage */
 
   /* Work in progress shares the accent. */
   --live: var(--accent);
@@ -32,20 +41,20 @@
   --live-soft: var(--accent-soft);
 
   /* Status only. */
-  --ok: #4cc38a;
+  --ok: #7dbb9c;
   --ok-soft: color-mix(in oklab, var(--ok) 12%, transparent);
   --warn: #e2b04a;
   --warn-soft: color-mix(in oklab, var(--warn) 12%, transparent);
-  --bad: #ec6a5e;
-  --bad-hi: #f28b81;
+  --bad: #ec7263;
+  --bad-hi: #f39488;
   --bad-soft: color-mix(in oklab, var(--bad) 12%, transparent);
 
   /* Menus, popovers, dialogs and toasts only. */
   --shadow: 0 1px 2px rgb(0 0 0 / 0.3), 0 8px 24px rgb(0 0 0 / 0.35);
 
-  --r-1: 6px; /* controls, pills, menu items */
-  --r-2: 8px; /* cards, panels, thumbnails */
-  --r-3: 12px; /* dialogs, the drop target, the viewer */
+  --r-1: 3px; /* controls, pills, menu items */
+  --r-2: 4px; /* cards, panels, thumbnails */
+  --r-3: 6px; /* dialogs, the drop target, the viewer */
 
   --s-1: 4px;
   --s-2: 8px;
@@ -63,8 +72,9 @@
   --t-body: 400 13px/20px var(--font);
   --t-strong: 500 13px/20px var(--font);
   --t-title: 600 14px/20px var(--font);
-  --t-section: 600 12px/16px var(--font);
-  --t-screen: 600 20px/28px var(--font);
+  --t-section: 600 11px/16px var(--font); /* uppercase, 0.08em */
+  --t-screen: 400 26px/32px var(--display);
+  --t-dialog: 400 18px/24px var(--display);
   --t-mono: 400 12px/16px var(--mono);
   --t-head: 600 11px/16px var(--font); /* column headers: uppercase, 0.04em */
 

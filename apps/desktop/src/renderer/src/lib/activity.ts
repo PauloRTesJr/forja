@@ -92,7 +92,7 @@ export function rowStatus({ job, state }: ActivityRow): string {
     case 'failed':
       return job.stages.find((s) => s.status === 'failed')?.error ?? job.error ?? 'It failed without saying why.'
     case 'running':
-      return `Generating · ${Math.round(jobFraction(job) * 100)}%`
+      return `Forging · ${Math.round(jobFraction(job) * 100)}%`
     case 'queued':
       return 'Queued'
     case 'done':

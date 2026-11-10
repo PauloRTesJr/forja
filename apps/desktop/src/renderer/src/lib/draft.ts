@@ -122,10 +122,10 @@ export function stagedCount(images: readonly Pick<Staged, 'folder'>[]): string {
 /** What the primary button says for what is staged. */
 export function generateLabel(d: Pick<Draft, 'images' | 'sides'>): string {
   const n = d.images.length
-  if (d.images.some((s) => s.folder)) return `Generate ${stagedCount(d.images)}`
-  if (n > 1) return `Generate ${n} images`
+  if (d.images.some((s) => s.folder)) return `Forge ${stagedCount(d.images)}`
+  if (n > 1) return `Forge ${n} images`
   const views = sideViews(d).length
-  return views > 0 ? `Generate from ${views + 1} views` : 'Generate'
+  return views > 0 ? `Forge from ${views + 1} views` : 'Forge'
 }
 
 /**

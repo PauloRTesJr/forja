@@ -30,7 +30,8 @@
 }
 .asset-title.editing .input {
   flex: 1;
-  font: var(--t-screen);
+  /* The field stays in the UI face; the name it replaces is in the display face. */
+  font: 600 20px/28px var(--font);
   height: var(--h-lg);
 }
 .asset-title h1 {
@@ -95,14 +96,18 @@
   align-items: start;
 }
 
-/* Viewer */
-.viewer {
+/* Viewer. The frame carries the brass brackets (`.brackets`) and the stickiness; the viewer fills it. */
+.viewer-frame {
   position: sticky;
   top: 0;
+  min-width: 0;
+}
+.viewer {
+  position: relative;
   height: max(420px, calc(100vh - 124px));
   min-width: 0;
   border: 1px solid var(--border);
-  border-radius: var(--r-3);
+  border-radius: 0;
   background: var(--bg-deep);
   overflow: hidden;
 }
@@ -209,14 +214,16 @@
 }
 .viewer-modes button[aria-pressed='true'] {
   background: var(--surface-3);
-  color: var(--text);
+  color: var(--accent-hi);
 }
 .viewer-modes button:disabled {
   opacity: 0.45;
   cursor: default;
 }
 
-/* Inspector: label and value rows in groups, no boxes. */
+/* Inspector: an item's stat block, the one tabletop quotation in the app. A double brass bar,
+   the name, a tapered rule, the mesh in three columns, then label and value rows under more
+   tapered rules, and a closing bar. */
 .inspector {
   display: flex;
   flex-direction: column;
@@ -225,12 +232,64 @@
 .inspector .section-head {
   margin: var(--s-4) 0 var(--s-1);
 }
-.inspector > section:first-child .section-head {
-  margin-top: 0;
+.stat-bar {
+  height: 5px;
+  border-top: 2px solid var(--brass);
+  border-bottom: 1px solid var(--brass);
 }
-.inspector > section + section {
-  margin-top: var(--s-2);
-  border-top: 1px solid var(--border-soft);
+.stat-taper {
+  height: 3px;
+  background: var(--brass);
+  clip-path: polygon(0 0, 100% 50%, 0 100%);
+}
+.inspector > .stat-bar:last-child {
+  margin-top: var(--s-4);
+}
+.stat-head {
+  padding: var(--s-3) 0 var(--s-2);
+}
+.stat-name {
+  overflow: hidden;
+  color: var(--accent-hi);
+  font: 400 20px/26px var(--display);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.stat-sub {
+  min-height: 20px;
+  color: var(--text-2);
+  font: var(--t-body);
+}
+.stat-head-wait {
+  display: block;
+  width: 160px;
+  height: 26px;
+}
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--s-3) var(--s-2);
+  margin: 0;
+  padding: var(--s-3) 0;
+}
+.stat {
+  min-width: 0;
+}
+.stat dt {
+  color: var(--text-3);
+  font: var(--t-head);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.stat dd {
+  margin: 0;
+  color: var(--text);
+  font: 500 13px/18px var(--mono);
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+.inspector > section > .stat-taper {
+  margin-bottom: var(--s-1);
 }
 .asset-kv {
   gap: 0;
@@ -265,7 +324,7 @@
   .asset-body {
     grid-template-columns: minmax(0, 1fr);
   }
-  .viewer {
+  .viewer-frame {
     position: relative;
   }
   .asset-actions .btn-label {
