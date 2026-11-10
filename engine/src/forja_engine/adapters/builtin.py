@@ -154,7 +154,8 @@ class TextureMatch(Adapter):
     """
 
     # 2: keeps a painted roughness and metallic map.
-    version = "2"
+    # 3: projects the back and side views the job has, the front last.
+    version = "3"
 
     def capabilities(self) -> Capabilities:
         return Capabilities(tasks=(StageType.TEXTURE_MATCH,), devices=CPU)
@@ -165,6 +166,10 @@ class TextureMatch(Adapter):
         base = getattr(material, "baseColorTexture", None)
         if base is None:
             raise ValueError("texture.match needs a painted mesh with a base color texture")
+        views = ctx.views()
+        sides: dict[str, Image.Image] = {
+            v: Image.open(views[v].path) for v in ("left", "back", "right") if v in views
+        }
         ctx.progress(1, 3)
         result = match_ops.match(
             mesh,
@@ -174,12 +179,23 @@ class TextureMatch(Adapter):
             lightness=float(ctx.params.get("lightness", 0.0)),
             reproject=float(ctx.params.get("reproject", 1.0)),
             min_iou=float(ctx.params.get("min_iou", 0.8)),
+            min_side_iou=float(ctx.params.get("min_side_iou", 0.75)),
             align=bool(ctx.params.get("align", True)),
             yaw=float(ctx.params.get("yaw_degrees", 0.0)),
             seed=ctx.seed,
+            sides=sides or None,
         )
         ctx.progress(2, 3)
         ctx.check_cancel()
+        for name, (side_iou, share, as_labelled) in result.sides.items():
+            log.info(
+                "texture.match %s: %s view fits at IoU %.2f, %s%s",
+                ctx.stage_id,
+                name,
+                side_iou,
+                f"projected onto {share:.0%} of the texture" if share > 0 else "not projected",
+                "" if as_labelled else " (used opposite to its label)",
+            )
         if result.iou < float(ctx.params.get("min_iou", 0.8)):
             log.warning(
                 "texture.match %s: the shape covers the reference silhouette at IoU %.2f only; "

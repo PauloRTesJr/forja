@@ -39,7 +39,7 @@ stages:
       help: >-
         Painting models can drift from the reference image's colors. This step pulls the
         painted texture back toward them, and projects the reference onto the parts of the
-        asset it shows.
+        asset it shows. When the job has back and side views, those are projected too.
       default: false
   - { id: bake, use: bake, inputs: [match, cleanup] }
   - { id: lods, use: mesh.lods, params: { ratios: [0.5, 0.25] } }

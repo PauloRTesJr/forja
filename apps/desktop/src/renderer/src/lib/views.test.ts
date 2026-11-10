@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { isPreparing } from './activity'
 import type { Job, Pick, SheetPart } from './api'
 import { needsAnswer, summarize } from './jobs'
-import { assignView, boxStyle, chosenParts, viewReader } from './views'
+import { assignView, boxStyle, chosenParts, viewOption, viewReader } from './views'
 
 const pick = (stage: string, use: string, extra: Partial<Pick> = {}): Pick => ({ stage, use, ...extra })
 
@@ -98,5 +98,14 @@ describe('isPreparing', () => {
   it('leaves out jobs that bring their views or keep sheets whole', () => {
     expect(isPreparing(job('queued'))).toBe(false)
     expect(isPreparing(job('queued', { mode: 'keep' }))).toBe(false)
+  })
+})
+
+describe('viewOption', () => {
+  it('says which way a side figure faces, and keeps the short name for the others', () => {
+    expect(viewOption('left')).toBe('Left side (faces left)')
+    expect(viewOption('right')).toBe('Right side (faces right)')
+    expect(viewOption('front')).toBe('Front')
+    expect(viewOption('back')).toBe('Back')
   })
 })

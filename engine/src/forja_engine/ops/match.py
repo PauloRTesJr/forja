@@ -18,7 +18,8 @@ Cameras are orthographic along -Z after the view rotation (glTF front is +Z); im
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import logging
+from dataclasses import dataclass, field
 
 import numpy as np
 import trimesh
@@ -29,6 +30,8 @@ from scipy.cluster.vq import kmeans2
 
 from forja_engine.ops import bake
 from forja_engine.ops import mesh as mesh_ops
+
+log = logging.getLogger(__name__)
 
 F64 = NDArray[np.float64]
 
@@ -94,6 +97,10 @@ class MatchResult:
     iou: float  # silhouette vs reference alpha in the fitted view; low means a bad fit
     shift_lab: tuple[float, float, float]  # mean change applied to L, a, b
     reprojected: float  # share of texels that took any of the reference
+    # Per side view given: (IoU of its best fit, share of texels it reached, used as labelled).
+    # A view that was skipped reaches 0.0; one used opposite to its label is drawn facing the
+    # other way than its name says.
+    sides: dict[str, tuple[float, float, bool]] = field(default_factory=dict)
 
 
 def _iou(a: NDArray[np.bool_], b: NDArray[np.bool_]) -> float:
@@ -125,6 +132,9 @@ def _splat(
     return covered.reshape(size, size), mean.reshape(size, size), (count > 0).reshape(size, size)
 
 
+_PITCH_RANGE = (-10.0, 30.0)
+
+
 def _ncc(a: F64, b: F64, where: NDArray[np.bool_]) -> float:
     if np.count_nonzero(where) < 64:
         return 0.0
@@ -141,7 +151,7 @@ def fit(
     ref_luma: F64,
     yaw0: float = 0.0,
     yaw_range: float = 45.0,
-    pitch_range: tuple[float, float] = (-10.0, 30.0),
+    pitch_range: tuple[float, float] = _PITCH_RANGE,
     work: int = 256,
 ) -> tuple[View, float]:
     """Camera that best overlays the mesh on the reference: yaw and pitch by coarse-to-fine
@@ -150,6 +160,23 @@ def fit(
 
     Points are surface samples, so the cost does not grow with the triangle count.
     """
+    view, iou, _ = _fit_scored(points, normals, luma, alpha, ref_luma, yaw0, yaw_range, pitch_range, work)
+    return view, iou
+
+
+def _fit_scored(
+    points: F64,
+    normals: F64,
+    luma: F64,
+    alpha: NDArray[np.bool_],
+    ref_luma: F64,
+    yaw0: float,
+    yaw_range: float,
+    pitch_range: tuple[float, float],
+    work: int,
+) -> tuple[View, float, float]:
+    """`fit` plus the search score of the chosen angles (silhouette overlap plus luminance
+    correlation), which tells two candidate cameras apart where their silhouettes agree."""
     size = alpha.shape[0]
     k = work / size
     target = np.asarray(Image.fromarray(alpha).resize((work, work), Image.Resampling.BOX)) > 0
@@ -220,7 +247,7 @@ def fit(
     # Undo the warp in full-size pixels: p' = z * (p - c) + c + d.
     cf, dxf, dyf = size / 2, dx / k, dy / k
     proj = Projection(base.scale * z, z * (base.ox - cf) + cf + dxf, z * (base.oy - cf) + cf + dyf)
-    return View(best_view.yaw, best_view.pitch, proj), iou
+    return View(best_view.yaw, best_view.pitch, proj), iou, best
 
 
 def _fill(values: F64, mask: NDArray[np.bool_]) -> F64:
@@ -408,6 +435,174 @@ def _smoothstep(e0: float, e1: float, x: F64) -> F64:
     return t * t * (3 - 2 * t)
 
 
+def _tex_at(uv: F64, f: NDArray[np.int64], face: NDArray[np.int64], weights: F64, image: F64) -> F64:
+    puv = np.einsum("ij,ijk->ik", weights, uv[f[face]])
+    return _sample(image, np.stack([puv[:, 0] * image.shape[1], (1 - puv[:, 1]) * image.shape[0]], -1))
+
+
+def _project(
+    out: F64,
+    mesh: trimesh.Trimesh,
+    uv: F64,
+    f: NDArray[np.int64],
+    raster: tuple[NDArray[np.int64], NDArray[np.float32]],
+    view: View,
+    geom: tuple[F64, NDArray[np.int64], NDArray[np.float32], F64],
+    rgb: F64,
+    alpha: NDArray[np.bool_],
+    reproject: float,
+    facing: tuple[float, float],
+    feather: float,
+    align: bool,
+) -> float:
+    """Blend one reference into the texture `out`, in place, on the texels that face its camera
+    and are visible from it. `geom` is the mesh turned into the view and its z-buffer (vertices,
+    triangle ids, barycentrics, depth). Returns the share of texels it touched."""
+    v, tri_id, bary, depth = geom
+    size = rgb.shape[0]
+    rot = view.rotation()
+    hit = tri_id >= 0
+    hy, hx = np.nonzero(hit)
+    seen = np.zeros((size, size))
+    seen[hy, hx] = _tex_at(uv, f, tri_id[hy, hx], bary[hy, hx].astype(np.float64), out) @ _LUMA
+    motion = flow(_fill(seen, hit), rgb @ _LUMA, hit & alpha) if align else np.zeros((size, size, 2))
+    tid, tb = raster
+    ty, tx = np.nonzero(tid >= 0)
+    corners = f[tid[ty, tx]]
+    w = tb[ty, tx].astype(np.float64)[..., None]
+    pos = np.sum(v[corners] * w, axis=1)
+    nrm = np.sum((np.asarray(mesh.vertex_normals, dtype=np.float64) @ rot.T)[corners] * w, axis=1)
+    nrm /= np.maximum(np.linalg.norm(nrm, axis=1, keepdims=True), 1e-12)
+    px = view.proj(pos)
+    ix = np.clip(px[:, 0].astype(int), 0, size - 1)
+    iy = np.clip(px[:, 1].astype(int), 0, size - 1)
+    # Visible when nothing in the 3x3 neighbourhood is nearer: conservative at silhouette edges.
+    near = ndimage.maximum_filter(depth, size=3)
+    tol = 0.005 * float(np.linalg.norm(mesh.extents))
+    visible = pos[:, 2] >= near[iy, ix] - tol
+    edge = ndimage.distance_transform_edt(alpha)
+    amount = (
+        reproject
+        * _smoothstep(*facing, nrm[:, 2])
+        * np.clip(edge[iy, ix] / max(feather * size, 1.0), 0, 1)
+        * visible
+    )
+    keep = amount > 0
+    blend = amount[keep, None]
+    ref_at = _sample(rgb, px[keep] + motion[iy[keep], ix[keep]])
+    out[ty[keep], tx[keep]] = out[ty[keep], tx[keep]] * (1 - blend) + ref_at * blend
+    return float(keep.mean()) if len(keep) else 0.0
+
+
+# `_rot` turns the mesh about +Y and the camera looks along -Z with image right = +X. Forja's
+# subject faces +Z with its left at +X (decision 32). At yaw +90 the front points to image
+# right and -X, the subject's right, faces the camera: that is how a `right` reference is drawn
+# (facing the image's right edge). At yaw -90 it is the left side, facing the left edge.
+_SIDE_YAW = {"back": 180.0, "left": -90.0, "right": 90.0}
+_SIDE_YAW_RANGE = 20.0
+
+
+@dataclass(frozen=True)
+class _Side:
+    name: str
+    view: View | None  # None: skipped
+    rgb: F64
+    alpha: NDArray[np.bool_]
+    iou: float
+    as_labelled: bool
+
+
+def _arrays(image: Image.Image) -> tuple[F64, NDArray[np.bool_]]:
+    """RGB and silhouette of a reference, on a square canvas (the fit assumes one)."""
+    img = image.convert("RGBA")
+    side = max(img.size)
+    if img.size != (side, side):
+        canvas = Image.new("RGBA", (side, side), (0, 0, 0, 0))
+        canvas.paste(img, ((side - img.width) // 2, (side - img.height) // 2))
+        img = canvas
+    rgba = np.asarray(img, dtype=np.float64) / 255
+    return rgba[..., :3], rgba[..., 3] > 0.5
+
+
+def _fit_sides(
+    sides: dict[str, Image.Image],
+    points: F64,
+    normals: F64,
+    luma: F64,
+    front: View,
+    min_iou: float,
+) -> list[_Side]:
+    """A camera for each side reference, in the order back, left, right.
+
+    Whoever made a sheet may have swapped its two sides, and an outline cannot tell which way a
+    side view faces, so `left` and `right` are each fitted facing both ways and take the better.
+    If both choose one way, the better fit keeps it and the other takes the opposite way when
+    its fit there is good enough. A view that fits nowhere is skipped.
+    """
+    names: list[str] = [n for n in ("back", "left", "right") if n in sides]
+    arrays = {n: _arrays(sides[n]) for n in names}
+    fits: dict[str, dict[float, tuple[View, float, float]]] = {}
+    for n in names:
+        rgb, alpha = arrays[n]
+        offsets = (_SIDE_YAW[n],) if n == "back" else (-90.0, 90.0)
+        fits[n] = (
+            {
+                off: _fit_scored(
+                    points,
+                    normals,
+                    luma,
+                    alpha,
+                    rgb @ _LUMA,
+                    front.yaw + off,
+                    _SIDE_YAW_RANGE,
+                    _PITCH_RANGE,
+                    256,
+                )
+                for off in offsets
+            }
+            if alpha.any()
+            else {}
+        )
+
+    chosen: dict[str, float] = {}
+    for n in names:
+        good = {off: c for off, c in fits[n].items() if c[1] >= min_iou}
+        if good:
+            chosen[n] = max(good, key=lambda off: good[off][2])
+    shown = {n: max((c[1] for c in fits[n].values()), default=0.0) for n in names}
+    if "left" in chosen and "right" in chosen and chosen["left"] == chosen["right"]:
+        way = chosen["left"]
+        loser = "right" if fits["left"][way][2] >= fits["right"][way][2] else "left"
+        other = fits[loser][-way]
+        shown[loser] = other[1]
+        if other[1] >= min_iou:
+            chosen[loser] = -way
+        else:
+            del chosen[loser]
+
+    out = []
+    for n in names:
+        rgb, alpha = arrays[n]
+        if n not in chosen:
+            log.warning(
+                "texture.match: the %s reference does not fit the mesh (IoU %.2f, needs %.2f): skipped",
+                n,
+                shown[n],
+                min_iou,
+            )
+            out.append(_Side(n, None, rgb, alpha, shown[n], True))
+            continue
+        side, iou, _ = fits[n][chosen[n]]
+        as_labelled = chosen[n] == _SIDE_YAW[n]
+        if not as_labelled:
+            log.info(
+                "texture.match: the %s reference fits the other side of the mesh; used opposite to its label",
+                n,
+            )
+        out.append(_Side(n, side, rgb, alpha, iou, as_labelled))
+    return out
+
+
 def match(
     mesh: trimesh.Trimesh,
     texture: Image.Image,
@@ -423,12 +618,20 @@ def match(
     align: bool = True,
     yaw: float = 0.0,
     seed: int = 0,
+    sides: dict[str, Image.Image] | None = None,
+    min_side_iou: float = 0.75,
 ) -> MatchResult:
     """`color` and `lightness` weight the chroma and lightness parts of the color transfer;
     `reproject` weights the reference on texels that face the fitted camera, and `align` lets
     it bend a few pixels onto the surface it belongs to. `yaw` is where the camera search
     starts, for shapes generated facing away from +Z. Below `min_iou` the fit is not trusted:
     the reference would land on the wrong surface, so only the color transfer runs.
+
+    `sides` are the other views of the subject (`left`, `back`, `right`), framed like the
+    reference. Each is fitted around the front's camera and projected like the front, which
+    goes last. Colors are learned from the front alone. They pass at `min_side_iou`, a little
+    below the front's bar: the shape model saw only the front, so its back and sides are a
+    guess that fits their drawings less tightly, and the alignment absorbs the difference.
 
     Lightness stays off by default: the reference carries its lighting, the painted texture is
     delit, so matching L would paint the key light into the albedo everywhere.
@@ -442,8 +645,7 @@ def match(
     f = np.asarray(mesh.faces, dtype=np.int64)
 
     def tex_at(face: NDArray[np.int64], weights: F64, image: F64 = tex) -> F64:
-        puv = np.einsum("ij,ijk->ik", weights, uv[f[face]])
-        return _sample(image, np.stack([puv[:, 0] * image.shape[1], (1 - puv[:, 1]) * image.shape[0]], -1))
+        return _tex_at(uv, f, face, weights, image)
 
     points, face = trimesh.sample.sample_surface(mesh, samples, seed=seed)
     luma = tex_at(face, trimesh.triangles.points_to_barycentric(mesh.triangles[face], points)) @ _LUMA
@@ -473,37 +675,33 @@ def match(
     dl, da, db = (float(x) for x in (moved - lab).mean(0))
 
     reprojected = 0.0
+    done: dict[str, tuple[float, float, bool]] = {}
     if reproject > 0 and iou >= min_iou:
-        hy, hx = np.nonzero(hit)
-        seen = np.zeros((size, size))
-        seen[hy, hx] = tex_at(tri_id[hy, hx], bary[hy, hx].astype(np.float64), out) @ _LUMA
-        motion = flow(_fill(seen, hit), ref_rgb @ _LUMA, hit & alpha) if align else np.zeros((size, size, 2))
-        tid, tb = bake.raster_uv(uv, f, tex.shape[0])
-        ty, tx = np.nonzero(tid >= 0)
-        corners = f[tid[ty, tx]]
-        w = tb[ty, tx].astype(np.float64)[..., None]
-        pos = np.sum(v[corners] * w, axis=1)
-        nrm = np.sum((np.asarray(mesh.vertex_normals, dtype=np.float64) @ rot.T)[corners] * w, axis=1)
-        nrm /= np.maximum(np.linalg.norm(nrm, axis=1, keepdims=True), 1e-12)
-        px = view.proj(pos)
-        ix = np.clip(px[:, 0].astype(int), 0, size - 1)
-        iy = np.clip(px[:, 1].astype(int), 0, size - 1)
-        # Visible when nothing in the 3x3 neighbourhood is nearer: conservative at silhouette edges.
-        near = ndimage.maximum_filter(depth, size=3)
-        tol = 0.005 * float(np.linalg.norm(mesh.extents))
-        visible = pos[:, 2] >= near[iy, ix] - tol
-        edge = ndimage.distance_transform_edt(alpha)
-        amount = (
-            reproject
-            * _smoothstep(*facing, nrm[:, 2])
-            * np.clip(edge[iy, ix] / max(feather * size, 1.0), 0, 1)
-            * visible
-        )
-        keep = amount > 0
-        blend = amount[keep, None]
-        ref_at = _sample(ref_rgb, px[keep] + motion[iy[keep], ix[keep]])
-        out[ty[keep], tx[keep]] = out[ty[keep], tx[keep]] * (1 - blend) + ref_at * blend
-        reprojected = float(keep.mean()) if len(keep) else 0.0
+        raster = bake.raster_uv(uv, f, tex.shape[0])
+
+        def project(
+            at: View,
+            seen: tuple[F64, NDArray[np.int64], NDArray[np.float32], F64],
+            rgb: F64,
+            mask: NDArray[np.bool_],
+        ) -> float:
+            return _project(out, mesh, uv, f, raster, at, seen, rgb, mask, reproject, facing, feather, align)
+
+        # Sides first, the front last: where two references see a texel the front wins, and the
+        # others fill what the front cannot see.
+        for side in _fit_sides(
+            sides or {}, np.asarray(points, dtype=np.float64), normals, luma, view, min_side_iou
+        ):
+            if side.view is None:
+                done[side.name] = (side.iou, 0.0, True)
+                continue
+            sv = np.asarray(mesh.vertices, dtype=np.float64) @ side.view.rotation().T
+            ids = zbuffer(sv, f, side.view.proj, side.rgb.shape[0])
+            share = project(side.view, (sv, *ids), side.rgb, side.alpha)
+            done[side.name] = (side.iou, share, side.as_labelled)
+        reprojected = project(view, (v, tri_id, bary, depth), ref_rgb, alpha)
 
     img = Image.fromarray((np.clip(out, 0, 1) * 255).round().astype(np.uint8), "RGB")
-    return MatchResult(texture=img, view=view, iou=iou, shift_lab=(dl, da, db), reprojected=reprojected)
+    return MatchResult(
+        texture=img, view=view, iou=iou, shift_lab=(dl, da, db), reprojected=reprojected, sides=done
+    )

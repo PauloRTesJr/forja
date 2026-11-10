@@ -5,7 +5,7 @@ import { draftStore, useDraft } from '../lib/draft'
 import { keys } from '../lib/events'
 import { upsertJob } from '../lib/jobs'
 import { useToast } from '../lib/toast'
-import { assignView, boxStyle, chosenParts, VIEWS, viewHints, viewLabels, viewShort } from '../lib/views'
+import { assignView, boxStyle, chosenParts, VIEWS, viewHints, viewLabels, viewOption } from '../lib/views'
 
 /**
  * Answers a job that waits on its sheet of views. Once answered, Generate keeps following the
@@ -65,7 +65,7 @@ export function SheetCard({ job, maxHeight = 440 }: { job: Job; /** The cut-out 
             >
               {VIEWS.map((v) => (
                 <option key={v} value={v}>
-                  {viewShort[v]}
+                  {viewOption(v)}
                 </option>
               ))}
               <option value="">Leave out</option>

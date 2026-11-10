@@ -10,6 +10,14 @@ export const viewLabels: Record<View, string> = { front: 'Front', left: 'Left si
 /** For the label on a box over a sheet, which may be narrower than the words. */
 export const viewShort: Record<View, string> = { front: 'Front', left: 'Left', back: 'Back', right: 'Right' }
 
+/**
+ * A view's name in a list of choices. A side view says which way its figure faces: the two
+ * sides of a sheet are often swapped, and the facing is what tells them apart.
+ */
+export function viewOption(view: View): string {
+  return view === 'left' || view === 'right' ? `${viewLabels[view]} (faces ${view})` : viewShort[view]
+}
+
 /** How each view shows the subject, so a side view goes in the right slot. */
 export const viewHints: Record<View, string> = {
   front: 'Facing you',

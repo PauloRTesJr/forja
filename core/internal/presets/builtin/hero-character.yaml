@@ -37,7 +37,7 @@ stages:
       help: >-
         Painting models can drift from the reference image's colors. This step pulls the
         painted texture back toward them, and projects the reference onto the parts of the
-        asset it shows.
+        asset it shows. When the job has back and side views, those are projected too.
       default: false
   - { id: bake, use: bake, inputs: [match, cleanup] }
   # Rigs the mesh that ships, before the LODs, so every level carries the same skin.

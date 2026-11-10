@@ -262,3 +262,54 @@ func TestASheetIsFoundWhileEveryJobSlotIsBusy(t *testing.T) {
 		t.Fatalf("sheet %+v", got.Sheet)
 	}
 }
+
+func TestMatchReadsTheSideViewsAJobHas(t *testing.T) {
+	r, fp, _, st, img := setup(t)
+	ctx := context.Background()
+	views := map[string]string{}
+	for _, v := range []string{"left", "back", "right"} {
+		ref, _ := st.PutBytes([]byte(v + " view"))
+		views[v] = ref
+	}
+	run := func(req SubmitRequest) *library.Job {
+		t.Helper()
+		j, err := r.Submit(ctx, req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if done := wait(t, r, j.ID); done.Status != library.Succeeded {
+			t.Fatalf("%s: %s", done.Status, done.Error)
+		}
+		return j
+	}
+	const plain = "bg,frame,shape,cleanup,lowpoly,paint,match,bake,lods,export"
+	on := map[string]any{"match.enabled": true}
+
+	j := run(SubmitRequest{Input: img, Preset: "mobile-prop", Overrides: on})
+	if got := stageIDs(j); got != plain {
+		t.Fatalf("without views the stages are %s", got)
+	}
+	if m := fp.spec("match"); strings.Join(m.Inputs, ",") != "stage:paint,stage:frame" || len(m.Views) != 0 {
+		t.Fatalf("without views match got %v %v", m.Inputs, m.Views)
+	}
+
+	j = run(SubmitRequest{Input: img, Preset: "mobile-prop", Overrides: on, Views: views})
+	want := "bg,frame,bg-left,frame-left,bg-back,frame-back,bg-right,frame-right,shape,cleanup,lowpoly,paint,match,bake,lods,export"
+	if got := stageIDs(j); got != want {
+		t.Fatalf("with views the stages are %s", got)
+	}
+	m := fp.spec("match")
+	if strings.Join(m.Inputs, ",") != "stage:paint,stage:frame,stage:frame-left,stage:frame-back,stage:frame-right" ||
+		strings.Join(m.Views, ",") != ",front,left,back,right" {
+		t.Fatalf("with views match got %v %v", m.Inputs, m.Views)
+	}
+	if p := fp.spec("paint"); len(p.Views) != 0 || len(p.Inputs) != 2 {
+		t.Fatalf("paint, whose model reads one view, got %v %v", p.Inputs, p.Views)
+	}
+
+	// Switched off, the views are not prepared at all: no stage reads them.
+	j = run(SubmitRequest{Input: img, Preset: "mobile-prop", Views: views})
+	if got := stageIDs(j); got != "bg,frame,shape,cleanup,lowpoly,paint,bake,lods,export" {
+		t.Fatalf("with match off the stages are %s", got)
+	}
+}

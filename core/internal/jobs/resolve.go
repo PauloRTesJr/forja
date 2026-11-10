@@ -361,6 +361,7 @@ func (r *Runner) on(ctx context.Context, cfg *config.Loaded, base Pick, id strin
 	}
 	// Not every provider runs every built-in (a Blender stage needs Blender there).
 	if builtin(e, base.Use) {
+		pick.Views = engineapi.BuiltinViews[base.Use]
 		return pick, true, false, nil
 	}
 	if m := best(e.Models, base.Use, cfg.Models.Stubs, views); m != nil {

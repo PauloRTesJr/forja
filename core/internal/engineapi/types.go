@@ -10,6 +10,12 @@ import (
 // side, so it faces the image's left edge; "right" is the mirror of that.
 var Views = []string{"front", "left", "back", "right"}
 
+// BuiltinViews are the views besides the front that a built-in stage type reads when the job
+// has them (docs/decisions.md, 41). Models say theirs in their manifest; built-ins have none, and
+// /v1/info carries only their versions, so the core keeps this list. An engine that does not
+// read a view ignores the input.
+var BuiltinViews = map[string][]string{"texture.match": {"left", "back", "right"}}
+
 // StageSpec is one stage of a run request. Inputs are "stage:<id>" or "blake3:<hex>".
 type StageSpec struct {
 	ID     string         `json:"id"`

@@ -1,6 +1,8 @@
 import numpy as np
+import pytest
 import trimesh
 from PIL import Image
+from scipy import ndimage
 
 from forja_engine.adapters.builtin import TextureMatch
 from forja_engine.ops import match
@@ -156,3 +158,109 @@ def _render(mesh: trimesh.Trimesh, tex: Image.Image, yaw: float, size: int = 256
     out[hit, :3] = arr[py, px]
     out[hit, 3] = 1
     return Image.fromarray((out * 255).astype(np.uint8), "RGBA")
+
+
+def _noise(seed: int, size: int = 256) -> Image.Image:
+    """Smooth random color blobs: every side of a box painted with it looks different."""
+    rng = np.random.default_rng(seed)
+    chans = [ndimage.gaussian_filter(rng.uniform(0, 1, (size, size)), 6, mode="wrap") for _ in range(3)]
+    a = np.stack(chans, -1)
+    a = (a - a.min((0, 1))) / (a.max((0, 1)) - a.min((0, 1)))
+    return Image.fromarray(((0.1 + 0.8 * a) * 255).astype(np.uint8), "RGB")
+
+
+VIEW_YAW = {"front": 0.0, "back": 180.0, "left": -90.0, "right": 90.0}
+
+
+class Scene:
+    """A box whose four sides differ, a blurred and tinted paint of it, and its true references."""
+
+    def __init__(self) -> None:
+        self.box = m.unwrap(trimesh.creation.box((1.0, 1.6, 0.5)))
+        true = _noise(1)
+        blurred = ndimage.gaussian_filter(np.asarray(true, dtype=np.float64), (7, 7, 0)) * [1.15, 0.85, 1.0]
+        self.painted = Image.fromarray(np.clip(blurred, 0, 255).astype(np.uint8), "RGB")
+        self.refs = {v: _render(self.box, true, yaw) for v, yaw in VIEW_YAW.items()}
+        self.sides = {v: self.refs[v] for v in ("back", "left", "right")}
+
+    def run(self, sides=None):
+        return match.match(self.box, self.painted, self.refs["front"], align=False, sides=sides)
+
+    def error(self, result: match.MatchResult, view: str) -> float:
+        """Mean color distance from the reference, seen from that view's camera."""
+        got = np.asarray(_render(self.box, result.texture, VIEW_YAW[view]), dtype=np.float64)[..., :3]
+        ref = np.asarray(self.refs[view], dtype=np.float64)[..., :3]
+        inner = ndimage.binary_erosion(np.asarray(self.refs[view])[..., 3] > 0, iterations=6)
+        return float(np.abs(got - ref)[inner].mean() / 255)
+
+
+@pytest.fixture(scope="module")
+def scene():
+    s = Scene()
+    swapped = {"back": s.sides["back"], "left": s.sides["right"], "right": s.sides["left"]}
+    return s, {"front": s.run(), "sides": s.run(s.sides), "swapped": s.run(swapped)}
+
+
+def test_match_without_side_views_is_what_it_was(scene):
+    s, runs = scene
+    again = s.run({})
+    assert again.sides == {} and runs["front"].sides == {}
+    assert again.texture.tobytes() == runs["front"].texture.tobytes()
+    assert runs["front"].reprojected > 0.1 and runs["front"].iou > 0.95
+
+
+def test_side_views_pull_the_back_and_sides_toward_their_references(scene):
+    s, runs = scene
+    for view in ("back", "left", "right"):
+        before, after = s.error(runs["front"], view), s.error(runs["sides"], view)
+        assert after < 0.5 * before, (view, before, after)
+        assert after < 0.03, (view, after)
+    assert set(runs["sides"].sides) == {"back", "left", "right"}
+    for iou, share, as_labelled in runs["sides"].sides.values():
+        assert iou > 0.95 and share > 0.05 and as_labelled
+    # The front wins where it sees a texel: its own view comes out as it does without sides.
+    assert s.error(runs["sides"], "front") <= s.error(runs["front"], "front") + 1e-3
+    front_view = np.asarray(_render(s.box, runs["sides"].texture, 0.0), dtype=np.int64)
+    alone = np.asarray(_render(s.box, runs["front"].texture, 0.0), dtype=np.int64)
+    inner = ndimage.binary_erosion(alone[..., 3] > 0, iterations=3)  # the rim is shared with the sides
+    assert np.abs(front_view - alone).max(-1)[inner].max() <= 1
+
+
+def test_swapped_side_labels_are_used_the_way_the_views_fit(scene):
+    s, runs = scene
+    for view in ("back", "left", "right"):
+        assert s.error(runs["swapped"], view) < 0.5 * s.error(runs["front"], view)
+        assert s.error(runs["swapped"], view) < s.error(runs["sides"], view) + 0.01
+    sides = runs["swapped"].sides
+    assert sides["back"][2] and not sides["left"][2] and not sides["right"][2]
+
+
+def test_a_side_view_that_does_not_fit_is_skipped(scene, caplog):
+    s, runs = scene
+    wide = reference(checker(200, 8)[:60, :], at=(28, 100))  # nothing like the box's narrow side
+    with caplog.at_level("WARNING"):
+        r = s.run({"left": wide})
+    iou, share, _ = r.sides["left"]
+    assert iou < 0.8 and share == 0.0
+    assert r.texture.tobytes() == runs["front"].texture.tobytes()
+    assert "left" in caplog.text and "skipped" in caplog.text
+
+
+def test_stage_projects_the_side_views_it_is_given(tmp_path, scene, caplog):
+    s, runs = scene
+    glb = m.save(m.textured(s.box, s.painted, roughness=0.5, metallic=0.0), tmp_path / "painted.glb")
+    inputs = [StageInput(glb, ArtifactKind.MESH_GLB, "m")]
+    for view in ("front", "back", "left", "right"):
+        path = tmp_path / f"{view}.png"
+        s.refs[view].save(path)
+        inputs.append(StageInput(path, ArtifactKind.IMAGE_PNG, view, None if view == "front" else view))
+    out = tmp_path / "out"
+    out.mkdir()
+    ctx = StageContext("match", StageType.TEXTURE_MATCH, inputs, {"align": False}, 0, out)
+    with caplog.at_level("INFO"):
+        result = TextureMatch().run(ctx)[0].path
+    assert caplog.text.count("view fits at IoU") == 3 and "projected onto" in caplog.text
+    got = m.load(result).visual.material.baseColorTexture
+    assert got is not None and TextureMatch.version == "3"
+    shown = match.MatchResult(got, runs["sides"].view, 1.0, (0, 0, 0), 0.0)
+    assert s.error(shown, "back") < 0.5 * s.error(runs["front"], "back")
