@@ -211,8 +211,16 @@ class RunManager:
             run.status = Status.CANCELLED if isinstance(e, StageFailed) and e.cancelled else Status.FAILED
             run.error = str(e)
         finally:
+            unfinished = [s.id for s in run.req.stages if run.stages[s.id].status is Status.RUNNING]
             for t in tasks:
                 t.cancel()
+            # A stage still on a device belongs to a run that is over: stop it, so the device is
+            # free for the next run instead of finishing work nobody reads.
+            for stage_id in unfinished:
+                with contextlib.suppress(Exception):
+                    await self.scheduler.cancel(f"{run.id}/{stage_id}")
+            # Every stage has said how it ended before the run does: run.finished is the last event.
+            await asyncio.gather(*tasks, return_exceptions=True)
             for fut in run._outputs.values():
                 if not fut.done():
                     fut.cancel()
@@ -224,21 +232,6 @@ class RunManager:
         refs = [
             await run._outputs[r[len(STAGE_REF) :]] if r.startswith(STAGE_REF) else r for r in spec.inputs
         ]
-        manifest = self.registry.resolve(spec.use, spec.model)
-        params = {**_defaults(manifest.params if manifest else {}), **spec.params}
-        out_dir = self.store.scratch_dir()
-        views = spec.views or [""] * len(refs)
-        ctx = StageContext(
-            stage_id=spec.id,
-            task=spec.use,
-            inputs=[
-                StageInput(self.store.path(r), _kind_of(self.store.path(r)), r, v or None)
-                for r, v in zip(refs, views, strict=True)
-            ],
-            params=params,
-            seed=int(params.get("seed", run.req.seed)),
-            out_dir=out_dir,
-        )
         loop = asyncio.get_running_loop()
 
         def on_progress(step: int, total: int) -> None:
@@ -252,11 +245,29 @@ class RunManager:
 
             loop.call_soon_threadsafe(spawn)
 
+        out_dir: Path | None = None
+        # Everything from here on fails as this stage: a model removed since the run was
+        # accepted, or an input swept away, must not leave it "running" in a failed run.
         state.status = Status.RUNNING
-        device = self.scheduler.place(manifest) if manifest else "cpu-pool"
-        await run.emit("stage.started", stage=spec.id, model=spec.model, device=device)
-        priority = INTERACTIVE if run.req.priority == "interactive" else BATCH
         try:
+            manifest = self.registry.resolve(spec.use, spec.model)
+            params = {**_defaults(manifest.params if manifest else {}), **spec.params}
+            out_dir = self.store.scratch_dir()
+            views = spec.views or [""] * len(refs)
+            ctx = StageContext(
+                stage_id=spec.id,
+                task=spec.use,
+                inputs=[
+                    StageInput(self.store.path(r), _kind_of(self.store.path(r)), r, v or None)
+                    for r, v in zip(refs, views, strict=True)
+                ],
+                params=params,
+                seed=int(params.get("seed", run.req.seed)),
+                out_dir=out_dir,
+            )
+            device = self.scheduler.place(manifest) if manifest else "cpu-pool"
+            await run.emit("stage.started", stage=spec.id, model=spec.model, device=device)
+            priority = INTERACTIVE if run.req.priority == "interactive" else BATCH
             result = await self.scheduler.submit(
                 f"{run.id}/{spec.id}", ctx, manifest, priority, on_progress, measure=run.req.measure
             )
@@ -286,7 +297,8 @@ class RunManager:
                 await run.emit("stage.failed", stage=spec.id, error=state.error, cancelled=cancelled)
             raise
         finally:
-            shutil.rmtree(out_dir, ignore_errors=True)
+            if out_dir is not None:
+                shutil.rmtree(out_dir, ignore_errors=True)
 
     async def _metrics(
         self, result: dict[str, Any], outputs: list[dict[str, Any]], device: str

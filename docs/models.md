@@ -24,7 +24,7 @@ Within a stage, the list runs from the highest-ranked model down: a job gets the
 2. Commercial use is allowed, with limits: the license does not cover the EU, the UK or South Korea, and above 1 million monthly active users a separate license is needed. Forja shows these terms; it does not block by location.
 3. UniRig's upstream tree, fetched at install time, also carries the Michelangelo shape encoder under GPL-3.0.
 4. Their image encoder is Meta's DINOv3, under the DINOv3 License: commercial use is allowed, but not military, weapons or other uses that trade controls forbid. Its weights are gated on Hugging Face: accept the license on [its page](https://huggingface.co/facebook/dinov3-vitl16-pretrain-lvd1689m) and set `HF_TOKEN` before installing.
-5. Upstream tests these on Linux. Their CUDA extensions are built at install; Pixal3D's NATTEN does not build on Windows, so a Windows computer sends it to a Linux one ([sharing](sharing.md), [cloud](cloud.md)). Disk figures are estimates until measured.
+5. Upstream tests these on Linux. Their CUDA extensions are built at install; Pixal3D's NATTEN does not build on Windows, so Forja does not offer to install Pixal3D there: a Windows computer sends it to a Linux one ([sharing](sharing.md), [cloud](cloud.md)). Disk figures are estimates until measured.
 
 The stub models (`stub-background`, `stub-shape`, `stub-paint`, `stub-rig`) are deterministic CPU stand-ins for tests and machines without a GPU. They are used only when `models.stubs = true`.
 

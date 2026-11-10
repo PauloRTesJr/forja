@@ -1,3 +1,4 @@
+import contextlib
 import dataclasses
 import json
 import os
@@ -5,13 +6,16 @@ import struct
 import time
 from pathlib import Path
 
+import blake3
 import pytest
 from fastapi.testclient import TestClient
 from PIL import Image
 
+from forja_engine import cli
 from forja_engine.adapters import stub
 from forja_engine.adapters.builtin import BUILTINS
 from forja_engine.api.app import EngineConfig, create_app
+from forja_engine.scheduler import Scheduler
 from forja_engine.sdk import StageType
 from forja_engine.store import hash_file
 
@@ -282,3 +286,153 @@ def test_a_wrong_blender_path_is_fixed_in_the_settings_not_by_installing(client,
     check = client.get("/v1/checks", params={"stages": "mesh.remesh"}).json()["checks"][0]
     assert not check["ok"] and "/nowhere/blender" in check["found"]
     assert check["fix"]["label"] == "Fix Blender's path" and not check["fix"]["runnable"]
+
+
+def test_an_upload_over_the_limit_is_refused_and_leaves_nothing_behind(tmp_path):
+    """On Windows the refusal deleted a file it still held open: a 500, and the bytes stayed."""
+    app = create_app(EngineConfig(store_root=tmp_path, token="secret", max_upload_bytes=1024))
+    with TestClient(app, headers={"Authorization": "Bearer secret"}) as c:
+        r = c.put(f"/v1/artifacts/blake3:{'0' * 64}", content=b"x" * 5000)
+        assert r.status_code == 413
+        assert c.put(f"/v1/artifacts/blake3:{'0' * 64}", content=b"wrong hash").status_code == 422
+    assert list((tmp_path / "tmp").iterdir()) == []
+
+
+async def test_an_upload_cut_short_leaves_no_partial_file(tmp_path):
+    app = create_app(EngineConfig(store_root=tmp_path))
+    messages = [
+        {"type": "http.request", "body": b"half of it", "more_body": True},
+        {"type": "http.disconnect"},
+    ]
+
+    async def receive():
+        return messages.pop(0)
+
+    async def send(message):
+        pass
+
+    scope = {
+        "type": "http",
+        "asgi": {"version": "3.0"},
+        "http_version": "1.1",
+        "method": "PUT",
+        "scheme": "http",
+        "path": f"/v1/artifacts/blake3:{'0' * 64}",
+        "raw_path": b"",
+        "query_string": b"",
+        "headers": [],
+        "client": ("127.0.0.1", 1),
+        "server": ("127.0.0.1", 80),
+    }
+    with contextlib.suppress(Exception):  # the caller hung up: there is nobody to answer
+        await app(scope, receive, send)
+    assert list((tmp_path / "tmp").iterdir()) == []
+
+
+def test_starting_clears_what_a_killed_engine_left_in_tmp(tmp_path):
+    tmp = tmp_path / "tmp"
+    (tmp / "scratch").mkdir(parents=True)
+    (tmp / "scratch" / "half.glb").write_bytes(b"glTF")
+    (tmp / "upload").write_bytes(b"half an upload")
+    old = time.time() - 3 * 24 * 3600
+    for stale in (tmp / "scratch", tmp / "upload"):
+        os.utime(stale, (old, old))
+    (tmp / "put-now").write_bytes(b"the core is writing this one")
+    create_app(EngineConfig(store_root=tmp_path))
+    assert [p.name for p in tmp.iterdir()] == ["put-now"]
+
+
+def test_a_stage_whose_model_is_not_installed_fails_as_that_stage(client):
+    """It used to stay "running" in a failed run, with no stage.failed: a spinner that never stops."""
+    stage = {"id": "shape", "use": "shape", "model": "triposg", "inputs": [upload(client)]}
+    run = client.post("/v1/runs", json={"stages": [stage]}).json()
+    evs = events(client, run["id"])
+    assert evs[-1][0] == "run.finished" and evs[-1][1]["status"] == "failed"
+    failed = [e[1] for e in evs if e[0] == "stage.failed"]
+    assert failed and "not installed" in failed[0]["error"]
+    state = client.get(f"/v1/runs/{run['id']}").json()["stages"]["shape"]
+    assert state["status"] == "failed" and "not installed" in state["error"]
+
+
+def upload_bytes(client, data: bytes) -> str:
+    ref = "blake3:" + blake3.blake3(data).hexdigest()
+    assert client.put(f"/v1/artifacts/{ref}", content=data).status_code == 201
+    return ref
+
+
+def test_a_file_that_is_no_image_fails_in_words_without_a_store_path(client):
+    text = upload_bytes(client, b"this is a text file with a .png name")
+    stages = [
+        {"id": "bg", "use": "background-removal", "model": "stub-background", "inputs": [text]},
+        {"id": "frame", "use": "framing", "inputs": [text]},
+    ]
+    for stage in stages:  # one in a model worker, one in the built-in pool
+        run = client.post("/v1/runs", json={"stages": [stage]}).json()
+        evs = events(client, run["id"])
+        assert evs[-1][1]["status"] == "failed"
+        error = evs[-1][1]["error"]
+        assert "not an image" in error and "objects" not in error, error
+
+
+def test_a_blank_picture_fails_at_framing_and_says_so(client, tmp_path):
+    blank = upload_image(client, Image.new("RGB", (64, 64), (255, 255, 255)), tmp_path / "blank.png")
+    stages = [{**PIPELINE[0], "inputs": [blank]}, *PIPELINE[1:3]]
+    run = client.post("/v1/runs", json={"stages": stages}).json()
+    evs = events(client, run["id"])
+    assert evs[-1][1]["status"] == "failed" and "No subject was found" in evs[-1][1]["error"]
+    states = client.get(f"/v1/runs/{run['id']}").json()["stages"]
+    assert states["frame"]["status"] == "failed" and states["shape"]["status"] == "queued"
+
+
+def test_when_a_stage_fails_the_stage_beside_it_is_stopped(tmp_path, misbehaving_models):
+    """A model stage running beside the one that failed used to run to its end for nobody, holding
+    its device while the next job waited, and said how it ended only after run.finished."""
+    cfg = EngineConfig(store_root=tmp_path / "store", token="secret", manifest_dirs=[misbehaving_models])
+    app = create_app(cfg)
+    marker = tmp_path / "how-it-ended"
+    with TestClient(app, headers={"Authorization": "Bearer secret"}) as c:
+        text = upload_bytes(c, b"no image at all")
+        stages = [
+            {"id": "slow", "use": "shape", "model": "test-slow", "params": {"marker": str(marker)}},
+            {"id": "bad", "use": "framing", "inputs": [text]},
+        ]
+        run = c.post("/v1/runs", json={"stages": stages}).json()
+        evs = events(c, run["id"])
+        assert evs[-1][0] == "run.finished" and evs[-1][1]["status"] == "failed"
+        ended = {e[1]["stage"]: e[1]["cancelled"] for e in evs if e[0] == "stage.failed"}
+        assert ended == {"bad": False, "slow": True}
+        states = c.get(f"/v1/runs/{run['id']}").json()["stages"]
+        assert states["slow"]["status"] == "cancelled" and states["bad"]["status"] == "failed"
+        lane = app.state.scheduler.lanes["cpu"]
+        deadline = time.monotonic() + 30
+        while lane.running is not None and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert lane.running is None
+        # Stopped half way, or never started when the other stage failed before its model loaded.
+        assert not marker.exists() or marker.read_text(encoding="utf-8") == "cancelled"
+
+
+def test_models_are_listed_best_first(client):
+    ranks = [m["rank"] for m in client.get("/v1/models").json()]
+    assert len(set(ranks)) > 1 and ranks == sorted(ranks, reverse=True)
+
+
+def test_an_idle_unload_of_zero_never_unloads_and_never_spins(tmp_path, monkeypatch):
+    """Zero made the idle unloader a loop that never slept, unloading over and over."""
+    calls = []
+
+    async def counted(self):
+        calls.append(1)
+
+    monkeypatch.setattr(Scheduler, "unload_all", counted)
+    app = create_app(EngineConfig(store_root=tmp_path, idle_unload_seconds=0))
+    with TestClient(app) as c:
+        time.sleep(0.3)
+        assert c.get("/v1/health").status_code == 200
+    assert calls == []
+
+
+def test_a_negative_idle_unload_is_refused_before_anything_starts(tmp_path, capsys):
+    with pytest.raises(SystemExit) as stopped:
+        cli.main(["serve", "--store", str(tmp_path), "--idle-unload-minutes", "-1"])
+    assert stopped.value.code == 2 and "--idle-unload-minutes" in capsys.readouterr().err

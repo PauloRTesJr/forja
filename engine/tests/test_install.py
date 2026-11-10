@@ -2,11 +2,14 @@ import io
 import json
 import sys
 import tarfile
+import threading
+import types
+import urllib.error
 from pathlib import Path
 
 import pytest
 
-from forja_engine import families, install, toolchain
+from forja_engine import families, fetch, install, toolchain
 from forja_engine.registry import Registry
 
 
@@ -55,9 +58,9 @@ def test_install_plan(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(install, "uv_binary", lambda: "uv")
     monkeypatch.setattr(install.toolchain, "build_env", lambda backend, log: {"CUDA_HOME": "/cuda"})
-    monkeypatch.setattr(install, "fetch_verified", lambda url, sha, cache, log: Path("/cache") / sha)
+    monkeypatch.setattr(install, "fetch_verified", lambda url, sha, cache, log, **kw: Path("/cache") / sha)
     up = tmp_path / "envs" / "triposg" / "upstream"
-    monkeypatch.setattr(install, "extract_tarball", lambda archive, dest: up)
+    monkeypatch.setattr(install, "extract_tarball", lambda archive, dest, **kw: up)
     site = tmp_path / "site"
     site.mkdir()
     monkeypatch.setattr(install, "site_packages", lambda py: site)
@@ -147,8 +150,8 @@ def test_install_reports_every_step(tmp_path, monkeypatch):
     monkeypatch.setattr(install, "_run", lambda cmd, log, **kw: None)
     monkeypatch.setattr(install, "uv_binary", lambda: "uv")
     monkeypatch.setattr(install.toolchain, "build_env", lambda backend, log: {})
-    monkeypatch.setattr(install, "fetch_verified", lambda url, sha, cache, log: Path("/cache") / sha)
-    monkeypatch.setattr(install, "extract_tarball", lambda archive, dest: dest)
+    monkeypatch.setattr(install, "fetch_verified", lambda url, sha, cache, log, **kw: Path("/cache") / sha)
+    monkeypatch.setattr(install, "extract_tarball", lambda archive, dest, **kw: dest)
     site = tmp_path / "site"
     site.mkdir()
     monkeypatch.setattr(install, "site_packages", lambda py: site)
@@ -216,3 +219,101 @@ def test_interpreters_live_in_the_data_folder(tmp_path, monkeypatch):
     inst = install.Installer(Registry.load(), tmp_path / "envs", tmp_path / "models", log=lambda s: None)
     inst.environment(families.load("birefnet"), "cpu", tmp_path / "envs" / "birefnet")
     assert envs["venv"]["UV_PYTHON_INSTALL_DIR"] == str(tmp_path / "_uv" / "python")
+
+
+def test_an_install_record_cut_short_reads_as_not_installed(tmp_path):
+    """The engine is stopped by killing it. A torn record used to raise from every listing of the
+    models and from the engine's own start: nothing ran again until the file was deleted by hand."""
+    env = tmp_path / "envs" / "triposg"
+    python = families.interpreter(env)
+    python.parent.mkdir(parents=True)
+    python.write_bytes(b"")
+    record = env / "forja-installed.json"
+    for torn in (b"", b'{"models": {"tripo', b"[]", b'{"models": null}'):
+        record.write_bytes(torn)
+        assert install.installed_models(env) == set()
+        assert not Registry.load().bind(tmp_path / "envs", tmp_path / "models").models["triposg"].installed
+    # Installing again writes a whole record over it.
+    inst = install.Installer(Registry.load(), tmp_path / "envs", tmp_path / "models", log=lambda s: None)
+    inst._record(env, inst.manifest("triposg"), "cuda")
+    assert install.installed_models(env) == {"triposg"}
+    assert [p.name for p in env.iterdir() if p.is_file()] == ["forja-installed.json"]
+
+
+def test_a_command_that_cannot_start_names_the_program():
+    with pytest.raises(install.InstallError, match="could not start forja-no-such-program"):
+        install._run(["forja-no-such-program", "--version"], lambda line: None)
+
+
+def test_a_download_that_fails_says_so_and_leaves_no_part_file(tmp_path, monkeypatch):
+    def offline(url, timeout=None):
+        raise urllib.error.URLError("getaddrinfo failed")
+
+    monkeypatch.setattr(install.urllib.request, "urlopen", offline)
+    with pytest.raises(install.InstallError, match=r"could not download https://example\.invalid"):
+        install.fetch_verified("https://example.invalid/src.tar.gz", "0" * 64, tmp_path / "cache", print)
+    assert list((tmp_path / "cache").iterdir()) == []
+
+
+def test_a_cancel_stops_a_download_a_hash_and_an_extraction_part_way(tmp_path):
+    """Cancel was only looked at between steps and inside child processes: during a long download,
+    the hash of a multi-GB file or an extraction, pressing it did nothing until they ended."""
+    cancel = threading.Event()
+    cancel.set()
+    src = tmp_path / "blob"
+    src.write_bytes(b"x" * (3 << 20))
+    good = install.sha256_file(src)
+    with pytest.raises(install.InstallCancelled):
+        install.sha256_file(src, cancel=cancel)
+    cache = tmp_path / "cache"
+    with pytest.raises(install.InstallCancelled):
+        install.fetch_verified(src.as_uri(), good, cache, lambda s: None, cancel=cancel)
+    assert list(cache.iterdir()) == []  # no .part, and nothing a later install would trust
+
+    archive = tmp_path / "src.tar.gz"
+    with tarfile.open(archive, "w:gz") as tar:
+        info = tarfile.TarInfo("top/a.py")
+        info.size = 3
+        tar.addfile(info, io.BytesIO(b"a=1"))
+    with pytest.raises(install.InstallCancelled):
+        install.extract_tarball(archive, tmp_path / "upstream", cancel=cancel)
+    assert not (tmp_path / "upstream").exists() and not (tmp_path / "upstream.tmp").exists()
+    assert (install.extract_tarball(archive, tmp_path / "upstream") / "a.py").read_text() == "a=1"
+
+    # The installer hands its own cancel to them.
+    reporter = install.Reporter(lambda s: None)
+    reporter.cancel.set()
+    inst = install.Installer(Registry.load(), tmp_path / "envs", tmp_path / "models", reporter=reporter)
+    with pytest.raises(install.InstallCancelled):
+        inst._file(src.as_uri(), good, tmp_path / "models" / "m" / "extra.bin")
+    assert not (tmp_path / "models" / "m" / "extra.bin").exists()
+
+
+def test_weights_behind_a_licence_say_how_to_get_access(tmp_path, monkeypatch, capsys):
+    """A gated repository (Pixal3D's DINOv3 encoder) failed with the hub's own page of text."""
+
+    class GatedRepoError(Exception):
+        pass
+
+    class HfApi:
+        def model_info(self, *args, **kwargs):
+            raise GatedRepoError("401 Client Error")
+
+    def refused(**kwargs):
+        raise GatedRepoError("401 Client Error. Cannot access gated repo for url https://...")
+
+    hub = types.ModuleType("huggingface_hub")
+    hub.HfApi, hub.snapshot_download = HfApi, refused
+    utils = types.ModuleType("huggingface_hub.utils")
+    utils.filter_repo_objects = lambda *args, **kwargs: []
+    monkeypatch.setitem(sys.modules, "huggingface_hub", hub)
+    monkeypatch.setitem(sys.modules, "huggingface_hub.utils", utils)
+    spec = {"repo": "facebook/dinov3-vitl16", "revision": "0" * 40, "dest": str(tmp_path / "w")}
+    monkeypatch.setattr(sys, "argv", ["fetch", json.dumps(spec)])
+    with pytest.raises(SystemExit) as stopped:
+        fetch.main()
+    last = capsys.readouterr().out.strip().splitlines()[-1]
+    assert stopped.value.code == 1
+    assert "HF_TOKEN" in last and "https://huggingface.co/facebook/dinov3-vitl16" in last
+    # Anything else stays the error it is.
+    assert fetch.access_problem(OSError("No space left on device"), "a/b") is None

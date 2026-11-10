@@ -537,8 +537,8 @@ def test_a_family_with_nothing_to_build_here_needs_no_compiler(tmp_path, monkeyp
         raise AssertionError("asked for a CUDA toolchain")
 
     monkeypatch.setattr(install.toolchain, "build_env", no_compiler)
-    monkeypatch.setattr(install, "fetch_verified", lambda url, sha, cache, log: Path("/cache") / sha)
-    monkeypatch.setattr(install, "extract_tarball", lambda archive, dest: tmp_path / "up")
+    monkeypatch.setattr(install, "fetch_verified", lambda url, sha, cache, log, **kw: Path("/cache") / sha)
+    monkeypatch.setattr(install, "extract_tarball", lambda archive, dest, **kw: tmp_path / "up")
     site = tmp_path / "site"
     site.mkdir()
     monkeypatch.setattr(install, "site_packages", lambda py: site)

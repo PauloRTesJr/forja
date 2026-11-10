@@ -24,7 +24,9 @@ def main(argv: list[str] | None = None) -> None:
     serve.add_argument("--manifests", type=Path, action="append", default=[], help="extra manifest folders")
     serve.add_argument("--fit-mode", choices=[m.value for m in FitMode], default=FitMode.FIT_FIRST.value)
     serve.add_argument("--vram-reserve-gb", type=float, default=1.0)
-    serve.add_argument("--idle-unload-minutes", type=float, default=15)
+    serve.add_argument(
+        "--idle-unload-minutes", type=_minutes, default=15, help="0 keeps models loaded until asked"
+    )
     serve.add_argument("--tls-cert", type=Path)
     serve.add_argument("--tls-key", type=Path)
     serve.add_argument("--log-level", default="info")
@@ -127,6 +129,13 @@ def install(args: argparse.Namespace) -> None:
             installer.install(model, lane=args.lane, weights=not args.no_weights)
     except InstallError as e:
         sys.exit(f"install failed: {e}")
+
+
+def _minutes(raw: str) -> float:
+    value = float(raw)
+    if not value >= 0:  # also refuses nan
+        raise argparse.ArgumentTypeError("must be 0 (never) or more")
+    return value
 
 
 def _is_loopback(host: str) -> bool:

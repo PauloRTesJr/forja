@@ -30,6 +30,15 @@ import forja_engine
 # engine/src/forja_engine/__init__.py -> engine/
 ENGINE_ROOT = Path(forja_engine.__file__).resolve().parents[2]
 LANES = ("cuda", "rocm", "mps", "cpu")
+#: A family.yaml's `os` values, and how each is written for people.
+OSES = {"linux": "Linux", "windows": "Windows", "macos": "macOS"}
+
+
+def current_os() -> str:
+    """This machine's operating system, as family.yaml's `os` names it."""
+    if sys.platform == "win32":
+        return "windows"
+    return "macos" if sys.platform == "darwin" else "linux"
 
 
 def families_dir() -> Path:
@@ -68,6 +77,18 @@ class Family:
     torch_backend: dict[str, str] = field(default_factory=dict)
     # Per lane: imports that prove the upstream code and its compiled extensions load.
     smoke_by_lane: dict[str, str] = field(default_factory=dict)
+    # The operating systems the family can be built on (see OSES); empty means every one. For a
+    # family whose lane exists on an OS where one of its extensions does not compile (Pixal3D's
+    # NATTEN on Windows): a lane says which torch, not where the build works.
+    os: tuple[str, ...] = ()
+
+    def builds_here(self) -> bool:
+        return not self.os or current_os() in self.os
+
+    def only_on(self) -> str:
+        """The operating systems it is limited to, as words: "Linux", "Linux or macOS"."""
+        names = [OSES[o] for o in self.os]
+        return names[0] if len(names) == 1 else ", ".join(names[:-1]) + " or " + names[-1]
 
     def requirements(self, lane: str) -> Path:
         return self.root / "requirements" / f"{lane}.txt"
@@ -136,7 +157,11 @@ def load(name: str, root: Path | None = None) -> Family:
     for spec in (s for specs in build_by_lane.values() for s in specs):
         if split_build(spec)[1].startswith("-"):
             raise ValueError(f"{spec_path}: build entry {spec!r}: the only option is {NO_DEPS}")
+    only = tuple(str(o) for o in doc.get("os") or ())
+    if unknown := [o for o in only if o not in OSES]:
+        raise ValueError(f"{spec_path}: os names {', '.join(unknown)}; it may list {', '.join(OSES)}")
     return Family(
+        os=only,
         name=doc["name"],
         root=root,
         python=str(doc.get("python", "3.11")),

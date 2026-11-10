@@ -17,9 +17,18 @@ log = logging.getLogger(__name__)
 _STDERR_TAIL = 60
 
 
+def _exit_text(code: int | None) -> str:
+    if code is None:
+        return ""
+    if code < 0:
+        return f" (killed by signal {-code})"
+    # Windows reports a crash as an NTSTATUS, which reads as hex (0xc0000005).
+    return f" (exit code {code:#x})" if code > 255 else f" (exit code {code})"
+
+
 class WorkerCrashed(RuntimeError):
-    def __init__(self, family: str, tail: list[str]) -> None:
-        super().__init__(f"worker for {family} exited unexpectedly")
+    def __init__(self, family: str, tail: list[str], code: int | None = None) -> None:
+        super().__init__(f"worker for {family} exited unexpectedly{_exit_text(code)}")
         self.tail = tail
 
 
@@ -41,6 +50,7 @@ class Worker:
         self._pending: dict[str, asyncio.Future[dict[str, Any]]] = {}
         self._progress: dict[str, Callable[[int, int], None]] = {}
         self._tasks: list[asyncio.Task[None]] = []
+        self._stderr: asyncio.Task[None] | None = None
         self._lock = asyncio.Lock()
 
     @property
@@ -57,10 +67,11 @@ class Worker:
             stderr=asyncio.subprocess.PIPE,
             limit=1 << 20,
         )
-        self._tasks = [asyncio.create_task(self._read_stdout()), asyncio.create_task(self._read_stderr())]
+        self._stderr = asyncio.create_task(self._read_stderr())
+        self._tasks = [asyncio.create_task(self._read_stdout()), self._stderr]
         msg = await self._control_reply()
         if msg.get("type") != "ready":
-            raise WorkerCrashed(self.family, list(self.stderr_tail))
+            raise self._crashed()
         # The interpreter may be a launcher (a venv's python.exe on Windows) whose child runs
         # the worker, so the worker says which process it is.
         self.pid = msg.get("pid")
@@ -85,6 +96,9 @@ class Worker:
                 }
             )
             msg = await self._control_reply()
+            if msg.get("type") == "exited":
+                # It died while loading (out of memory, a missing DLL): its last words say which.
+                raise self._crashed()
             if msg.get("type") != "loaded":
                 raise StageFailed(msg.get("error", "load failed"), cancelled=False)
             self.adapter = adapter
@@ -128,9 +142,13 @@ class Worker:
         for t in self._tasks:
             t.cancel()
 
+    def _crashed(self) -> WorkerCrashed:
+        code = self.proc.returncode if self.proc else None
+        return WorkerCrashed(self.family, list(self.stderr_tail), code)
+
     async def _send(self, msg: dict[str, Any]) -> None:
         if not self.alive:
-            raise WorkerCrashed(self.family, list(self.stderr_tail))
+            raise self._crashed()
         assert self.proc and self.proc.stdin
         self.proc.stdin.write((json.dumps(msg) + "\n").encode())
         await self.proc.stdin.drain()
@@ -151,7 +169,11 @@ class Worker:
             else:
                 await self._control.put(msg)
         await self.proc.wait()
-        crash = WorkerCrashed(self.family, list(self.stderr_tail))
+        if self._stderr is not None:
+            # Why it died is in its last stderr lines, which may still be in the pipe.
+            with contextlib.suppress(Exception):
+                await asyncio.wait_for(asyncio.shield(self._stderr), timeout=2)
+        crash = self._crashed()
         for fut in self._pending.values():
             if not fut.done():
                 fut.set_exception(crash)

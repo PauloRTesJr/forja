@@ -12,6 +12,16 @@ GIB = 1 << 30
 
 
 @pytest.fixture
+def misbehaving_models(monkeypatch, tmp_path):
+    """The adapters of tests/misbehaving.py, importable by worker processes; returns a manifest
+    folder that names each as a model (test-slow, test-diesonload...)."""
+    import misbehaving
+
+    monkeypatch.setenv("PYTHONPATH", str(Path(__file__).parent))
+    return misbehaving.write_manifests(tmp_path / "manifests")
+
+
+@pytest.fixture
 def fake_mac(monkeypatch):
     """This process as an Apple Silicon Mac (M2 Pro, 32 GB) to the engine's hardware probes.
 

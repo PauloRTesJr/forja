@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from forja_engine import devices, families, toolchain
-from forja_engine.registry import Manifest
+from forja_engine.registry import Manifest, wrong_os
 
 GB = 1 << 30
 
@@ -113,8 +113,29 @@ def driver_version() -> str | None:
 
 
 def check_runs_here(m: Manifest, fam: families.Family | None, lane: str) -> Check | None:
-    if fam is None or (lane in fam.lanes and m.runs_on_lane(lane)):
+    if fam is None:
         return None
+    if lane in fam.lanes and m.runs_on_lane(lane):
+        if (why := wrong_os(m)) is None:
+            return None
+        # The hardware is right and the operating system is not: an extension has no build here.
+        return Check(
+            id=f"runs-here:{m.id}",
+            label=f"{m.name} on this computer",
+            ok=False,
+            found=families.OSES[families.current_os()],
+            need=fam.only_on(),
+            why=why + ".",
+            fix=Fix(
+                label="Run it on another computer",
+                steps=(
+                    f"Install Forja on a {fam.only_on()} computer with the hardware, and share its GPU "
+                    "from Settings there, or use a cloud GPU.",
+                    "Then add it under Settings → Where models run on this computer.",
+                ),
+            ),
+            models=(m.id,),
+        )
     lanes = [x for x in fam.lanes if m.runs_on_lane(x)] or list(fam.lanes)
     if devices.translated() and "mps" in lanes:
         # An Intel build under Rosetta sees no Apple GPU, though the Mac has one.

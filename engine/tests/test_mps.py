@@ -50,8 +50,8 @@ def plan(monkeypatch, tmp_path, model, lane):
         install, "_run", lambda cmd, log, env=None, cwd=None, **kw: commands.append([str(c) for c in cmd])
     )
     monkeypatch.setattr(install, "uv_binary", lambda: "uv")
-    monkeypatch.setattr(install, "fetch_verified", lambda url, sha, cache, log: Path("/cache") / sha)
-    monkeypatch.setattr(install, "extract_tarball", lambda archive, dest: dest)
+    monkeypatch.setattr(install, "fetch_verified", lambda url, sha, cache, log, **kw: Path("/cache") / sha)
+    monkeypatch.setattr(install, "extract_tarball", lambda archive, dest, **kw: dest)
     site = tmp_path / "site"
     site.mkdir(exist_ok=True)
     monkeypatch.setattr(install, "site_packages", lambda py: site)

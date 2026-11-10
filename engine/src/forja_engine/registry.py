@@ -127,6 +127,25 @@ class ManifestError(ValueError):
 
 
 @cache
+def _family(family: str, root: Path | None = None) -> families.Family | None:
+    if family in IN_ENGINE_FAMILIES:
+        return None
+    try:
+        return families.load(family, root)
+    except FileNotFoundError:
+        return None
+
+
+def wrong_os(m: Manifest) -> str | None:
+    """Why the model cannot be installed on this operating system, as a sentence for the person,
+    or None when its family builds here (family.yaml's `os`)."""
+    fam = _family(m.family, m.family_dir)
+    if fam is None or fam.builds_here():
+        return None
+    return f"{m.name} can only be installed on {fam.only_on()}: run it on another computer or a cloud GPU"
+
+
+@cache
 def upstream_pin(family: str, root: Path | None = None) -> str:
     """The sha256 of the upstream source a family runs, or "" for families with none."""
     if family in IN_ENGINE_FAMILIES:

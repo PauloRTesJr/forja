@@ -5,6 +5,9 @@ name: pixal3d
 python: "3.11"
 # No mps lane: TRELLIS.2's voxel, mesh and sparse convolution extensions are CUDA kernels.
 lanes: [cuda]
+# NATTEN (below) does not build on Windows, so a Windows computer is not offered the install
+# and sends these models to a Linux one.
+os: [linux]
 # Upstream installs on top of TRELLIS.2's environment: torch 2.6.0 on CUDA 12.4.
 torch_backend: { cuda: cu124 }
 upstream:

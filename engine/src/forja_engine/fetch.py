@@ -26,6 +26,22 @@ def folder_bytes(root: Path) -> int:
     return total
 
 
+def access_problem(e: BaseException, repo: str) -> str | None:
+    """What to do when the hub refuses the download for lack of access, or None for other errors.
+
+    A gated repository answers 401 without a token and 403 with one that has not accepted its
+    terms; the hub's own message is a page of text that names neither step.
+    """
+    status = getattr(getattr(e, "response", None), "status_code", None)
+    if type(e).__name__ != "GatedRepoError" and status not in (401, 403):
+        return None
+    return (
+        f"the weights at https://huggingface.co/{repo} need a Hugging Face account that accepted their "
+        "terms: accept them on that page, set HF_TOKEN to an access token of that account in the "
+        "environment Forja starts from, restart Forja and install again"
+    )
+
+
 def main() -> None:
     spec = json.loads(sys.argv[1])
     from huggingface_hub import HfApi, snapshot_download
@@ -52,13 +68,22 @@ def main() -> None:
             print(f"FORJA_PROGRESS {min(folder_bytes(dest), total or 1 << 62)} {total}", flush=True)
 
     threading.Thread(target=report, daemon=True).start()
-    snapshot_download(
-        repo_id=spec["repo"],
-        revision=spec["revision"],
-        allow_patterns=spec.get("allow"),
-        ignore_patterns=spec.get("ignore"),
-        local_dir=dest,
-    )
+    try:
+        snapshot_download(
+            repo_id=spec["repo"],
+            revision=spec["revision"],
+            allow_patterns=spec.get("allow"),
+            ignore_patterns=spec.get("ignore"),
+            local_dir=dest,
+        )
+    except Exception as e:
+        done.set()
+        problem = access_problem(e, spec["repo"])
+        if problem is None:
+            raise
+        # The installer reports a failed command by its last line of output.
+        print(problem, flush=True)
+        sys.exit(1)
     done.set()
     print(f"FORJA_PROGRESS {total or folder_bytes(dest)} {total}", flush=True)
 

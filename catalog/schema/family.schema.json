@@ -19,6 +19,13 @@
       "uniqueItems": true,
       "items": { "enum": ["cuda", "rocm", "mps", "cpu"] }
     },
+    "os": {
+      "description": "The operating systems the family can be built on; leave it out when it builds wherever its lanes exist. Elsewhere its models are not offered for install and run on another computer.",
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "enum": ["linux", "windows", "macos"] }
+    },
     "upstream": {
       "description": "Upstream model code, downloaded at install time and never committed to Forja.",
       "type": "object",

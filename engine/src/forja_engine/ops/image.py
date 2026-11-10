@@ -30,6 +30,12 @@ def alpha_bbox(img: Image.Image, threshold: int = 16) -> tuple[int, int, int, in
 
 def frame(img: Image.Image, size: int, margin: float = 0.08) -> Image.Image:
     """Crop to the subject, pad to a centered square with a margin, resize to `size`."""
+    if not (np.asarray(img.getchannel("A")) > 16).any():  # the threshold alpha_bbox crops by
+        # A blank or one-colour picture: the stages after this one would model nothing.
+        raise ValueError(
+            "No subject was found in the image: nothing is left once its background is removed. "
+            "Use a picture of one subject that stands out from its background."
+        )
     x0, y0, x1, y1 = alpha_bbox(img)
     subject = img.crop((x0, y0, x1, y1))
     side = int(max(subject.size) * (1 + 2 * margin))

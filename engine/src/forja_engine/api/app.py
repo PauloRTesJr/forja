@@ -22,7 +22,7 @@ from forja_engine.adapters.builtin import offered
 from forja_engine.api.version import API_VERSION
 from forja_engine.devices import detect
 from forja_engine.install import STEPS, Installer, InstallError, Reporter, _run
-from forja_engine.registry import Manifest, ManifestError, Registry
+from forja_engine.registry import Manifest, ManifestError, Registry, wrong_os
 from forja_engine.runs import RunManager, RunRequest
 from forja_engine.scheduler import Scheduler
 from forja_engine.sdk import StageType
@@ -83,6 +83,7 @@ def _problem(status: int, title: str, detail: str) -> JSONResponse:
 
 def create_app(cfg: EngineConfig) -> FastAPI:
     store = ArtifactStore(cfg.store_root)
+    store.sweep_tmp()
     report = detect(cfg.store_root)
 
     def load_registry() -> Registry:
@@ -97,9 +98,13 @@ def create_app(cfg: EngineConfig) -> FastAPI:
     last_activity = [time.monotonic()]
 
     async def idle_unloader() -> None:
-        # Frees VRAM for games and Unity when nothing has run for a while.
+        # Frees VRAM for games and Unity when nothing has run for a while. Zero means never:
+        # models stay loaded until asked to go.
+        if cfg.idle_unload_seconds <= 0:
+            return
         while True:
-            await asyncio.sleep(min(30.0, cfg.idle_unload_seconds))
+            # Never shorter than a second: a tiny setting must not turn this into a busy loop.
+            await asyncio.sleep(max(1.0, min(30.0, cfg.idle_unload_seconds)))
             busy = any(not r.done for r in runs.runs.values())
             if not busy and time.monotonic() - last_activity[0] >= cfg.idle_unload_seconds:
                 await scheduler.unload_all()
@@ -181,7 +186,8 @@ def create_app(cfg: EngineConfig) -> FastAPI:
         refresh()
         loaded = {m for lane in scheduler.lanes.values() for m in lane.vram.loaded}
         out = []
-        for m in registry.models.values():
+        # Best first, so the models of a stage read from the highest-ranked down (docs/models.md).
+        for m in sorted(registry.models.values(), key=lambda m: (-m.rank, m.id)):
             try:
                 device: str | None = scheduler.place(m)
             except Exception:
@@ -288,6 +294,8 @@ def create_app(cfg: EngineConfig) -> FastAPI:
             return running.to_json()
         if m.installed and runs_active():
             raise HTTPException(409, f"{m.name} is in use; repair it when no job is running")
+        if (why := wrong_os(m)) is not None:
+            raise HTTPException(409, why)
         opts = req or InstallRequest()
 
         def work(r: TaskReporter) -> None:
@@ -415,18 +423,22 @@ def create_app(cfg: EngineConfig) -> FastAPI:
             store.touch(ref)
             return {"hash": ref}
         tmp = store.new_upload()
-        size = 0
-        with tmp.open("wb") as f:
-            async for chunk in request.stream():
-                size += len(chunk)
-                if size > cfg.max_upload_bytes:
-                    tmp.unlink(missing_ok=True)
-                    raise HTTPException(413, "upload too large")
-                f.write(chunk)
         try:
-            return {"hash": store.put_verified(ref, tmp)}
-        except ValueError as e:
-            raise HTTPException(422, str(e)) from e
+            size = 0
+            with tmp.open("wb") as f:
+                async for chunk in request.stream():
+                    size += len(chunk)
+                    if size > cfg.max_upload_bytes:
+                        raise HTTPException(413, "upload too large")
+                    f.write(chunk)
+            try:
+                return {"hash": store.put_verified(ref, tmp)}
+            except ValueError as e:
+                raise HTTPException(422, str(e)) from e
+        finally:
+            # Closed by now, as Windows needs to delete it. Gone already when it reached the
+            # store; still here when the upload was refused or the caller hung up half way.
+            tmp.unlink(missing_ok=True)
 
     @app.post("/v1/runs", dependencies=guarded, status_code=202)
     async def run_create(req: RunRequest) -> dict[str, Any]:

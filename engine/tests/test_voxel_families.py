@@ -13,14 +13,18 @@ import sys
 import types
 from pathlib import Path
 
+import jsonschema
 import numpy as np
 import pytest
 import trimesh
+from fastapi.testclient import TestClient
 from PIL import Image
 
-from forja_engine import families, install
+from forja_engine import catalog, checks, families, install
+from forja_engine.api.app import EngineConfig, create_app
 from forja_engine.ops import mesh as mesh_ops
 from forja_engine.registry import Registry
+from forja_engine.scheduler import Scheduler
 from forja_engine.sdk import ArtifactKind, Cancelled, Device, StageContext, StageInput, StageType
 
 
@@ -573,6 +577,7 @@ def test_pixal3d_mv_places_each_view_and_frames_them_alike(tmp_path, pixal):
 
 
 def test_pixal3d_install_builds_without_deps_where_asked_and_puts_naf_on_the_path(tmp_path, monkeypatch):
+    monkeypatch.setattr(families, "current_os", lambda: "linux")  # the one OS its family builds on
     commands = []
     monkeypatch.setattr(
         install, "_run", lambda cmd, log, env=None, cwd=None, **kw: commands.append([str(c) for c in cmd])
@@ -581,9 +586,9 @@ def test_pixal3d_install_builds_without_deps_where_asked_and_puts_naf_on_the_pat
     monkeypatch.setattr(install.toolchain, "build_env", lambda backend, log: {})
     fetched = []
     monkeypatch.setattr(
-        install, "fetch_verified", lambda url, sha, cache, log: fetched.append(url) or Path("/c") / sha
+        install, "fetch_verified", lambda url, sha, cache, log, **kw: fetched.append(url) or Path("/c") / sha
     )
-    monkeypatch.setattr(install, "extract_tarball", lambda archive, dest: dest)
+    monkeypatch.setattr(install, "extract_tarball", lambda archive, dest, **kw: dest)
     site = tmp_path / "site"
     site.mkdir()
     monkeypatch.setattr(install, "site_packages", lambda py: site)
@@ -621,7 +626,7 @@ def test_weights_come_from_every_pinned_source(tmp_path, monkeypatch):
     monkeypatch.setattr(install, "_run", lambda cmd, log, **kw: specs.append(json.loads(cmd[-1])))
     blob = tmp_path / "blob"
     blob.write_bytes(b"naf")
-    monkeypatch.setattr(install, "fetch_verified", lambda url, sha, cache, log: blob)
+    monkeypatch.setattr(install, "fetch_verified", lambda url, sha, cache, log, **kw: blob)
     inst = install.Installer(Registry.load(), tmp_path / "envs", tmp_path / "models", log=lambda s: None)
     w = inst.manifest("pixal3d").weights
     pinned = {
@@ -630,7 +635,8 @@ def test_weights_come_from_every_pinned_source(tmp_path, monkeypatch):
     monkeypatch.setattr(
         install,
         "sha256_file",
-        lambda path: next((h for p, h in pinned.items() if str(path).endswith(p)), "?"),
+        # As posix: the pinned paths use "/", and on Windows str(path) does not.
+        lambda path, **kw: next((h for p, h in pinned.items() if Path(path).as_posix().endswith(p)), "?"),
     )
     dest = inst.weights(inst.manifest("pixal3d"))
     assert [(s["repo"], Path(s["dest"])) for s in specs] == [
@@ -639,3 +645,59 @@ def test_weights_come_from_every_pinned_source(tmp_path, monkeypatch):
     ]
     assert "ckpts/slat_flow_img2shape_dit_1_3B_1024_bf16.safetensors" in specs[0]["allow"]
     assert (dest / "naf" / "naf_release.pth").read_bytes() == b"naf"
+
+
+ONLY_LINUX = "can only be installed on Linux: run it on another computer or a cloud GPU"
+
+
+def test_pixal3d_is_not_offered_where_its_family_cannot_be_built(tmp_path, monkeypatch):
+    """NATTEN does not build on Windows. A Windows PC with the right GPU was told Pixal3D fits, and
+    first-run Setup recommended a 26 GB install that failed at the build."""
+    reg = Registry.load().bind(tmp_path / "envs", tmp_path / "models")
+    fam = families.load("pixal3d")
+    scheduler = Scheduler({"cuda:0": 11 << 30, "cpu": 8 << 30})
+    started = []
+    monkeypatch.setattr(install, "_run", lambda cmd, log, **kw: started.append(cmd))
+
+    monkeypatch.setattr(families, "current_os", lambda: "windows")
+    for model in ("pixal3d", "pixal3d-mv"):
+        m = reg.models[model]
+        assert scheduler.fit(m) == (None, "unsupported")
+        check = checks.check_runs_here(m, fam, "cuda")
+        assert check is not None and not check.ok
+        assert (check.found, check.need) == ("Windows", "Linux")
+        assert check.why == f"{m.name} {ONLY_LINUX}." and not check.fix.command
+    assert scheduler.fit(reg.models["triposg"])[0] == "cuda:0"  # a family with no `os` builds anywhere
+    inst = install.Installer(reg, tmp_path / "envs", tmp_path / "models", log=lambda s: None)
+    with pytest.raises(install.InstallError, match=f"Pixal3D {ONLY_LINUX}"):
+        inst.install("pixal3d", lane="cuda")
+    assert started == []  # refused before anything is fetched or built
+    app = create_app(EngineConfig(store_root=tmp_path / "store"))
+    with TestClient(app) as client:
+        refused = client.post("/v1/models/pixal3d/install")
+        assert refused.status_code == 409 and refused.json()["detail"] == f"Pixal3D {ONLY_LINUX}"
+        listed = {m["id"]: m for m in client.get("/v1/models").json()}
+        assert (listed["pixal3d"]["runs_on"], listed["pixal3d"]["fit"]) == (None, "unsupported")
+
+    monkeypatch.setattr(families, "current_os", lambda: "linux")
+    assert scheduler.fit(reg.models["pixal3d"]) == ("cuda:0", "offload")
+    assert checks.check_runs_here(reg.models["pixal3d"], fam, "cuda") is None
+
+    # A Mac is told what it was told before: the hardware, since the family has no lane for it.
+    monkeypatch.setattr(families, "current_os", lambda: "macos")
+    on_mac = checks.check_runs_here(reg.models["pixal3d"], fam, "mps")
+    assert on_mac is not None and "hardware" in on_mac.why
+
+
+def test_a_family_says_where_it_builds_and_the_schema_knows_the_field(tmp_path):
+    assert families.load("pixal3d").os == ("linux",) and families.load("trellis2").os == ()
+    schema = json.loads((catalog.SCHEMAS / "family.schema.json").read_text(encoding="utf-8"))
+    validator = jsonschema.Draft202012Validator(schema)
+    doc = {"name": "example", "lanes": ["cuda"], "os": ["linux", "windows"]}
+    assert list(validator.iter_errors(doc)) == []
+    assert list(validator.iter_errors({**doc, "os": ["beos"]}))
+    root = tmp_path / "example"
+    root.mkdir()
+    (root / "family.yaml").write_text("name: example\nlanes: [cuda]\nos: [beos]\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="os names beos"):
+        families.load("example", root)

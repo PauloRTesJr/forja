@@ -12,12 +12,14 @@ import contextlib
 import os
 import shutil
 import tempfile
+import time
 from pathlib import Path
 
 import blake3
 
 PREFIX = "blake3:"
 _CHUNK = 1 << 20
+_STALE_TMP_SECONDS = 24 * 3600.0
 
 
 def hash_file(path: Path) -> str:
@@ -57,6 +59,20 @@ class ArtifactStore:
         with contextlib.suppress(OSError, ValueError):
             os.utime(self.path(ref))
 
+    def sweep_tmp(self, older_than: float = _STALE_TMP_SECONDS) -> None:
+        """Removes what interrupted uploads and stages left in tmp. An engine is stopped by
+        killing it, so nothing else ever does. Recent entries stay: the core's own uploads, and
+        another engine on the same store, may be writing them."""
+        cutoff = time.time() - older_than
+        for entry in self.tmp.iterdir():
+            with contextlib.suppress(OSError):
+                if entry.lstat().st_mtime >= cutoff:
+                    continue
+                if entry.is_dir() and not entry.is_symlink():
+                    shutil.rmtree(entry, ignore_errors=True)
+                else:
+                    entry.unlink()
+
     def scratch_dir(self) -> Path:
         # Scratch lives under the store root so `put_file` is a same-volume rename.
         return Path(tempfile.mkdtemp(dir=self.tmp))
@@ -66,7 +82,9 @@ class ArtifactStore:
         ref = hash_file(src)
         dst = self.path(ref)
         if dst.exists():
-            src.unlink(missing_ok=True)
+            # A stage that passes an input through hands back the stored object itself.
+            if not os.path.samefile(src, dst):
+                src.unlink(missing_ok=True)
             self.touch(ref)
             return ref
         dst.parent.mkdir(parents=True, exist_ok=True)

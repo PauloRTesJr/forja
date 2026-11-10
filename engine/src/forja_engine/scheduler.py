@@ -13,18 +13,20 @@ import itertools
 import logging
 import os
 import time
+import traceback
 from collections.abc import Callable
 from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures.process import BrokenProcessPool
 from dataclasses import dataclass, field
 from typing import Any
 
 from forja_engine import gpumem
 from forja_engine.adapters.builtin import BUILTINS
 from forja_engine.metrics import Sampler, rss_of
-from forja_engine.registry import Manifest, instantiate
-from forja_engine.sdk import StageContext, StageType
+from forja_engine.registry import Manifest, instantiate, wrong_os
+from forja_engine.sdk import Cancelled, StageContext, StageType
 from forja_engine.vram import FitMode, VramManager
-from forja_engine.worker import ctx_from_json, ctx_to_json, outputs_to_json
+from forja_engine.worker import bad_input, ctx_from_json, ctx_to_json, outputs_to_json
 from forja_engine.workers import StageFailed, WorkerCrashed, WorkerPool
 
 log = logging.getLogger(__name__)
@@ -43,6 +45,8 @@ class WorkItem:
     seq: int = 0
     # Sample resident memory and GPU utilization while it runs (a benchmark's run).
     measure: bool = False
+    # Set by a cancel that arrives while the stage is on the lane, also before the worker has it.
+    cancelled: bool = False
     future: asyncio.Future[dict[str, Any]] = field(
         default_factory=lambda: asyncio.get_running_loop().create_future()
     )
@@ -63,7 +67,13 @@ def _run_builtin(task: str, ctx_json: dict[str, Any], measure: bool = False) -> 
     ctx = ctx_from_json(ctx_json)
     with Sampler(rss_of(os.getpid()) if measure else None) as sampler:
         started = time.perf_counter()
-        outputs = BUILTINS[StageType(task)]().run(ctx)
+        try:
+            outputs = BUILTINS[StageType(task)]().run(ctx)
+        except Exception as e:
+            if (problem := bad_input(e)) is not None:
+                traceback.print_exc()  # to the engine's log; the person gets the sentence
+                raise ValueError(problem) from None
+            raise
         seconds = time.perf_counter() - started
     return {
         "type": "result",
@@ -136,9 +146,12 @@ class DeviceLane:
         for item in self.ready:
             if item.key == key:
                 self.ready.remove(item)
-                item.future.set_exception(StageFailed("cancelled", cancelled=True))
+                if not item.future.done():  # done when the run that waited for it is gone already
+                    item.future.set_exception(StageFailed("cancelled", cancelled=True))
                 return True
         if self.running and self.running.key == key and self.running.manifest:
+            # The worker only knows the stage once its model is loaded; until then the flag stops it.
+            self.running.cancelled = True
             worker = self.workers.find(self.running.manifest.family)
             if worker:
                 await worker.cancel(key)
@@ -146,9 +159,15 @@ class DeviceLane:
         return False
 
     async def unload_all(self) -> None:
+        """Frees every model no stage is running with. The one in use stays: its worker answers
+        an unload only after the stage, so asking would hold the caller until then, and the
+        job's next stage would load it again."""
+        busy = self.running.model if self.running else None
         for model in list(self.vram.loaded):
-            await self._unload(model)
-        self.current_model = None
+            if model != busy:
+                await self._unload(model)
+        if busy is None:
+            self.current_model = None
 
     async def _loop(self) -> None:
         while True:
@@ -208,12 +227,17 @@ class DeviceLane:
             item.ctx.params.setdefault("offload", True)
         self.vram.touch(m.id)
         self.current_model = m.id
+        self._still_wanted(item)
         if self.in_process:
             adapter = self._in_process_adapters[m.id]
             item.ctx.progress = item.on_progress
+            item.ctx.cancelled = lambda: item.cancelled
             with self._sampler(item, os.getpid()) as sampler:
                 started = time.perf_counter()
-                outputs = await asyncio.to_thread(adapter.run, item.ctx)
+                try:
+                    outputs = await asyncio.to_thread(adapter.run, item.ctx)
+                except Cancelled:
+                    raise StageFailed("cancelled", cancelled=True) from None
                 seconds = time.perf_counter() - started
             return {
                 "seconds": seconds,
@@ -226,6 +250,7 @@ class DeviceLane:
                 loading = time.perf_counter()
                 await worker.load(m.adapter, self.device, _weights(m), offload=self._offload.get(m.id, False))
                 load_seconds += time.perf_counter() - loading
+                self._still_wanted(item)
             try:
                 before = self._read()
                 with self._sampler(item, worker.pid) as sampler:
@@ -242,9 +267,17 @@ class DeviceLane:
                 self.vram.did_unload(m.id)
                 if attempt == 2:
                     raise
+                self._still_wanted(item)
                 log.warning("worker %s crashed; restarting and retrying %s once", m.family, item.key)
                 self.vram.did_load(m.id, estimate, offloaded=self._offload.get(m.id, False))
         raise AssertionError("unreachable")
+
+    @staticmethod
+    def _still_wanted(item: WorkItem) -> None:
+        """Stops a stage that was cancelled, or whose run ended, while its model loaded: nobody
+        waits for it, and the device belongs to the next stage."""
+        if item.cancelled or item.future.done():
+            raise StageFailed("cancelled", cancelled=True)
 
     def _read(self) -> int | None:
         return self.used() if self.used else None
@@ -330,7 +363,8 @@ class Scheduler:
             )
             for dev, budget in devices.items()
         }
-        self.pool = ProcessPoolExecutor(max_workers=cpu_workers or max(1, (os.cpu_count() or 2) - 1))
+        self._cpu_workers = cpu_workers or max(1, (os.cpu_count() or 2) - 1)
+        self.pool = ProcessPoolExecutor(max_workers=self._cpu_workers)
         self._seq = itertools.count()
         self._cpu_running: dict[str, asyncio.Future[Any]] = {}
 
@@ -355,8 +389,11 @@ class Scheduler:
         """Where a model would run here, installed or not, and how well.
 
         "fits" in the device's budget, "offload" runs with part of it in RAM (slower), "too-big"
-        is below the model's minimum, "unsupported" has no device the model can use.
+        is below the model's minimum, "unsupported" has no device the model can use, or a family
+        that cannot be built on this operating system (the model's runs-here check says which).
         """
+        if wrong_os(manifest) is not None:
+            return None, "unsupported"
         for dev, lane in self.lanes.items():
             backend = dev.split(":")[0]
             if not manifest.supports(backend):
@@ -390,16 +427,40 @@ class Scheduler:
         measure: bool = False,
     ) -> dict[str, Any]:
         if manifest is None:
-            loop = asyncio.get_running_loop()
-            fut = loop.run_in_executor(self.pool, _run_builtin, str(ctx.task), ctx_to_json(ctx), measure)
-            self._cpu_running[key] = fut
-            try:
-                return await fut
-            finally:
-                self._cpu_running.pop(key, None)
+            return await self._in_pool(key, ctx, measure)
         item = WorkItem(key, ctx, manifest, priority, on_progress, seq=next(self._seq), measure=measure)
         self.lanes[self.place(manifest)].submit(item)
         return await item.future
+
+    async def _in_pool(self, key: str, ctx: StageContext, measure: bool) -> dict[str, Any]:
+        """Runs a built-in stage in the process pool.
+
+        A pool process that dies (a crash in native code, the OS short of memory) breaks the
+        whole pool: every stage in it fails, and so would every later one. The pool is replaced
+        and the stage tried once more, since it may only have shared the pool with the one that
+        died.
+        """
+        loop = asyncio.get_running_loop()
+        for attempt in (1, 2):
+            pool = self.pool
+            try:
+                fut = loop.run_in_executor(pool, _run_builtin, str(ctx.task), ctx_to_json(ctx), measure)
+                self._cpu_running[key] = fut
+                return await fut
+            except BrokenProcessPool:
+                if self.pool is pool:
+                    pool.shutdown(wait=False, cancel_futures=True)
+                    self.pool = ProcessPoolExecutor(max_workers=self._cpu_workers)
+                if attempt == 2:
+                    raise StageFailed(
+                        f"the process running {ctx.task} stopped unexpectedly, twice: it crashed, or the "
+                        "computer ran short of memory",
+                        cancelled=False,
+                    ) from None
+                log.warning("the process pool broke while %s ran; trying it once more", key)
+            finally:
+                self._cpu_running.pop(key, None)
+        raise AssertionError("unreachable")
 
     async def cancel(self, key: str) -> None:
         for lane in self.lanes.values():

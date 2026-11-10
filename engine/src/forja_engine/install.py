@@ -28,12 +28,12 @@ import threading
 import time
 import urllib.request
 from collections import deque
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
 
 from forja_engine import families, toolchain
-from forja_engine.registry import Manifest, Registry
+from forja_engine.registry import Manifest, Registry, wrong_os
 
 Log = Callable[[str], None]
 _CHUNK = 1 << 20
@@ -129,17 +129,21 @@ def _run(
 ) -> None:
     """Run a command, logging its output as it comes; on_line may claim a line (returns True)."""
     log("$ " + " ".join(str(c) for c in cmd))
-    proc = subprocess.Popen(
-        [str(c) for c in cmd],
-        env={**os.environ, **(env or {})},
-        cwd=cwd,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-    )
+    try:
+        proc = subprocess.Popen(
+            [str(c) for c in cmd],
+            env={**os.environ, **(env or {})},
+            cwd=cwd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+    except OSError as e:
+        # The OS names no program in "The system cannot find the file specified".
+        raise InstallError(f"could not start {cmd[0]}: {e.strerror or e}") from e
     stop = threading.Event()
 
     def watch() -> None:
@@ -170,25 +174,50 @@ def _run(
         )
 
 
-def sha256_file(path: Path) -> str:
+def _stop_if(cancel: threading.Event | None) -> None:
+    if cancel is not None and cancel.is_set():
+        raise InstallCancelled("cancelled")
+
+
+def sha256_file(path: Path, cancel: threading.Event | None = None) -> str:
+    """The file's sha256. `cancel` is looked at every megabyte: hashing a model takes a while."""
     h = hashlib.sha256()
     with path.open("rb") as f:
         while chunk := f.read(_CHUNK):
+            _stop_if(cancel)
             h.update(chunk)
     return h.hexdigest()
 
 
-def fetch_verified(url: str, sha256: str, cache: Path, log: Log) -> Path:
-    """Download url into a content-addressed cache, refusing anything that fails the hash."""
+def fetch_verified(
+    url: str, sha256: str, cache: Path, log: Log, cancel: threading.Event | None = None
+) -> Path:
+    """Download url into a content-addressed cache, refusing anything that fails the hash.
+
+    A cancel stops it between chunks and leaves nothing: only a file that passed the hash is
+    ever at the path a later install looks at.
+    """
     cache.mkdir(parents=True, exist_ok=True)
     dst = cache / sha256
-    if dst.is_file() and sha256_file(dst) == sha256:
+    if dst.is_file() and sha256_file(dst, cancel) == sha256:
         return dst
     tmp = dst.with_suffix(".part")
     log(f"downloading {url}")
-    with urllib.request.urlopen(url, timeout=60) as resp, tmp.open("wb") as f:
-        shutil.copyfileobj(resp, f, _CHUNK)
-    actual = sha256_file(tmp)
+    try:
+        with urllib.request.urlopen(url, timeout=60) as resp, tmp.open("wb") as f:
+            while chunk := resp.read(_CHUNK):
+                _stop_if(cancel)
+                f.write(chunk)
+        actual = sha256_file(tmp, cancel)
+    except InstallCancelled:
+        tmp.unlink(missing_ok=True)
+        raise
+    except OSError as e:  # URLError, a timeout, a connection cut half way
+        tmp.unlink(missing_ok=True)
+        reason = getattr(e, "reason", None) or e
+        raise InstallError(
+            f"could not download {url}: {reason}. Check the internet connection, then install again."
+        ) from e
     if actual != sha256:
         tmp.unlink(missing_ok=True)
         raise InstallError(f"{url}: sha256 is {actual}, expected {sha256}; refusing to use it")
@@ -196,8 +225,11 @@ def fetch_verified(url: str, sha256: str, cache: Path, log: Log) -> Path:
     return dst
 
 
-def extract_tarball(archive: Path, dest: Path) -> Path:
-    """Extract a GitHub codeload tarball, dropping its single top-level folder."""
+def extract_tarball(archive: Path, dest: Path, cancel: threading.Event | None = None) -> Path:
+    """Extract a GitHub codeload tarball, dropping its single top-level folder.
+
+    A cancel stops it between files, before `dest` is touched.
+    """
     marker = dest / ".forja-extracted"
     # A marker beside nothing else means the source was cleaned away since: extract it again.
     if marker.is_file() and marker.read_text() == archive.name and any(p != marker for p in dest.iterdir()):
@@ -205,8 +237,18 @@ def extract_tarball(archive: Path, dest: Path) -> Path:
     tmp = dest.with_name(dest.name + ".tmp")
     shutil.rmtree(tmp, ignore_errors=True)
     tmp.mkdir(parents=True)
-    with tarfile.open(archive, "r:gz") as tar:
-        tar.extractall(tmp, filter="data")
+
+    def members(tar: tarfile.TarFile) -> Iterator[tarfile.TarInfo]:
+        for member in tar:
+            _stop_if(cancel)
+            yield member
+
+    try:
+        with tarfile.open(archive, "r:gz") as tar:
+            tar.extractall(tmp, members=members(tar), filter="data")
+    except InstallCancelled:
+        shutil.rmtree(tmp, ignore_errors=True)
+        raise
     tops = [p for p in tmp.iterdir()]
     root = tops[0] if len(tops) == 1 and tops[0].is_dir() else tmp
     shutil.rmtree(dest, ignore_errors=True)
@@ -293,6 +335,10 @@ class Installer:
                 f"{model_id} ({fam.name}) runs on lanes {', '.join(here) or 'none'}; this machine is {lane}. "
                 "Route this model to a remote provider instead."
             )
+        if (why := wrong_os(manifest)) is not None:
+            # Refused before anything is downloaded, not an hour later when an extension fails to build.
+            self.report.step("checks", "failed")
+            raise InstallError(why)
         started = time.monotonic()
         build_env = dict(fam.env)
         env_dir = self.envs_dir / fam.name
@@ -374,8 +420,9 @@ class Installer:
         assert fam.upstream
         paths = []
         for up in (fam.upstream, *fam.extra_upstreams):
-            archive = fetch_verified(up.url, up.sha256, self.envs_dir / "_downloads", self.log)
-            src = extract_tarball(archive, env_dir / up.folder)
+            cancel = self.report.cancel
+            archive = fetch_verified(up.url, up.sha256, self.envs_dir / "_downloads", self.log, cancel=cancel)
+            src = extract_tarball(archive, env_dir / up.folder, cancel=cancel)
             self.log(f"upstream source ({up.license}) at {src}")
             paths += [(src / p).resolve() for p in up.pythonpath]
         pth = site_packages(python) / f"forja-{fam.name}-upstream.pth"
@@ -429,13 +476,14 @@ class Installer:
         )
         for f in files:
             path = dest / f["path"]
-            if "sha256" in f and sha256_file(path) != f["sha256"]:
+            if "sha256" in f and sha256_file(path, cancel=self.report.cancel) != f["sha256"]:
                 raise InstallError(f"{path}: sha256 mismatch; delete it and install again")
 
     def _file(self, url: str, sha256: str, path: Path) -> None:
-        if path.is_file() and sha256_file(path) == sha256:
+        cancel = self.report.cancel
+        if path.is_file() and sha256_file(path, cancel=cancel) == sha256:
             return
-        cached = fetch_verified(url, sha256, self.envs_dir / "_downloads", self.log)
+        cached = fetch_verified(url, sha256, self.envs_dir / "_downloads", self.log, cancel=cancel)
         path.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(cached, path)
 
@@ -457,29 +505,48 @@ class Installer:
         env_dir = self.envs_dir / manifest.family
         self.log(f"removing {self.models_dir / model_id}")
         rmtree(self.models_dir / model_id)
-        path = env_dir / "forja-installed.json"
-        state = json.loads(path.read_text()) if path.is_file() else {"models": {}}
+        state = _read_record(env_dir)
         state["models"].pop(model_id, None)
         if state["models"]:
-            path.write_text(json.dumps(state, indent=2))
+            _write_record(env_dir, state)
             return
         self.log(f"removing {env_dir}: no other model uses it")
         rmtree(env_dir)
 
     def _record(self, env_dir: Path, manifest: Manifest, lane: str) -> None:
         env_dir.mkdir(parents=True, exist_ok=True)
-        path = env_dir / "forja-installed.json"
-        state = json.loads(path.read_text()) if path.is_file() else {"models": {}}
+        state = _read_record(env_dir)
         state["lane"] = lane
         state["models"][manifest.id] = {
             "revision": (manifest.weights or {}).get("revision"),
             "installed_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         }
-        path.write_text(json.dumps(state, indent=2))
+        _write_record(env_dir, state)
+
+
+_RECORD = "forja-installed.json"
+
+
+def _read_record(env_dir: Path) -> dict[str, Any]:
+    """What is installed in a family environment. A record cut short (the engine is stopped by
+    killing it, and a power cut can leave the file empty) reads as nothing installed: installing
+    again repairs it, where an error here would stop the engine from starting at all."""
+    try:
+        state = json.loads((env_dir / _RECORD).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {"models": {}}
+    if not isinstance(state, dict) or not isinstance(state.get("models"), dict):
+        return {"models": {}}
+    return state
+
+
+def _write_record(env_dir: Path, state: dict[str, Any]) -> None:
+    tmp = env_dir / (_RECORD + ".tmp")
+    tmp.write_text(json.dumps(state, indent=2), encoding="utf-8")
+    os.replace(tmp, env_dir / _RECORD)
 
 
 def installed_models(env_dir: Path) -> set[str]:
-    path = env_dir / "forja-installed.json"
-    if not path.is_file() or not families.interpreter(env_dir).exists():
+    if not (env_dir / _RECORD).is_file() or not families.interpreter(env_dir).exists():
         return set()
-    return set(json.loads(path.read_text()).get("models", {}))
+    return set(_read_record(env_dir)["models"])

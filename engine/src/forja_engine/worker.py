@@ -69,6 +69,22 @@ def ctx_from_json(d: dict[str, Any]) -> StageContext:
     )
 
 
+def bad_input(e: BaseException) -> str | None:
+    """What to tell the person when a stage failed because of the file they gave it, or None.
+
+    Pillow's own words name a path inside the store, which says nothing to them. Matched by
+    name, so a worker whose environment has no Pillow need not import it.
+    """
+    name = type(e).__name__
+    if name == "UnidentifiedImageError":
+        return "This file is not an image Forja can read (PNG, JPEG or WebP)."
+    if name == "DecompressionBombError":
+        return "This image has too many pixels to open safely. Scale it down and try again."
+    if isinstance(e, OSError) and ("image file is truncated" in str(e) or "broken data stream" in str(e)):
+        return "This image file is damaged or incomplete. Save it again and try again."
+    return None
+
+
 class _Out:
     def __init__(self, stream: TextIO) -> None:
         self._stream = stream
@@ -156,7 +172,11 @@ def main() -> None:
                 adapter.load(Device(msg["device"].split(":")[0]), msg.get("dtype", "fp16"))
                 out.send({"type": "loaded", "adapter": msg["adapter"]})
             except Exception as e:
-                out.send({"type": "error", "id": None, "error": f"load failed: {e}", "cancelled": False})
+                # The traceback goes to the engine's log; the message names the kind of error,
+                # because many say nothing alone (KeyError: 'unet', an empty AssertionError).
+                traceback.print_exc()
+                error = f"load failed: {type(e).__name__}: {e}"
+                out.send({"type": "error", "id": None, "error": error, "cancelled": False})
         elif op == "unload":
             if adapter:
                 adapter.unload()
@@ -192,9 +212,8 @@ def main() -> None:
                 out.send({"type": "error", "id": run_id, "error": "cancelled", "cancelled": True})
             except Exception as e:
                 traceback.print_exc()
-                out.send(
-                    {"type": "error", "id": run_id, "error": f"{type(e).__name__}: {e}", "cancelled": False}
-                )
+                error = bad_input(e) or f"{type(e).__name__}: {e}"
+                out.send({"type": "error", "id": run_id, "error": error, "cancelled": False})
             finally:
                 cancelled.discard(run_id)
 
