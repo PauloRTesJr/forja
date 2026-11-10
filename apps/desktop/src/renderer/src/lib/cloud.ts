@@ -60,3 +60,52 @@ export function placeNote(p: ProviderRow): string | undefined {
   if (p.endpoint_id) return `RunPod endpoint ${p.endpoint_id}`
   return p.url
 }
+
+/** How a provider stands, as its row says it: a word, its colour, and what to add to it. */
+export interface ProviderState {
+  label: string
+  tone?: 'ok' | 'bad' | 'accent'
+  /** Work in progress: the pill's dot pulses. */
+  live?: boolean
+  /** A fact beside the address, such as the answer time. */
+  detail?: string
+  /** What is wrong and what to do, in a sentence. */
+  problem?: string
+}
+
+/**
+ * A connection error in a sentence. Newer cores send one already; an older core sends the
+ * transport's own words ("dial tcp ...: connectex: ..."), in the system's language. `service`
+ * is a hosted service or a ComfyUI address, where there is no sharing to switch on.
+ */
+export function plainProblem(error: string | undefined, service = false): string | undefined {
+  const e = error?.trim()
+  if (!e) return undefined
+  if (/deadline exceeded|Client\.Timeout|i\/o timeout|timed out/i.test(e)) return service ? 'It did not answer in time. Check the address and your connection.' : 'It did not answer in time. Check that it is switched on and connected.'
+  if (/connectex|connection refused|actively refused|dial tcp/i.test(e)) return service ? 'Nothing answers at that address. Check the address and your connection.' : 'Nothing answers at its address. Check that it is switched on, and that sharing is on there.'
+  if (/no such host/i.test(e)) return 'Its name was not found on the network. Check the address.'
+  if (/\b401\b|\b403\b|refused the (token|key)/i.test(e)) return 'It refused the key. Replace the key.'
+  return e
+}
+
+export function providerState(p: Pick<ProviderRow, 'healthy' | 'latency_ms' | 'error' | 'checking'> & Partial<Pick<ProviderRow, 'kind' | 'vendor'>>): ProviderState {
+  if (p.healthy) return { label: 'Ready', tone: 'ok', detail: `${p.latency_ms} ms` }
+  // The local engine starts by itself when a job needs it: not running is not a fault.
+  if (p.error === 'idle') return { label: 'Idle', detail: 'Starts when a job needs it' }
+  // Only a provider with no last answer at all shows as checking; one with a known fault keeps saying it.
+  if (p.checking && !p.error) return { label: 'Checking', tone: 'accent', live: true }
+  return { label: 'Not reachable', tone: 'bad', problem: plainProblem(p.error, (!!p.kind && p.kind !== 'engine') || !!p.vendor) }
+}
+
+/**
+ * The fields two kinds share keep what was typed when the kind changes (a name, an address).
+ * Never a key: one vendor's key means nothing to another.
+ */
+export function carryValues(to: ProviderKind, values: Record<string, string>): Record<string, string> {
+  const keep = new Set(to.fields.filter((f) => f.type !== 'workflows' && f.type !== 'secret').map((f) => f.key))
+  keep.add('label')
+  return Object.fromEntries(Object.entries(values).filter(([k, v]) => keep.has(k) && v !== ''))
+}
+
+/** The fields that only matter together with a RunPod network volume. */
+export const VOLUME_FIELDS = ['volume', 'region', 'volume_key_id', 'volume_secret']

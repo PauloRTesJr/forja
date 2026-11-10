@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
+import { isPreparing } from './activity'
 import type { Job, Pick, SheetPart } from './api'
-import { isPreparing } from '../components/Prepare'
 import { needsAnswer, summarize } from './jobs'
 import { assignView, boxStyle, chosenParts, viewReader } from './views'
 

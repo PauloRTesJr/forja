@@ -1,36 +1,52 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { useState, type CSSProperties } from 'react'
+import type { CSSProperties } from 'react'
 import { answerSheet, artifactURL, type Job, type View } from '../lib/api'
+import { draftStore, useDraft } from '../lib/draft'
 import { keys } from '../lib/events'
 import { upsertJob } from '../lib/jobs'
 import { useToast } from '../lib/toast'
 import { assignView, boxStyle, chosenParts, VIEWS, viewHints, viewLabels, viewShort } from '../lib/views'
 
-// The cut-out never grows past this height in a queue row.
-const MAX_HEIGHT = 440
+/**
+ * Answers a job that waits on its sheet of views. Once answered, Generate keeps following the
+ * job, so the answer is seen to have worked.
+ */
+export function useSheetAnswer(job: Job) {
+  const qc = useQueryClient()
+  const toast = useToast()
+  return useMutation({
+    mutationFn: (body: Parameters<typeof answerSheet>[1]) => answerSheet(job.id, body),
+    onSuccess: (next) => {
+      qc.setQueryData<Job[]>(keys.jobs, (list) => upsertJob(list, next))
+      draftStore.set((d) => {
+        const labels = { ...d.labels }
+        delete labels[job.id]
+        return { ...d, labels, tracked: d.tracked.includes(job.id) ? d.tracked : [...d.tracked, job.id] }
+      })
+    },
+    onError: (e: Error) => toast(e.message, true),
+  })
+}
 
 /**
  * A job whose image held several views of one subject: each figure boxed on the cut-out with
  * the view proposed for it. The user relabels, then builds from the views or keeps the image.
+ * The labels are kept while the app runs, so leaving the screen does not undo them.
  */
-export function SheetCard({ job }: { job: Job }) {
-  const qc = useQueryClient()
-  const toast = useToast()
+export function SheetCard({ job, maxHeight = 440 }: { job: Job; /** The cut-out never grows past this height. */ maxHeight?: number }) {
   const sheet = job.sheet!
   const parts = sheet.parts ?? []
-  const [labels, setLabels] = useState<(View | '')[]>(() => parts.map((p) => p.view))
-  const answer = useMutation({
-    mutationFn: (body: Parameters<typeof answerSheet>[1]) => answerSheet(job.id, body),
-    onSuccess: (next) => qc.setQueryData<Job[]>(keys.jobs, (list) => upsertJob(list, next)),
-    onError: (e: Error) => toast(e.message, true),
-  })
+  const kept = useDraft().labels[job.id]
+  const labels: (View | '')[] = kept?.length === parts.length ? kept : parts.map((p) => p.view)
+  const setLabels = (next: (View | '')[]): void => draftStore.set((d) => ({ ...d, labels: { ...d.labels, [job.id]: next } }))
+  const answer = useSheetAnswer(job)
   const chosen = chosenParts(parts, labels)
   const hasFront = labels.includes('front')
   const [w, h] = sheet.size
 
   return (
     <div className="sheet-card">
-      <div className="sheet-figure" style={{ width: `min(100%, ${Math.round((MAX_HEIGHT * w) / h)}px)`, aspectRatio: `${w} / ${h}` }}>
+      <div className="sheet-figure" style={{ width: `min(100%, ${Math.round((maxHeight * w) / Math.max(1, h))}px)`, aspectRatio: `${w} / ${h}` }}>
         {sheet.cutout && <img src={artifactURL(sheet.cutout)} alt="The image with each figure boxed" decoding="async" />}
         {parts.map((p, i) => (
           <div
@@ -59,7 +75,7 @@ export function SheetCard({ job }: { job: Job }) {
       </div>
       <p className="sheet-note">
         {hasFront
-          ? "Check the labels: an outline can't tell a front from a back, or which way a side view faces."
+          ? 'Check the labels: an outline cannot tell a front from a back, or which way a side view faces.'
           : 'Choose which figure is the front.'}
       </p>
       <div className="row">

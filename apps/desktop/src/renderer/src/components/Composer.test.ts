@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import type { Preset } from '../lib/api'
+import type { Model, Preset } from '../lib/api'
 import { money } from '../lib/format'
-import { optionalOverrides } from './Composer'
+import { automaticPick, optionalOverrides } from './Composer'
 
 describe('optionalOverrides', () => {
   const preset: Preset = {
@@ -39,5 +39,42 @@ describe('money', () => {
     expect(money({ amount: 0.4, unit: 'generation', currency: 'USD' })).toBe('$0.40 per image')
     expect(money({ amount: 0.015, unit: 'units', currency: 'USD' })).toBe('$0.015 per unit')
     expect(money(undefined)).toBe('price unknown')
+  })
+})
+
+describe('automaticPick', () => {
+  const model = (id: string, extra: Partial<Model> = {}): Model => ({
+    id,
+    name: id.toUpperCase(),
+    family: 'f',
+    tasks: ['shape'],
+    license: { spdx: 'MIT', commercial: true, restrictions: [] },
+    status: 'ready',
+    device: 'cuda:0',
+    provider: 'local',
+    provider_label: 'This computer',
+    needs_acceptance: false,
+    uses: [],
+    paid: false,
+    ...extra,
+  })
+
+  it('is the highest-ranked model ready on this computer, as the core picks it', () => {
+    const models = [model('triposg', { rank: 50 }), model('pixal3d', { rank: 90 }), model('trellis2', { rank: 95, status: 'not-installed', device: null })]
+    expect(automaticPick(models, 'shape', false)?.id).toBe('pixal3d')
+  })
+
+  it('passes over stubs unless they are switched on, other stage types and other computers', () => {
+    const models = [
+      model('stub-shape', { stub: true, rank: 1 }),
+      model('paint', { tasks: ['texture'], rank: 99 }),
+      model('lan-shape', { provider: 'studio', rank: 99 }),
+    ]
+    expect(automaticPick(models, 'shape', false)).toBeUndefined()
+    expect(automaticPick(models, 'shape', true)?.id).toBe('stub-shape')
+  })
+
+  it('settles a tie by id, so the answer does not change between reads', () => {
+    expect(automaticPick([model('b', { rank: 5 }), model('a', { rank: 5 })], 'shape', false)?.id).toBe('a')
   })
 })

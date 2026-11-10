@@ -1,0 +1,346 @@
+/* Library: a toolbar, a virtualized grid of asset cards, and the bar for the selected ones. */
+.screen.library {
+  /* Room for the selection bar over the last row. */
+  padding-bottom: 96px;
+}
+.library-bar {
+  position: sticky;
+  /* The screen's own top padding is outside the sticky box: stick flush with the window. */
+  top: calc(-1 * var(--s-5));
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  margin: 0 calc(-1 * var(--s-6)) var(--s-3);
+  padding: var(--s-2) var(--s-6);
+  background: var(--bg);
+}
+.library-bar::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 1px;
+  background: var(--border-soft);
+  opacity: 0;
+  transition: opacity var(--dur-2) var(--ease-out);
+}
+.library-bar[data-stuck='true']::after {
+  opacity: 1;
+}
+.library-bar .search {
+  flex: 0 1 280px;
+}
+.library-bar select.input {
+  flex: none;
+  width: auto;
+}
+.library-error {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--s-3);
+  margin-bottom: var(--s-4);
+}
+.grid-sizer {
+  position: relative;
+}
+.grid {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  display: grid;
+}
+.grid-static {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
+  gap: var(--s-3);
+}
+.card-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+.card-skeleton-img {
+  aspect-ratio: 1;
+  border-radius: var(--r-2);
+}
+.card-skeleton-line {
+  width: 60%;
+  height: 36px;
+}
+.card {
+  position: relative;
+  min-width: 0;
+}
+.card-main {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  width: 100%;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  border-radius: var(--r-2);
+  background: none;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.card-main:focus-visible {
+  outline-offset: 4px;
+}
+.card-img {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 100%;
+  aspect-ratio: 1;
+  border-radius: var(--r-2);
+  background: var(--bg-deep);
+  overflow: hidden;
+}
+/* The card's edge: a hairline at rest, stronger on hover, amber when selected. It is its own
+   layer, so selection fades in on the compositor. */
+.card-img::before,
+.card-img::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  border: 1px solid var(--border-soft);
+  border-radius: inherit;
+  pointer-events: none;
+}
+.card-img::after {
+  border-color: var(--accent);
+  opacity: 0;
+  transition: opacity var(--dur-2) var(--ease-out);
+}
+.card:hover .card-img::before {
+  border-color: var(--border-strong);
+}
+.card.selected .card-img::after {
+  opacity: 1;
+}
+.card-img > img,
+.card-img > .card-failed,
+.card-img > .card-pending {
+  grid-area: 1 / 1;
+}
+.card-img img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  animation: fade-in var(--dur-3) var(--ease-out) both;
+}
+.card-pending {
+  width: 60%;
+  height: 60%;
+}
+.card-failed {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--s-1);
+  padding: 0 var(--s-3);
+  color: var(--text-3);
+  font: var(--t-caption);
+  text-align: center;
+}
+.card-tag {
+  position: absolute;
+  left: var(--s-2);
+  bottom: var(--s-2);
+  z-index: 1;
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-1);
+  background: var(--surface-2);
+  color: var(--text-2);
+  font: var(--t-caption);
+}
+.card-body {
+  display: flex;
+  flex-direction: column;
+  height: 36px;
+  min-width: 0;
+  padding: 0 2px;
+}
+.card-body strong,
+.card-body span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.card-body strong {
+  font: var(--t-strong);
+}
+.card-body span {
+  font: var(--t-caption);
+}
+/* The check shows on hover, and on every card once one is selected. */
+.card-check {
+  position: absolute;
+  top: var(--s-2);
+  left: var(--s-2);
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-1);
+  background: var(--surface-2);
+  color: var(--on-accent);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--dur-2) var(--ease-out);
+}
+.card:hover .card-check,
+.card:focus-within .card-check,
+.card-check:focus-visible {
+  opacity: 1;
+}
+.card-check svg {
+  opacity: 0;
+}
+.card.selected .card-check {
+  border-color: var(--accent);
+  background: var(--accent);
+  opacity: 1;
+}
+.card.selected .card-check svg {
+  opacity: 1;
+}
+.card.leaving {
+  pointer-events: none;
+  animation: card-leave var(--dur-2) var(--ease-in-out) both;
+}
+@keyframes card-leave {
+  to {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+}
+
+/* What can be done with the selected assets: a toolbar that rises while any are selected. */
+.selection-bar {
+  position: absolute;
+  left: 50%;
+  bottom: var(--s-5);
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: var(--s-1);
+  max-width: calc(100% - 32px);
+  padding: 6px 6px 6px var(--s-3);
+  border: 1px solid var(--border);
+  border-radius: var(--r-2);
+  background: var(--surface-2);
+  box-shadow: var(--shadow);
+  opacity: 0;
+  transform: translate(-50%, 8px);
+  visibility: hidden;
+  transition:
+    opacity var(--dur-2) var(--ease-out),
+    transform var(--dur-2) var(--ease-out),
+    visibility 0s linear var(--dur-2);
+}
+.selection-bar[data-open='true'] {
+  opacity: 1;
+  transform: translate(-50%, 0);
+  visibility: visible;
+  transition-delay: 0s;
+}
+.selection-count {
+  margin-right: var(--s-2);
+  font: var(--t-strong);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* The export menu, from the selection bar or the asset page. */
+.export-menu {
+  width: 280px;
+}
+.export-menu .menu-item.export-format {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+}
+.export-format .mono {
+  color: var(--text-3);
+}
+.export-group {
+  margin-top: var(--s-1);
+  padding: var(--s-2) var(--s-2) var(--s-1);
+  border-top: 1px solid var(--border-soft);
+  color: var(--text-2);
+  font: var(--t-section);
+}
+.export-missing {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  margin: var(--s-1) var(--s-2) var(--s-2);
+  color: var(--text-2);
+  font: var(--t-caption);
+}
+.export-missing strong {
+  color: var(--warn);
+  font: var(--t-strong);
+}
+.export-missing .text-btn {
+  padding: 0;
+}
+/* A running export: a bar sweeps along the foot of its button. */
+.btn:has(> .btn-bar) {
+  position: relative;
+  overflow: hidden;
+}
+.btn-bar {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  width: 40%;
+  height: 2px;
+  background: var(--accent);
+  animation: export-sweep 1.2s var(--ease-in-out) infinite;
+}
+@keyframes export-sweep {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(250%);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .btn-bar {
+    animation: none;
+    width: 100%;
+  }
+}
+.export-caption {
+  min-height: 32px;
+  margin: var(--s-1) 0 0;
+  padding: var(--s-2) var(--s-2) var(--s-1);
+  border-top: 1px solid var(--border-soft);
+  color: var(--text-2);
+  font: var(--t-caption);
+}
+.export-skeleton {
+  height: var(--h-sm);
+  margin-bottom: 2px;
+}
+
+/* The delete question lists what goes. */
+.confirm-names {
+  margin: 0 0 var(--s-3);
+  padding-left: var(--s-4);
+}

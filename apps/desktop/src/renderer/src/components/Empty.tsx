@@ -1,12 +1,14 @@
 import type { ReactNode } from 'react'
-import { BrandMark } from './icons'
+import type { IconType } from './icons'
 
-export function Empty({ title, children }: { title: string; children?: ReactNode }) {
+/** Nothing to show yet: an icon, what is missing, one line on how it gets here, and one action. */
+export function Empty({ icon: Icon, title, children, action }: { icon: IconType; title: string; children?: ReactNode; action?: ReactNode }) {
   return (
     <div className="empty">
-      <BrandMark size={44} muted />
+      <Icon size={20} />
       <strong>{title}</strong>
-      {children}
+      {children && <p>{children}</p>}
+      {action}
     </div>
   )
 }

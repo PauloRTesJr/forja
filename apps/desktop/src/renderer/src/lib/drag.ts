@@ -1,6 +1,8 @@
 // Dragging assets out of the window into Blender, Unity or a folder. The main process starts
 // the OS drag, which must begin the moment the pointer moves, so each asset's file and icon
-// are readied while the pointer rests on it.
+// are readied while the pointer rests on it. Readying copies the GLB to a temporary folder, so
+// it is done for what is about to be dragged and nothing else: never for a whole selection as
+// it is made.
 import type { DragEvent } from 'react'
 import { artifactURL, type Asset } from './api'
 
@@ -17,6 +19,17 @@ export function readyDrag(asset: Asset): void {
   void iconOf(asset)
     .then((icon) => window.forja.prepareDrag(asset.id, icon))
     .catch(() => readied.delete(asset.id))
+}
+
+/** The most files readied ahead of a drag; the main process readies the rest as the drag starts. */
+export const READY_AHEAD = 24
+
+/**
+ * Readies what a press on a card may drag: the card, and the rest of the selection when the
+ * card is part of it. Called on pointer down, when a drag has become likely.
+ */
+export function readyDrags(assets: Asset[]): void {
+  for (const a of assets.slice(0, READY_AHEAD)) readyDrag(a)
 }
 
 /** Hands the drag to the OS with these assets' files, in place of the page's own drag. */

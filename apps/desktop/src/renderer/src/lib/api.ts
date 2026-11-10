@@ -1,5 +1,8 @@
-// Typed access to the core API. Every request goes through forja://core, proxied by main.
-export const CORE = 'forja://core'
+// Typed access to the core API. Every request goes through forja://core, proxied by main
+// (lib/http.ts is the client itself).
+import { api, CORE, request } from './http'
+
+export { api, ApiError, CORE } from './http'
 
 /** `waiting`: the job needs the user's answer (its image holds several views of its subject). */
 export type Status = 'queued' | 'running' | 'waiting' | 'succeeded' | 'failed' | 'cancelled'
@@ -48,6 +51,8 @@ export interface Stage {
   step: number
   total: number
   error?: string
+  /** The raw error behind `error`, to show on request. */
+  error_detail?: string
   /** What the provider last said while it runs, such as a place in a hosted model's queue. */
   note?: string
   /** The providers it left after failing there, oldest first. */
@@ -77,11 +82,19 @@ export interface Job {
   priority: string
   status: Status
   error?: string
+  /** The raw error behind `error`, to show on request. */
+  error_detail?: string
   created_at: string
+  /** When it first ran anything; not set while it only waits for its turn. */
+  started_at?: string
   finished_at?: string
+  /** From `started_at` to `finished_at`, once it ended. */
+  duration_seconds?: number
   asset_id?: string
   stages: Stage[]
   estimate_seconds?: number
+  /** The job this one retried; it took that job's place in the list. */
+  retry_of?: string
 }
 
 export interface Asset {
@@ -499,10 +512,14 @@ export interface ProviderRow {
   healthy: boolean
   latency_ms: number
   error?: string
+  /** The raw error behind `error`. */
+  error_detail?: string
+  /** Its reachability is being asked now; `healthy` and `error` are the last known ones. */
+  checking?: boolean
   /** The pinned certificate, short, for comparing with what the other computer shows. */
   fingerprint?: string
-  /** Where its key lives and how it ends; never the key itself. */
-  key?: { stored: boolean; hint?: string; store: string }
+  /** Where its key lives and how it ends; never the key itself. `fixed`: set outside the app, not replaceable here. */
+  key?: { stored: boolean; hint?: string; store: string; fixed?: boolean }
   editable: boolean
   /** Rented GPUs: who rents it (runpod, modal), a RunPod endpoint, what a GPU second costs. */
   vendor?: string
@@ -517,45 +534,21 @@ export interface ShareView {
   addresses: string[]
   fingerprint?: string
   pending?: 'restart'
+  /** Why sharing is on but not working: the keychain, the certificate, the port. */
+  error?: string
+  /** Until when the pairing code last shown can be used; absent once it was used or expired. */
+  code_expires_at?: string
 }
 
-export const addProvider = (body: { url: string; label?: string; code?: string; token?: string }): Promise<{ id: string; label: string }> =>
-  api('POST', '/v1/providers', body)
+/** `signal` calls the attempt off, so a cancelled dialog adds nothing. */
+export const addProvider = (
+  body: { url: string; label?: string; code?: string; token?: string },
+  signal?: AbortSignal,
+): Promise<{ id: string; label: string }> => api('POST', '/v1/providers', body, { signal })
 export const removeProvider = (id: string): Promise<void> => api('DELETE', `/v1/providers/${id}`)
 export const replaceToken = (id: string, token: string): Promise<void> => api('PUT', `/v1/providers/${id}/token`, { token })
 export const setSharing = (enabled: boolean): Promise<ShareView> => api('PUT', '/v1/share', { enabled })
 export const pairingCode = (): Promise<{ code: string; expires_at: string }> => api('POST', '/v1/share/code')
-
-export class ApiError extends Error {
-  constructor(
-    readonly status: number,
-    message: string,
-  ) {
-    super(message)
-  }
-}
-
-export async function api<T>(method: string, path: string, body?: unknown): Promise<T> {
-  const res = await fetch(CORE + path, {
-    method,
-    headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  })
-  if (!res.ok) {
-    let detail = res.statusText
-    try {
-      detail = ((await res.json()) as { detail?: string }).detail ?? detail
-    } catch {
-      /* not a problem document */
-    }
-    throw new ApiError(res.status, detail)
-  }
-  if (res.status === 204 || res.status === 202) {
-    const text = await res.text()
-    return (text ? JSON.parse(text) : undefined) as T
-  }
-  return (await res.json()) as T
-}
 
 export const artifactURL = (hash: string, type?: string): string =>
   `${CORE}/v1/artifacts/${hash}${type ? `?type=${encodeURIComponent(type)}` : ''}`
@@ -576,6 +569,18 @@ export interface SubmitBody {
 
 export const submitJobs = (body: SubmitBody): Promise<Job[]> => api('POST', '/v1/jobs', body)
 export const cancelJob = (id: string): Promise<void> => api('DELETE', `/v1/jobs/${id}`)
+/** How many jobs one page of the list holds. */
+export const JOBS_PAGE = 100
+/** Jobs, newest first: the newest page, or the page created before `beforeMs`. */
+export const fetchJobs = (beforeMs?: number): Promise<Job[]> =>
+  api('GET', `/v1/jobs?limit=${JOBS_PAGE}${beforeMs === undefined ? '' : `&before=${beforeMs}`}`)
+export const fetchJob = (id: string): Promise<Job> => api('GET', `/v1/jobs/${id}`)
+/** Runs a failed or cancelled job again: a new job that takes the old one's place. */
+export const retryJob = (id: string): Promise<Job> => api('POST', `/v1/jobs/${id}/retry`)
+/** Takes a finished job off the queue's list; a finished asset stays in the library. */
+export const removeJob = (id: string): Promise<void> => api('POST', `/v1/jobs/${id}/remove`)
+/** Takes every finished job off the queue's list. */
+export const clearJobs = (): Promise<{ removed: string[] }> => api('POST', '/v1/jobs/clear')
 /** The views to cut out of a job's sheet, or `keep` to use the image whole. */
 export const answerSheet = (id: string, body: { views: SheetPart[] } | { keep: true }): Promise<Job> =>
   api('POST', `/v1/jobs/${id}/sheet`, body)
@@ -584,8 +589,7 @@ export const importImage = async (path: string): Promise<string> =>
   (await api<{ hash: string }>('POST', '/v1/artifacts/import', { path })).hash
 /** Copies an image that has no file, such as a pasted screenshot, into the core's store. */
 export async function uploadImage(image: Blob): Promise<string> {
-  const res = await fetch(CORE + '/v1/artifacts', { method: 'PUT', body: image })
-  if (!res.ok) throw new ApiError(res.status, res.statusText)
+  const res = await request('PUT', '/v1/artifacts', { body: image })
   return ((await res.json()) as { hash: string }).hash
 }
 /** Presets resolved for a job that also brings these views, so the app sees which model reads them. */
@@ -593,7 +597,9 @@ export const fetchPresets = (views?: View[]): Promise<Preset[]> =>
   api('GET', views?.length ? `/v1/presets?views=${views.join(',')}` : '/v1/presets')
 
 /** Models as the provider reports them now; asking may start the local engine. */
-export const fetchModels = (): Promise<Model[]> => api('GET', '/v1/models?all=1&fresh=1')
+export const fetchModels = (): Promise<Model[]> =>
+  // The engine's first start can take minutes (it builds its environment).
+  api('GET', '/v1/models?all=1&fresh=1', undefined, { timeoutMs: 10 * 60_000 })
 
 export interface Setting {
   key: string
@@ -601,14 +607,23 @@ export interface Setting {
   default: unknown
   /** The layer that set it: default, system, user, project, env or flag. */
   source: string
+  /** That layer by name: the environment variable, or the file's path. */
+  source_detail?: string
+  /** The smallest and largest value a number setting takes. */
+  min?: number
+  max?: number
 }
 
 export interface Settings {
   settings: Setting[]
   files: { user: string; project?: string }
   data_dir: string
-  /** When engine settings apply: "restarted" now, or at the "next-start". */
-  engine?: 'restarted' | 'next-start'
+  /**
+   * What a save did to the engine: nothing ran ("saved"), an idle engine was stopped to take it
+   * ("restarted"), or it waits for the running jobs ("pending", also on reads while it waits).
+   * "next-start" is an older core's word for an engine that was not running, or busy.
+   */
+  engine?: 'saved' | 'restarted' | 'pending' | 'next-start'
 }
 
 export const saveSettings = (set: Record<string, unknown>): Promise<Settings> => api('PATCH', '/v1/settings', { set })
@@ -756,6 +771,7 @@ export interface ProbeView {
 }
 
 export const providerKinds = (): Promise<ProviderKind[]> => api('GET', '/v1/provider-kinds')
-export const testProvider = (body: Record<string, unknown>): Promise<ProbeView> => api('POST', '/v1/providers/test', body)
-export const addCloudProvider = (body: Record<string, unknown>): Promise<{ id: string; label: string; probe?: ProbeView }> =>
-  api('POST', '/v1/providers', body)
+export const testProvider = (body: Record<string, unknown>, signal?: AbortSignal): Promise<ProbeView> =>
+  api('POST', '/v1/providers/test', body, { signal })
+export const addCloudProvider = (body: Record<string, unknown>, signal?: AbortSignal): Promise<{ id: string; label: string; probe?: ProbeView }> =>
+  api('POST', '/v1/providers', body, { signal })

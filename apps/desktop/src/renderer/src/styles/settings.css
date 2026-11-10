@@ -1,0 +1,368 @@
+/* Settings: grouped rows, this computer's facts, providers, sharing, spending, cloud and prices. */
+
+/* One row per setting inside a `.group`: label and help on the left, the control on the right. */
+.settings.group {
+  container-type: inline-size;
+}
+.setting {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-2) var(--s-5);
+  min-height: 52px;
+  padding: var(--s-3) var(--s-4);
+}
+/* A wide control (a group of choices) goes under the text. */
+.setting.stacked {
+  flex-direction: column;
+  align-items: stretch;
+}
+.setting-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  max-width: 520px;
+}
+.setting-text strong {
+  font: var(--t-strong);
+}
+.setting-help {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  color: var(--text-2);
+}
+.setting-help:empty {
+  display: none;
+}
+.setting-help .pill {
+  vertical-align: 1px;
+}
+/* A value a higher layer set: where it comes from, quietly. It is a fact, not a warning. */
+.setting-source {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  color: var(--text-3);
+  font: var(--t-caption);
+  overflow-wrap: anywhere;
+}
+.setting-source svg {
+  flex: none;
+  margin-top: 2px;
+}
+.setting-control {
+  display: flex;
+  flex: none;
+  align-items: flex-start;
+  gap: var(--s-2);
+}
+/* The reset button's place, kept when there is nothing to reset, so the control never moves. */
+.setting-slot {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: var(--h-sm);
+  min-height: var(--h);
+}
+.setting.stacked .setting-control {
+  flex: 1;
+}
+.setting.stacked .choices {
+  flex: 1;
+}
+.setting-control > .input {
+  width: 240px;
+}
+/* A field with the line it may say under itself: why a value was refused, or that the old one was kept. */
+.setting-field {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--s-1);
+  min-width: 0;
+}
+.setting-text-field {
+  display: flex;
+  gap: var(--s-2);
+  min-width: 0;
+}
+.setting-text-field .input {
+  width: 240px;
+  text-overflow: ellipsis;
+}
+.setting-note {
+  max-width: 300px;
+  color: var(--text-2);
+  font: var(--t-caption);
+  text-align: right;
+  animation: fade-in var(--dur-2) var(--ease-out) both;
+}
+.setting-note.bad {
+  color: var(--bad-hi);
+}
+.setting-text .setting-note {
+  max-width: none;
+  text-align: left;
+}
+.input[aria-invalid='true'] {
+  border-color: var(--bad);
+}
+/* A change that waits for running work, at the foot of its group. */
+.setting-pending {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  padding: var(--s-2) var(--s-4);
+  color: var(--text-2);
+  font: var(--t-caption);
+  animation: fade-in var(--dur-2) var(--ease-out) both;
+}
+.setting-pending svg {
+  flex: none;
+  color: var(--accent);
+}
+.section-foot {
+  margin-top: var(--s-2);
+}
+/* Narrow: the control goes under its text instead of squeezing it. */
+@container (max-width: 600px) {
+  .setting {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .setting-control {
+    justify-content: space-between;
+  }
+  .setting-field {
+    flex: 1;
+    align-items: flex-start;
+  }
+  .setting-note {
+    text-align: left;
+  }
+  .setting-text-field,
+  .setting-text-field .input {
+    flex: 1;
+    width: auto;
+  }
+}
+
+/* This computer: a compact row of facts. */
+.facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: var(--s-3) var(--s-5);
+  padding: var(--s-3) var(--s-4);
+}
+.facts > * + * {
+  border-top: 0;
+}
+.facts-item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  min-width: 0;
+}
+.facts-item.wide {
+  grid-column: span 2;
+}
+.facts dt {
+  color: var(--text-3);
+  font: var(--t-caption);
+}
+.facts dd {
+  margin: 0;
+  font: var(--t-strong);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+.facts dd.facts-detail {
+  color: var(--text-2);
+  font: var(--t-caption);
+}
+
+/* Providers and prices: rows in a `.group`. */
+.provider {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  padding: var(--s-3) var(--s-4);
+}
+.provider strong {
+  font: var(--t-strong);
+}
+.provider-item {
+  align-items: flex-start;
+}
+.provider-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-1) var(--s-2);
+}
+.provider-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px var(--s-3);
+  font: var(--t-caption);
+}
+.provider-meta .mono {
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+.provider-problem {
+  margin-top: 2px;
+  color: var(--bad-hi);
+  font: var(--t-caption);
+  overflow-wrap: anywhere;
+}
+.provider-key {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 2px;
+  color: var(--text-3);
+  font: var(--t-caption);
+}
+.provider-key svg {
+  flex: none;
+}
+.provider-add {
+  margin: var(--s-3) 0 var(--s-4);
+}
+.provider-add-menu {
+  position-area: bottom span-right;
+  min-width: 280px;
+}
+.price-item {
+  flex-wrap: wrap;
+  align-items: flex-start;
+}
+.price-item .number .input {
+  width: 112px;
+}
+
+/* Sharing this computer's GPU. */
+.share {
+  align-items: flex-start;
+}
+.share-details {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--s-2);
+  margin-top: var(--s-2);
+  color: var(--text-2);
+  animation: fade-in var(--dur-2) var(--ease-out) both;
+}
+.share-details .kv {
+  align-self: stretch;
+}
+.share-details .kv dd {
+  display: flex;
+  align-items: center;
+  gap: var(--s-1);
+  min-height: var(--h-sm);
+  overflow-wrap: anywhere;
+}
+.share-details .mono {
+  color: var(--text);
+  user-select: text;
+}
+.pairing-code {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--s-1) var(--s-3);
+}
+.pairing-code b {
+  color: var(--text);
+  font: 500 20px/28px var(--mono);
+  letter-spacing: 0.08em;
+  user-select: text;
+}
+.pairing-input {
+  font-family: var(--mono);
+  letter-spacing: 0.08em;
+}
+
+/* Spending: how far a limit is used up, under its row's label. */
+.limit-spent {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+}
+.limit-spent .bar {
+  width: 180px;
+  max-width: 100%;
+}
+.limit-reached {
+  color: var(--bad-hi);
+}
+
+/* Adding a cloud GPU or ComfyUI: a workflow per stage type, and what trying the settings found. */
+.workflow-picks {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+}
+.workflow-pick {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+}
+.workflow-pick > strong {
+  flex: none;
+  width: 140px;
+  font: var(--t-body);
+}
+.workflow-pick > .mono {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cloud-volume {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--s-2);
+}
+.cloud-volume > .dialog-form {
+  align-self: stretch;
+}
+.field-link {
+  color: var(--accent-hi);
+  font: var(--t-body);
+}
+/* The dialog's result and buttons stay in reach while a long form scrolls under them. */
+.dialog-foot {
+  position: sticky;
+  bottom: -20px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  margin: 0 -20px -20px;
+  padding: var(--s-3) 20px 20px;
+  border-top: 1px solid var(--border-soft);
+  background: var(--surface);
+}
+.dialog-foot .dialog-actions {
+  margin-top: 0;
+}
+.cloud-lacking {
+  flex: 1;
+  min-width: 0;
+}
+.probe {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2);
+  animation: enter-up var(--dur-2) var(--ease-out) both;
+}

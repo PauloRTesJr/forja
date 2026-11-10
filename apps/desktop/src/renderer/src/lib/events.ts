@@ -3,6 +3,8 @@ import { useEffect, useState } from 'react'
 import type { QueryClient } from '@tanstack/react-query'
 import { taskDone, type Asset, type BenchList, type BenchResult, type InstallTask, type Job } from './api'
 import { withBench } from './bench'
+import { guardFreshness, onConnected, STARTING, type CoreState } from './connection'
+import { isNameSortedList, withAsset } from './assets'
 import { applyProgress, upsertJob } from './jobs'
 import { withoutAsset } from './selection'
 
@@ -40,20 +42,42 @@ export function upsertTask(list: InstallTask[] | undefined, t: InstallTask): Ins
   return [t, ...rest].sort((a, b) => b.created_at - a.created_at)
 }
 
-export function useCoreEvents(qc: QueryClient): boolean {
-  const [connected, setConnected] = useState(true)
+/**
+ * Applies the core's events to the query cache and says how the app is connected to its core.
+ * Whenever events may have been missed (another stream, a gap in their numbers) everything is
+ * read again, so no screen is left showing a state the core has moved on from.
+ */
+export function useCoreEvents(qc: QueryClient): CoreState {
+  const [state, setState] = useState<CoreState>(STARTING)
   useEffect(() => {
-    const offStatus = window.forja.onStatus((ok) => {
-      setConnected(ok)
+    let seen: number | undefined
+    let newest = -1
+    const fresh = guardFreshness(qc)
+    const apply = (next: CoreState): void => {
+      setState(next)
+      if (next.phase !== 'connected') return
+      const what = onConnected(seen, next.generation)
+      seen = next.generation
       // Anything may have changed while disconnected.
-      if (ok) void qc.invalidateQueries()
+      if (what === 'all') void qc.invalidateQueries()
+      else if (what === 'failed') void qc.refetchQueries({ predicate: (q) => q.state.status === 'error' })
+    }
+    // Pushed changes win over the answer to the first question when they cross.
+    const offState = window.forja.onCoreState((next) => {
+      newest = Math.max(newest, next.generation)
+      apply(next)
     })
+    void window.forja.coreState().then((first) => {
+      if (first.generation >= newest) apply(first)
+    })
+    const offResync = window.forja.onResync(() => void qc.invalidateQueries())
     const offEvent = window.forja.onEvent((ev) => {
       switch (ev.type) {
         case 'job.created':
         case 'job.updated':
         case 'job.finished':
           qc.setQueryData<Job[]>(keys.jobs, (list) => upsertJob(list, ev.data as Job))
+          fresh.touched(keys.jobs)
           // A finished job may have run paid stages. Its timings and costs change what the next
           // one is estimated to take.
           if (ev.type === 'job.finished') {
@@ -61,6 +85,14 @@ export function useCoreEvents(qc: QueryClient): boolean {
             void qc.invalidateQueries({ queryKey: ['estimate'] })
           }
           break
+        case 'job.removed': {
+          // Taken off the list (removed, cleared), or replaced by its retry, which follows as
+          // a job.created.
+          const d = ev.data as { id: string; replaced_by?: string }
+          qc.setQueryData<Job[]>(keys.jobs, (list) => list?.filter((j) => j.id !== d.id))
+          fresh.touched(keys.jobs)
+          break
+        }
         case 'stage.progress': {
           const p = ev.data as { job: string; stage: string; step: number; total: number }
           qc.setQueryData<Job[]>(keys.jobs, (list) => applyProgress(list, p.job, p.stage, p.step, p.total))
@@ -69,14 +101,29 @@ export function useCoreEvents(qc: QueryClient): boolean {
         case 'asset.created': {
           const a = ev.data as Asset
           qc.setQueryData(keys.asset(a.id), a)
+          fresh.touched(keys.asset(a.id))
           void qc.invalidateQueries({ queryKey: ['assets'] })
+          break
+        }
+        case 'asset.updated': {
+          // A rename or a new thumbnail: the card changes in place, no list is read again.
+          const a = ev.data as Asset
+          // A new name moves the asset in a list sorted by name; the lists of other sorts stay put.
+          const renamed = qc.getQueryData<Asset>(keys.asset(a.id))?.name !== a.name
+          qc.setQueryData(keys.asset(a.id), a)
+          qc.setQueriesData({ queryKey: ['assets'] }, (cache) => withAsset(cache, a))
+          if (renamed) void qc.invalidateQueries({ queryKey: ['assets'], predicate: (q) => isNameSortedList(q.queryKey) })
+          fresh.touched(keys.asset(a.id))
+          fresh.touched(['assets'])
           break
         }
         case 'asset.deleted': {
           const d = ev.data as { id: string; job: string }
-          qc.setQueriesData<Asset[]>({ queryKey: ['assets'] }, (list) => withoutAsset(list, d.id))
+          qc.setQueriesData({ queryKey: ['assets'] }, (cache) => withoutAsset(cache, d.id))
           qc.setQueryData<Job[]>(keys.jobs, (list) => list?.filter((j) => j.id !== d.job))
           qc.removeQueries({ queryKey: keys.asset(d.id), exact: true })
+          fresh.touched(['assets'])
+          fresh.touched(keys.jobs)
           break
         }
         case 'models.changed':
@@ -110,11 +157,13 @@ export function useCoreEvents(qc: QueryClient): boolean {
           const r = ev.data as BenchResult
           qc.setQueryData(keys.benchResult(r.id), r)
           qc.setQueryData<BenchList>(keys.bench, (list) => withBench(list, r))
+          fresh.touched(keys.bench)
           break
         }
         case 'install.updated': {
           const t = ev.data as InstallTask
           qc.setQueryData<InstallTask[]>(keys.installs, (list) => upsertTask(list, t))
+          fresh.touched(keys.installs)
           // A fix or an install changes what the checks find.
           if (taskDone(t)) void qc.invalidateQueries({ queryKey: ['checks'] })
           break
@@ -122,9 +171,11 @@ export function useCoreEvents(qc: QueryClient): boolean {
       }
     })
     return () => {
-      offStatus()
+      offState()
+      offResync()
       offEvent()
+      fresh.stop()
     }
   }, [qc])
-  return connected
+  return state
 }

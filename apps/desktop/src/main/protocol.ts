@@ -2,9 +2,12 @@
 // uses plain fetch() and three.js loaders against it; bytes stream, never buffer in main.
 import { Readable } from 'node:stream'
 import { protocol } from 'electron'
-import type { Core } from './core'
+import { CoreUnavailable, type Core } from './core'
+import { unavailable } from './state'
 
 export const SCHEME = 'forja'
+/** The one host the scheme has: the core. */
+export const HOST = 'core'
 
 export function registerScheme(): void {
   protocol.registerSchemesAsPrivileged([
@@ -17,6 +20,7 @@ const hopByHop = new Set(['connection', 'keep-alive', 'transfer-encoding', 'upgr
 export function handleScheme(core: Core): void {
   protocol.handle(SCHEME, async (request) => {
     const url = new URL(request.url)
+    if (url.host !== HOST) return Response.json({ title: 'Not Found', status: 404, detail: `no such host: ${url.host}` }, { status: 404 })
     const headers: Record<string, string> = {}
     request.headers.forEach((v, k) => {
       if (!hopByHop.has(k)) headers[k] = v
@@ -32,8 +36,9 @@ export function handleScheme(core: Core): void {
       const stream = status === 204 || status === 304 ? null : (Readable.toWeb(res) as ReadableStream)
       return new Response(stream, { status, headers: out })
     } catch (err) {
-      const detail = err instanceof Error ? err.message : String(err)
-      return Response.json({ title: 'Core unreachable', status: 503, detail }, { status: 503 })
+      // The page shows `detail` as it is: it says what state the core is in, never a pipe's name.
+      const problem = err instanceof CoreUnavailable ? err.problem : unavailable(core.current().phase, core.current().message)
+      return new Response(JSON.stringify(problem), { status: 503, headers: { 'content-type': 'application/problem+json' } })
     }
   })
 }

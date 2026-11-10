@@ -3,6 +3,16 @@ import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from 'ele
 
 type Listener<T> = (value: T) => void
 
+/** The app's connection to its core (main/state.ts). `generation` counts event-stream connections. */
+export interface CoreState {
+  phase: 'starting' | 'connected' | 'reconnecting' | 'failed'
+  generation: number
+  /** `failed`: what went wrong, for people. */
+  message?: string
+  /** `failed`: the core's last words, for a bug report. */
+  detail?: string
+}
+
 const bridge = {
   platform: process.platform,
   onEvent(fn: Listener<{ seq: number; type: string; data: unknown }>): () => void {
@@ -10,11 +20,21 @@ const bridge = {
     ipcRenderer.on('core:event', handler)
     return () => ipcRenderer.off('core:event', handler)
   },
-  onStatus(fn: Listener<boolean>): () => void {
-    const handler = (_: IpcRendererEvent, ok: boolean): void => fn(ok)
-    ipcRenderer.on('core:status', handler)
-    return () => ipcRenderer.off('core:status', handler)
+  /** What the app knows about its core right now; the page asks when it loads, also after a reload. */
+  coreState: (): Promise<CoreState> => ipcRenderer.invoke('core:state'),
+  onCoreState(fn: Listener<CoreState>): () => void {
+    const handler = (_: IpcRendererEvent, state: CoreState): void => fn(state)
+    ipcRenderer.on('core:state', handler)
+    return () => ipcRenderer.off('core:state', handler)
   },
+  /** Events were lost on the way: what the page built from them must be read again. */
+  onResync(fn: () => void): () => void {
+    const handler = (): void => fn()
+    ipcRenderer.on('core:resync', handler)
+    return () => ipcRenderer.off('core:resync', handler)
+  },
+  /** Tries to start the core again after it could not be started. */
+  retryCore: (): void => ipcRenderer.send('core:retry'),
   pathForFile: (file: File): string => webUtils.getPathForFile(file),
   pickImages: (): Promise<string[]> => ipcRenderer.invoke('dialog:pickImages'),
   /** Asks for a folder, such as where to export several assets. */

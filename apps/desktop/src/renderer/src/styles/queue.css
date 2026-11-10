@@ -1,0 +1,281 @@
+/* Queue: one row per job, and the stage track every job-shaped thing shows (a job, the setup's
+   test run, a benchmark's running sample). */
+
+/* A list of job rows. Its width decides what a row has room for. */
+.jobs {
+  container-type: inline-size;
+}
+/* A row keeps one height in every state, so a job that starts, moves on or ends shifts nothing.
+   What opens under it (stages, a failure's details, the views to check) opens on a click. */
+.job {
+  padding: var(--s-2) var(--s-4);
+  /* Rows far from the screen cost no layout or paint; a long history stays light. The size
+     held for them is a closed row's, so nothing moves when one comes into view. */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 48px;
+}
+/* The running row is always near the top, and taller: it is never skipped. */
+.job[data-lead] {
+  content-visibility: visible;
+}
+.job-row {
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: var(--s-4);
+  min-height: 48px;
+}
+.job-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.job-title {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  min-width: 0;
+}
+.job-title strong {
+  font: var(--t-strong);
+}
+.job-meta {
+  color: var(--text-2);
+  font: var(--t-caption);
+  font-variant-numeric: tabular-nums;
+}
+.job-now {
+  color: var(--text);
+}
+.job-stopped {
+  color: var(--bad-hi);
+}
+.job-thumb img {
+  opacity: 0;
+  transition: opacity var(--dur-2) var(--ease-out);
+}
+.job-thumb img[data-shown] {
+  opacity: 1;
+}
+.job-bar {
+  width: 144px;
+}
+.job-actions {
+  /* Always the last column, with or without the small track before it. */
+  grid-column: -2 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--s-1);
+}
+.job-toggle svg {
+  transition: transform var(--dur-2) var(--ease-out);
+}
+.job-toggle[aria-expanded='true'] svg {
+  transform: rotate(180deg);
+}
+/* Under the row, in line with its text. */
+.job-more {
+  margin: var(--s-2) 0 var(--s-2) calc(48px + var(--s-4));
+  min-width: 0;
+  animation: fade-in var(--dur-3) var(--ease-out) both;
+}
+/* The running job's track is part of its row: no fade, the room is always there. */
+.job-track {
+  animation: none;
+}
+.job-failure {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s-2);
+  color: var(--bad-hi);
+}
+.job-failure > svg {
+  flex: none;
+  margin-top: 2px;
+}
+.job-failure > div {
+  min-width: 0;
+  flex: 1;
+}
+.job-failure p {
+  max-width: 72ch;
+  overflow-wrap: anywhere;
+}
+.job-detail-actions {
+  gap: var(--s-3);
+}
+.job-detail {
+  max-height: 240px;
+  margin: var(--s-1) 0 0;
+  padding: var(--s-2) var(--s-3);
+  border-radius: var(--r-1);
+  background: var(--bg-deep);
+  color: var(--text-2);
+  font: var(--t-mono);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  overflow-y: auto;
+}
+.job-skeleton {
+  grid-column: 2 / -1;
+  height: 36px;
+}
+.job-again {
+  margin-top: var(--s-3);
+}
+.jobs-more {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--s-3);
+  min-height: var(--h);
+  margin-top: var(--s-3);
+}
+/* A narrow window: the row keeps its name and its actions, and gives up the small track. */
+@container (max-width: 620px) {
+  .job-bar {
+    display: none;
+  }
+  .job-row {
+    gap: var(--s-3);
+  }
+  .job-more {
+    margin-left: 0;
+  }
+}
+
+/* Stage track: a segment per stage, grouped by phase; each fill scales on the compositor. */
+.track {
+  display: flex;
+  gap: var(--s-3);
+  min-width: 0;
+}
+.track.compact {
+  gap: var(--s-1);
+}
+.track-phase {
+  flex: var(--size, 1) 1 0;
+  min-width: 56px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+}
+.track.compact .track-phase {
+  min-width: 0;
+}
+.track-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--s-2);
+  color: var(--text-3);
+  font: var(--t-caption);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.track-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.track-phase.done .track-name,
+.track-phase.running .track-name {
+  color: var(--text-2);
+}
+.track-phase.running .track-tally {
+  color: var(--accent-hi);
+}
+.track-phase.failed .track-tally {
+  color: var(--bad-hi);
+}
+.track-segs {
+  display: flex;
+  gap: 2px;
+}
+.seg {
+  position: relative;
+  flex: 1;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--surface-3);
+  overflow: hidden;
+}
+.seg > i {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: var(--accent);
+  transform: scaleX(var(--p, 0));
+  transform-origin: left;
+  transition: transform var(--dur-3) var(--ease-out);
+}
+.seg.failed > i {
+  background: var(--bad);
+  transform: none;
+}
+/* A track that is not moving stays readable without calling for attention: a finished job's,
+   and one that waits its turn after a first step. */
+.job:is(.succeeded, .failed, .cancelled) .seg.succeeded > i,
+.job:is([data-state='queued'], [data-state='cancelling']) .seg > i {
+  background: var(--text-3);
+}
+
+/* The full stage list, expanded in place. */
+.stage-list {
+  animation: fade-in var(--dur-3) var(--ease-out) both;
+}
+.stage-name {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+}
+.stage-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--surface-3);
+}
+.stage-list .succeeded .stage-dot {
+  background: var(--ok);
+}
+.stage-list .running .stage-dot {
+  background: var(--accent);
+  animation: pulse-dot 1.6s var(--ease-in-out) infinite;
+}
+.stage-list .failed .stage-dot {
+  background: var(--bad);
+}
+.stage-list :is(.queued, .cancelled) :is(.stage-name, .stage-time) {
+  color: var(--text-3);
+}
+.stage-list .failed .stage-time {
+  color: var(--bad-hi);
+}
+.stage-list .running .stage-time {
+  color: var(--accent-hi);
+}
+.stage-model {
+  max-width: 280px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-2);
+}
+.stage-note {
+  display: block;
+  padding-left: 14px;
+  color: var(--text-2);
+  font: var(--t-caption);
+}
+.stage-note.warn {
+  color: var(--warn);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .stage-list .running .stage-dot {
+    animation: none;
+  }
+}

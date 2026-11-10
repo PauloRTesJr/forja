@@ -13,9 +13,15 @@ export interface MeshStats {
   triangles: number
   vertices: number
   materials: number
+  /** Sizes of the base colour maps, such as "2048×2048". */
   textures: string[]
+  /** Every texture map of the full-detail mesh, by what it is for. */
+  maps: { name: string; size: string }[]
   size: [number, number, number]
+  /** The highest level of detail below the full one; 0 when there is only one. */
   lods: number
+  /** Triangles of each level of detail, the full one first. */
+  lodTriangles: number[]
   /** Bones that deform the full-detail mesh; 0 when the asset is not rigged. */
   bones: number
   skeleton?: Skeleton
@@ -60,10 +66,33 @@ export async function parseGLB(url: string, signal?: AbortSignal): Promise<THREE
   return gltf.scene
 }
 
-/** Only LOD0 is shown; LOD1+ nodes ride along in the GLB for engines to use. */
-function lodLevel(o: THREE.Object3D): number {
+/** The level a node's own name gives it (`_LOD<n>`), if it names one. */
+function namedLevel(o: THREE.Object3D): number | undefined {
   const m = /_LOD(\d+)$/.exec(o.name)
-  return m ? Number(m[1]) : 0
+  return m ? Number(m[1]) : undefined
+}
+
+/**
+ * The level of detail an object belongs to: its own name's or the nearest named ancestor's
+ * (a node with several primitives loads as a named group of meshes), else the full one.
+ */
+function lodLevel(o: THREE.Object3D): number {
+  for (let at: THREE.Object3D | null = o; at; at = at.parent) {
+    const level = namedLevel(at)
+    if (level !== undefined) return level
+  }
+  return 0
+}
+
+/** Thrown by `thumbnail` when the picture has nothing in it: a lost context draws nothing. */
+export class BlankFrameError extends Error {
+  override name = 'BlankFrameError'
+}
+
+/** True when no pixel of an RGBA image is visible at all. */
+export function isBlank(rgba: ArrayLike<number>): boolean {
+  for (let i = 3; i < rgba.length; i += 4) if (rgba[i]! > 8) return false
+  return true
 }
 
 /**
@@ -91,8 +120,29 @@ function bonesOf(root: THREE.Object3D): Map<THREE.Bone, THREE.Quaternion> {
   return rest
 }
 
+/** One turn of the turntable in about 13 seconds, whatever the display's refresh rate. */
+const TURN_RAD_PER_MS = 0.00048
+
 const reducedMotion = (): boolean => window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
 const HELD_MS = 1000
+
+/** A material's texture maps by what each is for; glTF packs occlusion, roughness and metallic into one image. */
+function textureMaps(m: THREE.MeshStandardMaterial): [string, THREE.Texture | null | undefined][] {
+  const packed = !!m.roughnessMap && m.roughnessMap === m.metalnessMap
+  const withOcclusion = packed && m.aoMap === m.roughnessMap
+  return [
+    ['Base color', m.map],
+    ['Normal', m.normalMap],
+    ...(packed
+      ? ([[withOcclusion ? 'Occlusion, roughness, metallic' : 'Roughness, metallic', m.roughnessMap]] as [string, THREE.Texture][])
+      : ([
+          ['Roughness', m.roughnessMap],
+          ['Metallic', m.metalnessMap],
+        ] as [string, THREE.Texture | null][])),
+    ...(withOcclusion ? [] : ([['Occlusion', m.aoMap]] as [string, THREE.Texture | null][])),
+    ['Emissive', m.emissiveMap],
+  ]
+}
 
 function checkerTexture(): THREE.Texture {
   const c = document.createElement('canvas')
@@ -100,7 +150,7 @@ function checkerTexture(): THREE.Texture {
   const g = c.getContext('2d')!
   for (let y = 0; y < 8; y++)
     for (let x = 0; x < 8; x++) {
-      g.fillStyle = (x + y) % 2 ? '#e8622c' : '#f4efe9'
+      g.fillStyle = (x + y) % 2 ? '#7e848d' : '#e9ebee'
       g.fillRect(x * 32, y * 32, 32, 32)
     }
   const t = new THREE.CanvasTexture(c)
@@ -128,6 +178,10 @@ export class Viewer {
   private helper: THREE.SkeletonHelper | null = null
   private bend: { start: number; done: () => void } | null = null
   private held: ReturnType<typeof setTimeout> | undefined
+  private lod = 0
+  private lastFrame = 0
+  private disposed = false
+  private home = new THREE.Vector3(0.55, 0.35, 0.76).normalize()
 
   /** Places the camera so the model's bounding sphere fills the view at the current aspect. */
   private frameCamera(): void {
@@ -135,9 +189,8 @@ export class Viewer {
     const vFov = THREE.MathUtils.degToRad(this.camera.fov)
     const hFov = 2 * Math.atan(Math.tan(vFov / 2) * this.camera.aspect)
     const dist = (radius / Math.sin(Math.min(vFov, hFov) / 2)) * 1.08
-    const dir = new THREE.Vector3(0.55, 0.35, 0.76).normalize()
     this.controls.target.copy(center)
-    this.camera.position.copy(center).addScaledVector(dir, dist)
+    this.camera.position.copy(center).addScaledVector(this.home, dist)
     this.camera.near = radius / 100
     this.camera.far = radius * 100
     this.camera.updateProjectionMatrix()
@@ -168,12 +221,15 @@ export class Viewer {
 
   /** Schedules one frame; frames keep coming only while something is still moving. */
   request(): void {
-    if (this.frame) return
+    if (this.frame || this.disposed) return
     this.frame = requestAnimationFrame((t) => {
       this.frame = 0
+      // Time since the frame before, so a turn takes as long on a 60 Hz display as on a 240 Hz one.
+      const dt = this.lastFrame ? Math.min(t - this.lastFrame, 100) : 16
+      this.lastFrame = t
       let moving = this.controls.update()
       if (this.turntable && this.model) {
-        this.model.rotation.y += 0.008
+        this.model.rotation.y += TURN_RAD_PER_MS * dt
         moving = true
       }
       if (this.intro && this.model) {
@@ -194,7 +250,13 @@ export class Viewer {
       }
       this.renderer.render(this.scene, this.camera)
       if (moving) this.request()
+      else this.lastFrame = 0
     })
+  }
+
+  /** True once the browser or the graphics driver took this viewer's WebGL context away. */
+  get lost(): boolean {
+    return this.renderer.getContext().isContextLost()
   }
 
   private fit(): void {
@@ -208,15 +270,14 @@ export class Viewer {
 
   async load(url: string, signal?: AbortSignal): Promise<MeshStats> {
     const group = await parseGLB(url, signal)
-    if (signal?.aborted) throw new DOMException('aborted', 'AbortError')
-    group.traverse((o) => {
-      if (lodLevel(o) > 0) o.visible = false
-    })
+    if (signal?.aborted || this.disposed) throw new DOMException('aborted', 'AbortError')
     this.setModel(group)
     return this.stats()
   }
 
   private setModel(group: THREE.Group): void {
+    this.lod = 0
+    this.showLod(group)
     const keepCamera = this.model !== null
     this.stopBend()
     this.setSkeleton(false)
@@ -241,11 +302,11 @@ export class Viewer {
       if ((o as THREE.Mesh).isMesh) this.original.set(o as THREE.Mesh, (o as THREE.Mesh).material)
     })
     const radius = Math.max(size.x, size.y, size.z, 0.1)
-    if (this.grid) this.scene.remove(this.grid)
+    this.disposeGrid()
     const cells = Math.max(2, Math.ceil(radius * 2))
-    this.grid = new THREE.GridHelper(cells, cells, 0x8a7350, 0x5a4a33)
+    this.grid = new THREE.GridHelper(cells, cells, 0x5b626c, 0x3d434b)
     ;(this.grid.material as THREE.Material).transparent = true
-    ;(this.grid.material as THREE.Material).opacity = 0.25
+    ;(this.grid.material as THREE.Material).opacity = 0.35
     this.scene.add(this.grid)
     refreshSkinnedBounds(pivot)
     this.sphere = new THREE.Box3().setFromObject(pivot).getBoundingSphere(new THREE.Sphere())
@@ -266,6 +327,49 @@ export class Viewer {
     this.request()
   }
 
+  /** Shows one level of detail (0 is the full one) in place of the others. */
+  setLod(level: number): void {
+    this.lod = level
+    if (this.model) this.showLod(this.model)
+    this.request()
+  }
+
+  private showLod(root: THREE.Object3D): void {
+    root.traverse((o) => {
+      const named = namedLevel(o)
+      // Only what names a level is switched: a mesh under a named group follows its group.
+      if (named !== undefined) o.visible = named === this.lod
+      else if ((o as THREE.Mesh).isMesh && lodLevel(o) === 0) o.visible = this.lod === 0
+    })
+  }
+
+  /** Back to the view the model opened in: framed, unturned. */
+  resetView(): void {
+    if (this.model) this.model.rotation.y = 0
+    this.frameCamera()
+    this.request()
+  }
+
+  /** Turns the camera around the model, for the arrow keys: radians to the right and up. */
+  orbitBy(right: number, up: number): void {
+    const offset = this.camera.position.clone().sub(this.controls.target)
+    const at = new THREE.Spherical().setFromVector3(offset)
+    at.theta -= right
+    at.phi = THREE.MathUtils.clamp(at.phi - up, 0.05, Math.PI - 0.05)
+    this.camera.position.copy(this.controls.target).add(offset.setFromSpherical(at))
+    this.controls.update()
+    this.request()
+  }
+
+  /** Moves the camera towards the model (factor below 1) or away from it. */
+  zoomBy(factor: number): void {
+    const offset = this.camera.position.clone().sub(this.controls.target)
+    const length = THREE.MathUtils.clamp(offset.length() * factor, this.sphere.radius * 0.2, this.sphere.radius * 40)
+    this.camera.position.copy(this.controls.target).add(offset.setLength(length))
+    this.controls.update()
+    this.request()
+  }
+
   /** Draws the bones over the mesh, so they show through it. */
   setSkeleton(on: boolean): void {
     if (this.helper) {
@@ -275,7 +379,7 @@ export class Viewer {
     }
     if (on && this.model && this.rest.size > 0) {
       const helper = new THREE.SkeletonHelper(this.model)
-      helper.setColors(new THREE.Color(0xe6c58f), new THREE.Color(0xe8622c))
+      helper.setColors(new THREE.Color(0xf6b872), new THREE.Color(0xf0a04b))
       const mat = helper.material as THREE.LineBasicMaterial
       mat.depthTest = false
       mat.depthWrite = false
@@ -371,7 +475,7 @@ export class Viewer {
           mesh.material = own(new THREE.MeshNormalMaterial())
           break
         case 'wireframe':
-          mesh.material = own(new THREE.MeshBasicMaterial({ color: 0xc9a46a, wireframe: true }))
+          mesh.material = own(new THREE.MeshBasicMaterial({ color: 0xa8adb5, wireframe: true }))
           break
         case 'uv':
           this.checker ??= checkerTexture()
@@ -385,21 +489,35 @@ export class Viewer {
     let triangles = 0
     let vertices = 0
     let lods = 0
+    const lodTriangles: number[] = []
     const materials = new Set<THREE.Material>()
     const textures = new Set<string>()
+    const maps = new Map<string, Set<string>>()
+    const sizeOf = (t: THREE.Texture | null | undefined): string | undefined => {
+      const img = t?.image as { width?: number; height?: number } | undefined
+      return img?.width ? `${img.width}×${img.height}` : undefined
+    }
     this.model?.traverse((o) => {
-      lods = Math.max(lods, lodLevel(o))
       const mesh = o as THREE.Mesh
-      if (!mesh.isMesh || lodLevel(o) > 0) return
+      if (!mesh.isMesh) return
+      const level = lodLevel(o)
+      lods = Math.max(lods, level)
       const g = mesh.geometry
+      const tris = (g.index ? g.index.count : (g.attributes.position?.count ?? 0)) / 3
+      lodTriangles[level] = (lodTriangles[level] ?? 0) + tris
+      if (level > 0) return
       vertices += g.attributes.position?.count ?? 0
-      triangles += (g.index ? g.index.count : (g.attributes.position?.count ?? 0)) / 3
+      triangles += tris
       const mats = this.original.get(mesh) ?? mesh.material
       for (const m of Array.isArray(mats) ? mats : [mats]) {
         materials.add(m)
-        const map = (m as THREE.MeshStandardMaterial).map
-        const img = map?.image as { width?: number; height?: number } | undefined
-        if (img?.width) textures.add(`${img.width}×${img.height}`)
+        for (const [name, tex] of textureMaps(m as THREE.MeshStandardMaterial)) {
+          const size = sizeOf(tex)
+          if (!size) continue
+          if (name === 'Base color') textures.add(size)
+          if (!maps.has(name)) maps.set(name, new Set())
+          maps.get(name)!.add(size)
+        }
       }
     })
     const size = this.model ? new THREE.Box3().setFromObject(this.model).getSize(new THREE.Vector3()) : new THREE.Vector3()
@@ -408,15 +526,22 @@ export class Viewer {
       vertices,
       materials: materials.size,
       textures: [...textures],
+      maps: [...maps].map(([name, sizes]) => ({ name, size: [...sizes].join(', ') })),
       size: [size.x, size.y, size.z],
       lods,
+      lodTriangles: Array.from({ length: lods + 1 }, (_, i) => Math.round(lodTriangles[i] ?? 0)),
       bones: this.rest.size,
       skeleton: this.skeleton,
     }
   }
 
-  /** Renders the current model once into a square image for the library grid. */
-  async thumbnail(px = 256): Promise<Blob | null> {
+  /**
+   * Renders the current model once into a square image for the library grid. It refuses to
+   * hand back an empty picture (`BlankFrameError`): a context the browser took away draws
+   * nothing, and a blank thumbnail would be kept for good.
+   */
+  async thumbnail(px = 512): Promise<Blob> {
+    if (this.lost) throw new BlankFrameError('the 3D context was lost')
     const prev = new THREE.Vector2()
     this.renderer.getSize(prev)
     const ratio = this.renderer.getPixelRatio()
@@ -429,7 +554,11 @@ export class Viewer {
     if (this.grid) this.grid.visible = false
     if (this.helper) this.helper.visible = false
     this.renderer.render(this.scene, this.camera)
-    const blob = await new Promise<Blob | null>((done) => this.canvas.toBlob(done, 'image/webp', 0.9))
+    // Read back in the same task as the draw, while the drawing buffer still holds it.
+    const gl = this.renderer.getContext()
+    const pixels = new Uint8Array(px * px * 4)
+    gl.readPixels(0, 0, px, px, gl.RGBA, gl.UNSIGNED_BYTE, pixels)
+    const blob = isBlank(pixels) ? null : await new Promise<Blob | null>((done) => this.canvas.toBlob(done, 'image/webp', 0.9))
     if (this.grid) this.grid.visible = true
     if (this.helper) this.helper.visible = true
     this.renderer.setPixelRatio(ratio)
@@ -439,6 +568,7 @@ export class Viewer {
     this.controls.target.copy(pose.target)
     this.camera.updateProjectionMatrix()
     this.request()
+    if (!blob) throw new BlankFrameError(this.lost ? 'the 3D context was lost' : 'the picture of this model came out empty')
     return blob
   }
 
@@ -456,15 +586,42 @@ export class Viewer {
     })
   }
 
+  private disposeGrid(): void {
+    if (!this.grid) return
+    this.scene.remove(this.grid)
+    this.grid.geometry.dispose()
+    ;(this.grid.material as THREE.Material).dispose()
+    this.grid = null
+  }
+
+  /**
+   * Frees everything on the GPU and gives the WebGL context back. Without the last step the
+   * context lives until the canvas is garbage collected, and a browser keeps only so many:
+   * it then takes the oldest one away from a viewer that is still in use.
+   */
   dispose(): void {
+    if (this.disposed) return
     this.stopBend()
-    this.setSkeleton(false) // asks for a frame, cancelled below
+    this.setSkeleton(false)
+    this.disposed = true
     cancelAnimationFrame(this.frame)
+    this.frame = 0
     this.resize.disconnect()
     this.controls.dispose()
-    if (this.model) this.disposeModel(this.model)
+    if (this.model) {
+      this.scene.remove(this.model)
+      this.disposeModel(this.model)
+      this.model = null
+    }
+    this.original.clear()
+    this.rest.clear()
+    this.disposeGrid()
     for (const m of this.modeMaterials) m.dispose()
+    this.modeMaterials = []
     this.checker?.dispose()
+    this.scene.environment?.dispose()
+    this.scene.environment = null
     this.renderer.dispose()
+    this.renderer.forceContextLoss()
   }
 }

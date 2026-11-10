@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { ProviderKind, ProviderRow } from './api'
-import { badNumber, bodyFor, cloudKinds, missing, placeNote, priceNote } from './cloud'
+import { badNumber, bodyFor, carryValues, cloudKinds, missing, placeNote, plainProblem, priceNote, providerState } from './cloud'
 
 const runpod: ProviderKind = {
   kind: 'serverless',
@@ -108,5 +108,50 @@ describe('the provider list', () => {
     expect(priceNote(row())).toBeUndefined()
     expect(placeNote(row({ endpoint_id: 'abc' }))).toBe('RunPod endpoint abc')
     expect(placeNote(row({ url: 'https://x.modal.run' }))).toBe('https://x.modal.run')
+  })
+})
+
+describe('providerState', () => {
+  it('says ready with the answer time, and idle for an engine that only waits for work', () => {
+    expect(providerState(row({ healthy: true, latency_ms: 12 }))).toEqual({ label: 'Ready', tone: 'ok', detail: '12 ms' })
+    expect(providerState(row({ healthy: false, error: 'idle' }))).toMatchObject({ label: 'Idle' })
+    expect(providerState(row({ healthy: false, error: 'idle' })).tone).toBeUndefined()
+  })
+
+  it('says checking while a first answer is awaited, and keeps the last known state meanwhile', () => {
+    expect(providerState(row({ healthy: false, checking: true }))).toMatchObject({ label: 'Checking', live: true })
+    expect(providerState(row({ healthy: true, latency_ms: 3, checking: true })).label).toBe('Ready')
+    expect(providerState(row({ healthy: true, latency_ms: 3, checking: true }))).toMatchObject({ tone: 'ok', detail: '3 ms' })
+  })
+
+  it('keeps a known fault on show while it is checked again', () => {
+    const state = providerState(row({ kind: 'engine', healthy: false, checking: true, error: 'dial tcp 127.0.0.1:9: connectex: refused' }))
+    expect(state).toMatchObject({ label: 'Not reachable', tone: 'bad' })
+    expect(state.problem).toBeTruthy()
+    expect(providerState(row({ healthy: false, checking: true }))).toMatchObject({ label: 'Checking' })
+  })
+
+  it('turns a transport error into what to do', () => {
+    const refused = providerState(row({ kind: 'engine', healthy: false, error: 'Get "https://127.0.0.1:9/v1/health": dial tcp 127.0.0.1:9: connectex: Nenhuma conexão pôde ser feita' }))
+    expect(refused).toMatchObject({ label: 'Not reachable', tone: 'bad' })
+    expect(plainProblem('cannot reach https://127.0.0.1:9: Post "https://127.0.0.1:9/v1/pair": dial tcp 127.0.0.1:9: connectex: refused')).toMatch(/^Nothing answers/)
+    expect(refused.problem).toMatch(/^Nothing answers at its address/)
+    expect(providerState(row({ healthy: false, kind: 'serverless', error: 'dial tcp 127.0.0.1:9: connectex: refused' })).problem).toBe('Nothing answers at that address. Check the address and your connection.')
+    expect(plainProblem('Get "https://h/v1/health": context deadline exceeded')).toMatch(/did not answer in time/)
+    expect(plainProblem('the engine refused the token')).toMatch(/Replace the key/)
+    expect(plainProblem('Head "http://127.0.0.1:9/v1/x": dial tcp 127.0.0.1:9: connectex: refused', true)).toBe('Nothing answers at that address. Check the address and your connection.')
+    expect(plainProblem('lookup studio.local: no such host')).toMatch(/not found on the network/)
+  })
+
+  it('leaves a sentence the core already wrote as it is', () => {
+    expect(plainProblem('Studio PC is switched off or not on this network.')).toBe('Studio PC is switched off or not on this network.')
+    expect(plainProblem('')).toBeUndefined()
+  })
+})
+
+describe('carryValues', () => {
+  it('keeps what two kinds share when the kind changes, but never a key', () => {
+    expect(carryValues(comfy, { url: 'host', token: 'k', endpoint_id: 'ep', label: 'Mine', price_usd_per_second: '' })).toEqual({ url: 'host', label: 'Mine' })
+    expect(carryValues(runpod, { url: 'host', price_usd_per_second: '0.0004' })).toEqual({ price_usd_per_second: '0.0004' })
   })
 })

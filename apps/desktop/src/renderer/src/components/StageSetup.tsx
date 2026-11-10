@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react'
 import { fetchModels, installModel, taskDone, type StageInstall } from '../lib/api'
 import { keys } from '../lib/events'
 import { useToast } from '../lib/toast'
+import { ErrorBlock } from './Controls'
 import { CheckList, FitBadge, LicenseLine, TaskProgress, taskFor, useChecks, useInstalls } from './Install'
 
 /**
@@ -28,7 +29,7 @@ export function StageSetup({ install, onReady }: { install: StageInstall; onRead
   return (
     <div className="stage-setup">
       {!open ? (
-        <button className="btn stage-setup-open" onClick={() => setOpen(true)}>
+        <button className="btn sm" onClick={() => setOpen(true)}>
           {label}
           {model?.disk_gb ? <span className="muted"> · about {model.disk_gb.toFixed(1)} GB</span> : null}
         </button>
@@ -75,6 +76,7 @@ function ModelSetup({ modelId, onReady, onClose }: { modelId: string; onReady: (
       {!started && (
         <>
           {checks.isPending && <div className="skeleton" style={{ height: 64 }} />}
+          {checks.error && <ErrorBlock>{(checks.error as Error).message}</ErrorBlock>}
           {checks.data && <CheckList checks={checks.data.checks} />}
           {m.needs_acceptance && !m.accepted_at && (
             <label className="accept">
@@ -89,11 +91,11 @@ function ModelSetup({ modelId, onReady, onClose }: { modelId: string; onReady: (
       {task && (started || task.status === 'failed') && <TaskProgress task={task} />}
       <div className="row">
         {!started && (
-          <button className="btn primary" onClick={() => install.mutate()} disabled={!licensed || !checks.data?.ok || install.isPending}>
+          <button className="btn primary sm" onClick={() => install.mutate()} disabled={!licensed || !checks.data?.ok || install.isPending}>
             Install {m.name}
           </button>
         )}
-        <button className="btn ghost" onClick={onClose}>
+        <button className="btn ghost sm" onClick={onClose}>
           {started ? 'Hide' : 'Not now'}
         </button>
       </div>
@@ -113,10 +115,10 @@ function SoftwareSetup({ use, onReady, onClose }: { use: string; onReady: () => 
       {checks.isPending && <div className="skeleton" style={{ height: 64 }} />}
       {checks.data && <CheckList checks={checks.data.checks} />}
       <div className="row">
-        <button className="btn ghost" onClick={() => void checks.refetch()} disabled={checks.isFetching}>
+        <button className="btn sm" onClick={() => void checks.refetch()} disabled={checks.isFetching}>
           {checks.isFetching ? 'Checking…' : 'Check again'}
         </button>
-        <button className="btn ghost" onClick={onClose}>
+        <button className="btn ghost sm" onClick={onClose}>
           Not now
         </button>
       </div>

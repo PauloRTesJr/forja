@@ -1,4 +1,4 @@
-import type { BenchDelta, BenchEntry, BenchList, BenchPreset, BenchResult, BenchSample } from './api'
+import type { BenchComparison, BenchDelta, BenchEntry, BenchList, BenchPreset, BenchResult, BenchSample } from './api'
 import { bytes, seconds } from './format'
 
 export const sampleDone = (s: BenchSample): boolean => s.status === 'succeeded' || s.status === 'failed' || s.status === 'cancelled'
@@ -41,20 +41,31 @@ export function phaseLabel(r: BenchResult): string {
   return `Measuring ${Math.min(done + 1, r.total)} of ${r.total}`
 }
 
-/** The run to compare with: the newest earlier run of the same suite version on the same device. */
-export function baselineFor(results: BenchEntry[], r: Pick<BenchEntry, 'id' | 'suite' | 'device' | 'started_at'>): BenchEntry | undefined {
+/** Only a run that completed is a fair thing to compare against. */
+export const usableBaseline = (e: BenchEntry): boolean => e.status === 'succeeded'
+
+/** Earlier completed runs of the same suite version on the same device, newest first. */
+export function baselineChoices(results: BenchEntry[], r: Pick<BenchEntry, 'id' | 'suite' | 'device' | 'started_at'>): BenchEntry[] {
   return results
     .filter(
       (e) =>
         e.id !== r.id &&
-        e.status !== 'running' &&
+        usableBaseline(e) &&
         e.suite.name === r.suite.name &&
         e.suite.version === r.suite.version &&
         e.device.id === r.device.id &&
         e.started_at < r.started_at,
     )
-    .sort((a, b) => b.started_at.localeCompare(a.started_at))[0]
+    .sort((a, b) => b.started_at.localeCompare(a.started_at))
 }
+
+/** The run to compare with by default: the newest completed one, never a cancelled or failed run. */
+export const baselineFor = (results: BenchEntry[], r: Pick<BenchEntry, 'id' | 'suite' | 'device' | 'started_at'>): BenchEntry | undefined =>
+  baselineChoices(results, r)[0]
+
+/** "Nothing slower" is true only when something was measured against the baseline. */
+export const verdictOf = (c: BenchComparison): 'regressed' | 'clean' | 'nothing' =>
+  c.regressions > 0 ? 'regressed' : c.deltas.length > 0 ? 'clean' : 'nothing'
 
 /** A preset's median against its budget; undefined when the suite sets none. */
 export function budgetState(p: BenchPreset): 'ok' | 'over' | undefined {

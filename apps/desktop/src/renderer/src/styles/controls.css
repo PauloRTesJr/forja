@@ -1,0 +1,939 @@
+/* Shared controls and blocks: anything used by more than one screen lives here. */
+
+/* Buttons */
+.btn {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: var(--h);
+  padding: 0 var(--s-3);
+  border: 1px solid var(--border);
+  border-radius: var(--r-1);
+  background: var(--surface-2);
+  color: var(--text);
+  font: var(--t-strong);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: transform var(--dur-1) var(--ease-out);
+}
+.btn:hover {
+  background: var(--surface-3);
+}
+.btn:active {
+  transform: scale(0.98);
+}
+.btn > svg {
+  flex: none;
+}
+.btn.primary {
+  border-color: transparent;
+  background: var(--accent);
+  color: var(--on-accent);
+}
+.btn.primary:hover {
+  background: var(--accent-hi);
+}
+.btn.ghost {
+  border-color: transparent;
+  background: none;
+  color: var(--text-2);
+}
+.btn.ghost:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+.btn.danger {
+  color: var(--bad-hi);
+}
+.btn.danger:hover {
+  border-color: color-mix(in oklab, var(--bad) 40%, transparent);
+  background: var(--bad-soft);
+  color: var(--bad-hi);
+}
+.btn.sm {
+  height: var(--h-sm);
+  padding: 0 var(--s-2);
+}
+.btn.lg {
+  height: var(--h-lg);
+  padding: 0 var(--s-4);
+}
+/* Icon only: square, and named by an aria-label. */
+.btn.icon {
+  width: var(--h);
+  padding: 0;
+}
+.btn.icon.sm {
+  width: var(--h-sm);
+}
+.btn:disabled,
+.btn[aria-disabled='true'] {
+  opacity: 0.45;
+  cursor: default;
+  pointer-events: none;
+}
+/* A handle, not a button: it does nothing on click and leaves by being dragged. */
+.btn.drag-out {
+  border-style: dashed;
+  background: none;
+  color: var(--text-2);
+  cursor: grab;
+}
+.btn.drag-out:hover {
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+.btn.drag-out:active {
+  cursor: grabbing;
+  transform: none;
+}
+
+/* An action inside a sentence or a caption. */
+.text-btn {
+  padding: 0;
+  border: 0;
+  border-radius: 2px;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  text-decoration: underline transparent;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+.text-btn:hover {
+  text-decoration-color: currentColor;
+}
+.text-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/* Shows or hides what is under it; the chevron turns. */
+.disclosure {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-1);
+  height: var(--h-sm);
+  margin-left: calc(-1 * var(--s-2));
+  padding: 0 var(--s-2);
+  border: 0;
+  border-radius: var(--r-1);
+  background: none;
+  color: var(--text-2);
+  font: var(--t-caption);
+  cursor: pointer;
+}
+.disclosure:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+.disclosure svg {
+  transition: transform var(--dur-2) var(--ease-out);
+}
+.disclosure[aria-expanded='true'] svg {
+  transform: rotate(180deg);
+}
+
+/* Inputs */
+.input {
+  height: var(--h);
+  min-width: 0;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-1);
+  background: var(--bg-deep);
+  color: var(--text);
+  font: var(--t-body);
+}
+.input:hover:not(:disabled) {
+  border-color: var(--border-strong);
+}
+.input::placeholder {
+  color: var(--text-3);
+}
+.input:disabled {
+  opacity: 0.45;
+}
+textarea.input {
+  height: auto;
+  min-height: 72px;
+  padding: 6px 10px;
+  resize: vertical;
+}
+/* One drawn chevron instead of the OS arrow, which differs on every platform. */
+select.input {
+  appearance: none;
+  padding-right: 28px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23a8adb5' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 9px center;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+select.input:disabled {
+  cursor: default;
+}
+.input.sm {
+  height: var(--h-sm);
+}
+/* A number with its unit after it. */
+.number {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+  color: var(--text-2);
+  white-space: nowrap;
+}
+.number .input {
+  width: 88px;
+  font-variant-numeric: tabular-nums;
+}
+/* A label over its input, in dialogs and forms. */
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.field > span:first-child {
+  color: var(--text-2);
+  font: var(--t-strong);
+}
+.field .input {
+  width: 100%;
+}
+.search {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 260px;
+  max-width: 100%;
+  color: var(--text-3);
+}
+.search svg {
+  position: absolute;
+  left: 9px;
+  pointer-events: none;
+}
+.search .input {
+  width: 100%;
+  padding-left: 32px;
+}
+.search .input::-webkit-search-cancel-button {
+  cursor: pointer;
+}
+/* A native checkbox with the sentence it agrees to. */
+.accept {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s-2);
+  cursor: pointer;
+}
+.accept input {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  margin: 3px 0 0;
+  accent-color: var(--accent);
+}
+
+/* Switch: the thumb slides with transform. */
+.switch {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+  min-height: var(--h-sm);
+  padding: 0;
+  border: 0;
+  border-radius: var(--r-1);
+  background: none;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+.switch:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.switch-track {
+  position: relative;
+  flex: none;
+  width: 28px;
+  height: 16px;
+  border-radius: 8px;
+  background: var(--surface-3);
+}
+.switch-track::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--text-2);
+  transition: transform var(--dur-2) var(--ease-out);
+}
+.switch:hover:not(:disabled) .switch-track {
+  background: var(--border-strong);
+}
+.switch[aria-checked='true'] .switch-track,
+.switch[aria-checked='true']:hover:not(:disabled) .switch-track {
+  background: var(--accent);
+}
+.switch[aria-checked='true'] .switch-track::after {
+  background: var(--on-accent);
+  transform: translateX(12px);
+}
+
+/* Choices: one bordered group of options, hairlines between them, an amber edge on the chosen one. */
+.choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1px;
+  /* The hairlines are this ground showing through the gaps, so a wrapped row leaves no hole. */
+  padding: 1px;
+  border-radius: var(--r-1);
+  background: var(--border);
+  overflow: hidden;
+}
+.choices.two .choice {
+  flex-basis: calc(50% - 1px);
+}
+.choice {
+  position: relative;
+  display: flex;
+  flex: 1 1 150px;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  min-height: var(--h);
+  padding: 6px 10px;
+  border: 0;
+  background: var(--bg-deep);
+  color: var(--text-2);
+  text-align: left;
+  cursor: pointer;
+}
+.choice:hover:not(:disabled, [aria-checked='true']) {
+  background: var(--surface);
+  color: var(--text);
+}
+.choice strong {
+  font: var(--t-strong);
+}
+.choice span {
+  color: var(--text-3);
+  font: var(--t-caption);
+}
+.choice[aria-checked='true'] {
+  z-index: 1;
+  background: var(--surface-2);
+  color: var(--text);
+}
+.choice[aria-checked='true'] span {
+  color: var(--text-2);
+}
+/* The chosen option's edge, drawn over the group's own hairlines. */
+.choice[aria-checked='true']::after {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  border: 1px solid var(--accent);
+  pointer-events: none;
+  animation: fade-in var(--dur-2) var(--ease-out) both;
+}
+.choice:focus-visible {
+  z-index: 1;
+  outline-offset: -2px;
+}
+.choice:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.choice.unready strong {
+  color: var(--text-3);
+}
+
+/* Hint: what an option does, on hover or focus of the ? beside it. */
+.help {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  color: var(--text-3);
+  cursor: help;
+}
+.help:hover,
+.help:focus-visible {
+  color: var(--text);
+}
+.help-tip {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  /* Opens toward the inside of the screen: a hidden tip must never reach past the right edge. */
+  right: 0;
+  z-index: 10;
+  width: max-content;
+  max-width: 280px;
+  padding: 6px var(--s-2);
+  border-radius: var(--r-1);
+  background: var(--surface-3);
+  box-shadow: var(--shadow);
+  color: var(--text);
+  font: var(--t-caption);
+  text-align: left;
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(4px);
+  transition:
+    opacity var(--dur-2) var(--ease-out),
+    transform var(--dur-2) var(--ease-out);
+}
+.help:hover .help-tip,
+.help:focus-visible .help-tip {
+  opacity: 1;
+  transform: none;
+}
+
+/* Status pill: a tinted ground, a dot when it is a state, a label. */
+.pill {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  height: 20px;
+  padding: 0 var(--s-2);
+  border-radius: var(--r-1);
+  background: var(--surface-2);
+  color: var(--text-2);
+  font: 500 11.5px/20px var(--font);
+  white-space: nowrap;
+  vertical-align: middle;
+}
+.pill > i {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.pill.accent {
+  background: var(--accent-soft);
+  color: var(--accent-hi);
+}
+.pill.ok {
+  background: var(--ok-soft);
+  color: var(--ok);
+}
+.pill.warn {
+  background: var(--warn-soft);
+  color: var(--warn);
+}
+.pill.bad {
+  background: var(--bad-soft);
+  color: var(--bad-hi);
+}
+.pill.live > i {
+  animation: pulse-dot 1.6s var(--ease-in-out) infinite;
+}
+.pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+/* A state without words: the connection, a provider's health. */
+.dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-3);
+}
+.dot.ok {
+  background: var(--ok);
+}
+.dot.bad {
+  background: var(--bad);
+}
+.dot.live {
+  background: var(--accent);
+  animation: pulse-dot 1.6s var(--ease-in-out) infinite;
+}
+
+/* Progress: the fill scales on the compositor; `--p` is 0..1. */
+.bar {
+  position: relative;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--surface-3);
+  overflow: hidden;
+}
+.bar > i {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: var(--accent);
+  transform: scaleX(var(--p, 0));
+  transform-origin: left;
+  transition: transform var(--dur-3) var(--ease-out);
+}
+.bar > i.indeterminate {
+  transform: none;
+  animation: indeterminate 1.4s var(--ease-in-out) infinite;
+}
+
+/* Thumbnail well: an input image or a preview, never cropped. */
+.thumb {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  border-radius: var(--r-2);
+  background: var(--bg-deep);
+  color: var(--text-3);
+  overflow: hidden;
+}
+.thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+/* Menus and popovers. A menu fades and settles on the compositor. */
+.menu {
+  display: flex;
+  flex-direction: column;
+  min-width: 200px;
+  padding: var(--s-1);
+  border: 1px solid var(--border);
+  border-radius: var(--r-2);
+  background: var(--surface-2);
+  box-shadow: var(--shadow);
+  color: var(--text);
+}
+.menu-item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 1px;
+  width: 100%;
+  min-height: var(--h-sm);
+  padding: 4px var(--s-2);
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: var(--text);
+  font: var(--t-body);
+  text-align: left;
+  cursor: pointer;
+}
+.menu-item:hover:not(:disabled),
+.menu-item:focus-visible {
+  background: var(--surface-3);
+  outline: none;
+}
+.menu-item:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.menu-item small,
+.menu-item-help {
+  color: var(--text-2);
+  font: var(--t-caption);
+}
+.menu-item.danger {
+  color: var(--bad-hi);
+}
+.menu-item-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s-2);
+}
+.menu-item-head .mono {
+  color: var(--text-3);
+}
+.menu .skeleton {
+  background: var(--surface-3);
+}
+.menu-note {
+  margin: var(--s-1) var(--s-2) var(--s-2);
+  color: var(--warn);
+  font: var(--t-caption);
+}
+/* Under (or, with .up, over) the button that opens it. */
+.menu-anchor {
+  position: relative;
+  display: inline-flex;
+}
+.menu-anchor > .menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 30;
+  width: 320px;
+  max-height: min(480px, calc(100vh - 160px));
+  overflow-y: auto;
+  opacity: 0;
+  transform: translateY(-4px);
+  visibility: hidden;
+  transition:
+    opacity var(--dur-2) var(--ease-out),
+    transform var(--dur-2) var(--ease-out),
+    visibility 0s linear var(--dur-2);
+}
+.menu-anchor > .menu.left {
+  right: auto;
+  left: 0;
+}
+.menu-anchor > .menu.up {
+  top: auto;
+  bottom: calc(100% + 6px);
+  transform: translateY(4px);
+}
+.menu-anchor > .menu[data-open='true'] {
+  opacity: 1;
+  transform: none;
+  visibility: visible;
+  transition-delay: 0s;
+}
+/* In a popover anchored to its button, above everything. */
+.menu[popover] {
+  position-area: bottom span-left;
+  position-try-fallbacks: flip-block;
+  inset: auto;
+  margin: 6px 0;
+  opacity: 1;
+  transform: none;
+  transition:
+    opacity var(--dur-2) var(--ease-out),
+    transform var(--dur-2) var(--ease-out),
+    display var(--dur-2) allow-discrete,
+    overlay var(--dur-2) allow-discrete;
+}
+.menu[popover]:not(:popover-open) {
+  /* `.menu` sets display, which beats the browser's hiding of a closed popover: its items stayed tab stops. */
+  display: none;
+  opacity: 0;
+  transform: translateY(-4px);
+}
+@starting-style {
+  .menu[popover]:popover-open {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+
+/* Dialog: the scrim fades, the panel rises; both on the compositor. */
+.dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  padding: var(--s-5);
+  background: rgb(0 0 0 / 0.5);
+  animation: fade-in var(--dur-2) var(--ease-out) both;
+}
+.dialog {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  width: min(560px, 100%);
+  max-height: calc(100vh - 48px);
+  padding: 20px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-3);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  overflow-y: auto;
+  outline: none;
+  animation: enter-up var(--dur-3) var(--ease-out) both;
+}
+.dialog.narrow {
+  width: min(420px, 100%);
+}
+.dialog.wide {
+  width: min(760px, 100%);
+}
+.dialog-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+}
+.dialog-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--s-2);
+  margin-top: var(--s-1);
+}
+
+/* Toasts: bottom centre of the screen area, above everything. */
+.toast-stack {
+  position: fixed;
+  left: calc(var(--sidebar) + (100% - var(--sidebar)) / 2);
+  bottom: var(--s-5);
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--s-2);
+  width: max-content;
+  max-width: calc(100% - var(--sidebar) - 48px);
+  transform: translateX(-50%);
+  transition: transform var(--dur-2) var(--ease-out);
+  pointer-events: none;
+}
+/* Clear of the Library's selection toolbar while it is up. */
+body:has(.selection-bar[data-open='true']) .toast-stack {
+  transform: translate(-50%, -56px);
+}
+.toast {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  max-width: 520px;
+  min-height: 36px;
+  padding: 6px var(--s-3);
+  border: 1px solid var(--border);
+  border-radius: var(--r-2);
+  background: var(--surface-2);
+  box-shadow: var(--shadow);
+  pointer-events: auto;
+  animation: enter-up var(--dur-3) var(--ease-out) both;
+}
+.toast.bad {
+  border-left: 3px solid var(--bad);
+}
+.toast > span {
+  padding: 2px 0;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+.toast .btn {
+  color: var(--accent);
+}
+/* Every toast ends in its close button, pulled towards the action and the edge. */
+.toast .toast-close {
+  margin: 0 -6px 0 calc(var(--s-2) * -1);
+  color: var(--text-3);
+}
+.toast .toast-close:hover {
+  color: var(--text);
+}
+
+/* Tables and row lists */
+.table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.table th,
+.table td {
+  padding: var(--s-2) var(--s-3);
+  border-bottom: 1px solid var(--border-soft);
+  text-align: left;
+  vertical-align: top;
+}
+.table th {
+  color: var(--text-3);
+  font: var(--t-head);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.table tbody tr:last-child td {
+  border-bottom: 0;
+}
+.table tbody tr:hover {
+  background: var(--surface);
+}
+.table .n {
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+}
+/* In a column of its own, with no panel around it: the cells line up with the text above. */
+.table.flush th:first-child,
+.table.flush td:first-child {
+  padding-left: 0;
+}
+.table.flush th:last-child,
+.table.flush td:last-child {
+  padding-right: 0;
+}
+.table.flush tbody tr:hover {
+  background: none;
+}
+.table.compact th,
+.table.compact td {
+  padding-block: 6px;
+}
+
+/* Group: one bordered panel of rows, a hairline between them. Never put a group in a group. */
+.group {
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--r-2);
+  background: var(--surface);
+  list-style: none;
+}
+.group > * + * {
+  border-top: 1px solid var(--border-soft);
+}
+
+/* Label and value rows: an asset's properties, a machine's facts. */
+.kv {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+  margin: 0;
+}
+.kv-row {
+  display: grid;
+  grid-template-columns: minmax(88px, 2fr) minmax(0, 3fr);
+  gap: var(--s-3);
+}
+.kv dt {
+  color: var(--text-2);
+}
+.kv dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+/* Skeleton: stands where content will be, at its size. */
+.skeleton {
+  position: relative;
+  border-radius: var(--r-1);
+  background: var(--surface);
+  overflow: hidden;
+}
+.skeleton::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, rgb(255 255 255 / 0.04), transparent);
+  animation: shimmer 1.4s var(--ease-in-out) infinite;
+}
+
+/* Empty state */
+.empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--s-1);
+  padding: var(--s-7) var(--s-4);
+  color: var(--text-2);
+  text-align: center;
+  animation: fade-in var(--dur-3) var(--ease-out) both;
+}
+.empty > svg {
+  margin-bottom: var(--s-2);
+  color: var(--text-3);
+}
+.empty strong {
+  color: var(--text);
+  font: var(--t-title);
+}
+.empty p {
+  max-width: 48ch;
+}
+.empty .btn {
+  margin-top: var(--s-3);
+}
+
+/* Error block: what happened and what to do, in a sentence. */
+.error {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s-2);
+  padding: var(--s-2) var(--s-3);
+  border: 1px solid color-mix(in oklab, var(--bad) 40%, transparent);
+  border-radius: var(--r-1);
+  background: var(--bad-soft);
+  color: var(--text);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+.error > svg {
+  flex: none;
+  margin-top: 2px;
+  color: var(--bad);
+}
+.error > div {
+  min-width: 0;
+}
+
+/* Notice: a call to action beside the sentence that explains it. */
+.notice {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-3) var(--s-4);
+  padding: var(--s-3) var(--s-4);
+  border: 1px solid var(--border);
+  border-radius: var(--r-2);
+  background: var(--surface);
+}
+.notice > div {
+  display: flex;
+  flex: 1 1 280px;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.notice strong {
+  font: var(--t-strong);
+}
+.notice span {
+  color: var(--text-2);
+}
+
+/* A caution in a sentence: a stand-in result, a stage that moved, a license limit. */
+.caution {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  color: var(--warn);
+  font: var(--t-caption);
+}
+.caution > svg {
+  flex: none;
+  margin-top: 1px;
+}
+
+pre.code {
+  margin: 0;
+  padding: var(--s-2) var(--s-3);
+  border: 1px solid var(--border);
+  border-radius: var(--r-1);
+  background: var(--bg-deep);
+  color: var(--text-2);
+  font: var(--t-mono);
+  overflow: auto;
+  user-select: text;
+}
+
+/* Infinite motion stops entirely; the duration tokens already zero the one-shot transitions. */
+@media (prefers-reduced-motion: reduce) {
+  .dot.live,
+  .pill.live > i,
+  .bar > i.indeterminate,
+  .skeleton::after {
+    animation: none;
+  }
+}

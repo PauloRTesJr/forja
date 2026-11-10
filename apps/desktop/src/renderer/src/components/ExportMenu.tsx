@@ -1,46 +1,44 @@
-import { useMutation, useQuery } from '@tanstack/react-query'
+import { useQuery } from '@tanstack/react-query'
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react'
-import { exportAssets, fetchExportFormats, type Asset, type ExportFormat, type ExportResult } from '../lib/api'
+import { fetchExportFormats, type Asset, type ExportFormat } from '../lib/api'
+import { exportTo, withExtension } from '../lib/assets'
 import { keys } from '../lib/events'
-import { baseName, fileStem } from '../lib/selection'
+import { exportLabel, exportReport, exportsStore, useExports } from '../lib/exports'
+import { transition, useNavigate } from '../lib/nav'
+import { fileStem } from '../lib/selection'
 import { useToast } from '../lib/toast'
-import { Chevron, ExportArrow } from './icons'
+import { ChevronIcon, ExportIcon } from './icons'
 
-/** Says how an export went: the file it saved, or how many assets went where. */
-function report(res: ExportResult, f: ExportFormat): { text: string; bad: boolean; file?: string } {
-  const failed = res.assets.filter((a) => a.error)
-  const file = res.assets.find((a) => a.files?.length)?.files?.[0]
-  if (failed.length > 0) {
-    const n = res.assets.length
-    return { text: `${failed.length} of ${n} could not be exported as ${f.name}: ${failed[0]!.error}`, bad: true, file }
-  }
-  if (res.assets.length === 1 && file) return { text: `Saved ${baseName(file)}`, bad: false, file }
-  return { text: `Exported ${res.assets.length} assets as ${f.name}`, bad: false, file }
-}
+const HINT = 'One asset is saved as a file; several go into a folder you choose.'
 
 /**
  * The Export button and its menu of formats. Picking one asks where to save (a file for one
- * asset, a folder for several) and exports there; formats Blender makes wait for Blender.
+ * asset, a folder for several) and exports there. The menu asks the core which formats this
+ * computer can write each time it opens, so a Blender installed or removed meanwhile shows.
+ * It opens under the button's right edge; `up` opens it above, `left` under the left edge.
  */
-export function ExportMenu({ assets, up = false }: { assets: Asset[]; up?: boolean }) {
+export function ExportMenu({
+  assets,
+  up = false,
+  left = false,
+  small = false,
+  primary = false,
+}: {
+  assets: Asset[]
+  up?: boolean
+  left?: boolean
+  small?: boolean
+  primary?: boolean
+}) {
   const toast = useToast()
+  const navigate = useNavigate()
   const [open, setOpen] = useState(false)
+  const [picking, setPicking] = useState(false)
+  const [active, setActive] = useState<string | null>(null)
   const anchor = useRef<HTMLDivElement>(null)
   const button = useRef<HTMLButtonElement>(null)
-  const formats = useQuery({ queryKey: keys.exportFormats, queryFn: fetchExportFormats, staleTime: 5 * 60_000 })
-  const run = useMutation({
-    mutationFn: async (f: ExportFormat) => {
-      const path =
-        assets.length === 1 ? await window.forja.pickSavePath(fileStem(assets[0]!.name), f.ext, f.name) : await window.forja.pickFolder()
-      return path ? { res: await exportAssets(assets.map((a) => a.id), f.id, path), f } : null
-    },
-    onSuccess: (done) => {
-      if (!done) return
-      const { text, bad, file } = report(done.res, done.f)
-      toast(text, bad, file ? { label: 'Show in folder', run: () => void window.forja.showItem(file) } : undefined)
-    },
-    onError: (e: Error) => toast(e.message, true),
-  })
+  const { running } = useExports()
+  const formats = useQuery({ queryKey: keys.exportFormats, queryFn: fetchExportFormats, enabled: open, staleTime: 0 })
 
   useEffect(() => {
     if (!open) return
@@ -48,57 +46,134 @@ export function ExportMenu({ assets, up = false }: { assets: Asset[]; up?: boole
       if (!anchor.current?.contains(e.target as Node)) setOpen(false)
     }
     document.addEventListener('mousedown', away)
-    anchor.current?.querySelector<HTMLButtonElement>('.menu-item:not(:disabled)')?.focus()
     return () => document.removeEventListener('mousedown', away)
   }, [open])
+
+  // The first format takes the focus once there is one: the list may arrive after the menu opens.
+  const listed = formats.data?.formats.length ?? 0
+  useEffect(() => {
+    if (open && listed > 0 && !anchor.current?.querySelector('.menu')?.contains(document.activeElement)) {
+      anchor.current?.querySelector<HTMLButtonElement>('.menu-item:not(:disabled)')?.focus()
+    }
+  }, [open, listed])
+
+  const close = (refocus: boolean): void => {
+    setOpen(false)
+    setActive(null)
+    if (refocus) button.current?.focus()
+  }
 
   const onKey = (e: KeyboardEvent): void => {
     if (!open) return
     if (e.key === 'Escape') {
       e.stopPropagation()
-      setOpen(false)
-      button.current?.focus()
+      close(true)
       return
     }
-    if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return
+    if (e.key === 'Tab') {
+      close(false)
+      return
+    }
+    if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)) return
     e.preventDefault()
     const items = [...(anchor.current?.querySelectorAll<HTMLButtonElement>('.menu-item:not(:disabled)') ?? [])]
+    if (items.length === 0) return
     const at = items.indexOf(document.activeElement as HTMLButtonElement)
-    items[(at + (e.key === 'ArrowDown' ? 1 : items.length - 1)) % items.length]?.focus()
+    const to =
+      e.key === 'Home' ? 0 : e.key === 'End' ? items.length - 1 : (at + (e.key === 'ArrowDown' ? 1 : items.length - 1)) % items.length
+    items[to]?.focus()
   }
 
-  const pick = (f: ExportFormat): void => {
-    setOpen(false)
-    run.mutate(f)
+  const run = async (f: ExportFormat): Promise<void> => {
+    close(true)
+    const chosen = assets
+    const one = chosen.length === 1
+    setPicking(true)
+    let picked: string | null
+    try {
+      picked = one ? await window.forja.pickSavePath(fileStem(chosen[0]!.name), f.ext, f.name) : await window.forja.pickFolder()
+    } finally {
+      setPicking(false)
+    }
+    if (!picked) return
+    const ctrl = new AbortController()
+    exportsStore.start({ label: exportLabel(chosen.map((a) => a.name), f), cancel: () => ctrl.abort() })
+    try {
+      const target = one ? { file: withExtension(picked, f.ext) } : { folder: picked }
+      const res = await exportTo(chosen.map((a) => a.id), f.id, target, ctrl.signal)
+      exportsStore.finish(res, f)
+      const { text, bad, file } = exportReport(res, f)
+      toast(text, bad, file ? { label: 'Show in folder', run: () => void window.forja.showItem(file) } : undefined)
+    } catch (err) {
+      exportsStore.finish()
+      if (ctrl.signal.aborted) toast('Export cancelled')
+      else toast(`The ${f.name} export failed: ${(err as Error).message}`, true)
+    }
   }
-  const blenderMissing = formats.data && !formats.data.blender
+
+  const all = formats.data?.formats ?? []
+  const direct = all.filter((f) => !f.blender)
+  const converted = all.filter((f) => f.blender)
+  const blender = formats.data?.blender
+  const item = (f: ExportFormat) => (
+    <button
+      key={f.id}
+      role="menuitem"
+      className="menu-item export-format"
+      disabled={!f.available}
+      onClick={() => void run(f)}
+      onFocus={() => setActive(f.id)}
+      onPointerEnter={() => setActive(f.id)}
+    >
+      <span>{f.name}</span>
+      <span className="mono">{f.ext}</span>
+    </button>
+  )
+  const busy = picking || running !== null
   return (
     <div className="menu-anchor" ref={anchor} onKeyDown={onKey}>
       <button
         ref={button}
-        className="btn"
+        className={`btn ${small ? 'sm' : ''} ${primary ? 'primary' : ''}`}
         aria-haspopup="menu"
         aria-expanded={open}
-        disabled={run.isPending || assets.length === 0}
-        onClick={() => setOpen(!open)}
+        title={running?.label}
+        disabled={busy || assets.length === 0}
+        onClick={() => (open ? close(false) : setOpen(true))}
       >
-        <ExportArrow />
-        {run.isPending ? 'Exporting…' : 'Export'}
-        <Chevron />
+        <ExportIcon />
+        {running ? 'Exporting…' : 'Export'}
+        <ChevronIcon size={14} />
+        {running && <span className="btn-bar" role="progressbar" aria-label={running.label} />}
       </button>
-      <div className={`menu ${up ? 'up' : ''}`} role="menu" aria-label="Export as" data-open={open} inert={!open}>
-        {formats.isPending && [0, 1, 2].map((i) => <div key={i} className="skeleton" style={{ height: 50, margin: 4 }} />)}
-        {formats.data?.formats.map((f) => (
-          <button key={f.id} role="menuitem" className="menu-item" disabled={!f.available} onClick={() => pick(f)} title={f.problem}>
-            <span className="menu-item-head">
-              <strong>{f.name}</strong>
-              <span className="mono">{f.ext}</span>
-            </span>
-            <span className="menu-item-help">{f.for}</span>
-          </button>
-        ))}
-        {blenderMissing && <p className="menu-note">{formats.data.blender_problem}</p>}
-        {formats.isError && <p className="menu-note">{formats.error.message}</p>}
+      <div className={`menu export-menu ${up ? 'up' : ''} ${left ? 'left' : ''}`} role="menu" aria-label="Export as" data-open={open} inert={!open}>
+        {!formats.data && formats.isPending && [0, 1, 2].map((i) => <div key={i} className="skeleton export-skeleton" />)}
+        {!formats.data && formats.isError && <p className="menu-note">{formats.error.message}</p>}
+        {converted.length > 0 && !blender && (
+          <p className="export-missing" role="note">
+            <strong>Most formats need Blender 4.2 or newer.</strong>
+            {formats.data?.blender_problem ?? 'Blender was not found.'}{' '}
+            <button
+              className="text-btn"
+              onClick={() => {
+                close(false)
+                transition(() => navigate({ screen: 'settings' }))
+              }}
+            >
+              Set the Blender path in Settings
+            </button>
+          </p>
+        )}
+        {direct.map(item)}
+        {converted.length > 0 && (
+          <>
+            <div className="export-group" role="presentation">
+              {blender ? `Converted by Blender ${blender.version}` : 'Needs Blender'}
+            </div>
+            {converted.map(item)}
+          </>
+        )}
+        {all.length > 0 && <p className="export-caption">{all.find((f) => f.id === active)?.for ?? HINT}</p>}
       </div>
     </div>
   )

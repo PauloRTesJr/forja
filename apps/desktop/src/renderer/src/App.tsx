@@ -1,11 +1,15 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { lazy, Suspense, useCallback, useEffect, useRef, useState, type CSSProperties } from 'react'
-import { Anvil, BrandMark, Eye, Grimoire, Hourglass, MoonPhases, SidebarSky, Sun } from './components/icons'
+import { BrandMark, GenerateIcon, LibraryIcon, ModelsIcon, QueueIcon, SettingsIcon } from './components/icons'
+import { CoreDown } from './components/CoreDown'
 import { useInstalls } from './components/Install'
 import { ScreenBoundary } from './components/ScreenBoundary'
-import { api, taskDone, type Job } from './lib/api'
+import { api, taskDone, type Job, type Model } from './lib/api'
+import { queueBadge } from './lib/badge'
+import { connectionLabel } from './lib/connection'
+import { CoreContext } from './lib/core'
 import { keys, useCoreEvents } from './lib/events'
-import { isActive, needsAnswer } from './lib/jobs'
+import { needsAnswer } from './lib/jobs'
 import { NavContext, transition, type Route } from './lib/nav'
 import { useToast } from './lib/toast'
 import { Generate } from './screens/Generate'
@@ -18,39 +22,44 @@ const Models = lazy(() => import('./screens/Models').then((m) => ({ default: m.M
 const Settings = lazy(() => import('./screens/Settings').then((m) => ({ default: m.Settings })))
 
 const tabs = [
-  { screen: 'generate', label: 'Generate', numeral: 'I', Icon: Anvil },
-  { screen: 'queue', label: 'Queue', numeral: 'II', Icon: Hourglass },
-  { screen: 'library', label: 'Library', numeral: 'III', Icon: Grimoire },
-  { screen: 'models', label: 'Models', numeral: 'IV', Icon: Eye },
-  { screen: 'settings', label: 'Settings', numeral: 'V', Icon: Sun },
+  { screen: 'generate', label: 'Generate', Icon: GenerateIcon },
+  { screen: 'queue', label: 'Queue', Icon: QueueIcon },
+  { screen: 'library', label: 'Library', Icon: LibraryIcon },
+  { screen: 'models', label: 'Models', Icon: ModelsIcon },
+  { screen: 'settings', label: 'Settings', Icon: SettingsIcon },
 ] as const
 
-/** Says once, on any other screen, that a job found several views and waits on Generate. */
-function useAnswerNotices(jobs: Job[] | undefined, onGenerate: boolean): void {
+/** Says once, away from the screens that already ask (Generate, Queue), that a job found several views. */
+function useAnswerNotices(jobs: Job[] | undefined, screen: Route['screen'], go: (r: Route) => void): void {
   const toast = useToast()
   const told = useRef(new Set<string>())
+  const asked = screen === 'generate' || screen === 'queue'
   useEffect(() => {
     for (const j of jobs ?? []) {
       if (!needsAnswer(j) || told.current.has(j.id)) continue
       told.current.add(j.id)
-      if (!onGenerate) toast(`${j.name} shows several views: confirm them on Generate`)
+      if (!asked) toast(`${j.name} shows several views: check them`, false, { label: 'Check', run: () => transition(() => go({ screen: 'generate' })) })
     }
-  }, [jobs, onGenerate, toast])
+  }, [jobs, asked, toast, go])
 }
 
 export function App() {
   const qc = useQueryClient()
-  const connected = useCoreEvents(qc)
+  const core = useCoreEvents(qc)
+  // What to say while there is no core to talk to; undefined when connected.
+  const away = connectionLabel(core)
   const [route, setRoute] = useState<Route>({ screen: 'generate' })
   const jobs = useQuery({ queryKey: keys.jobs, queryFn: () => api<Job[]>('GET', '/v1/jobs?limit=100') })
-  const running = jobs.data?.filter(isActive).length ?? 0
-  useAnswerNotices(jobs.data, route.screen === 'generate')
+  const badge = queueBadge(jobs.data)
   // Jobs waiting for an answer count on the badge, but nothing is generating for them.
   const generating = jobs.data?.some((j) => j.status === 'running' || j.status === 'queued') ?? false
   const installs = useInstalls()
   const install = installs.data?.find((t) => t.kind === 'install' && !taskDone(t))
   const installPct = install?.progress?.total ? Math.round((install.progress.done / install.progress.total) * 100) : undefined
+  // The name the Models screen shows, from what it already loaded; the id until then.
+  const installing = install && (qc.getQueryData<Model[]>(keys.models)?.find((m) => m.id === install.target)?.name ?? install.target)
   const navigate = useCallback((r: Route) => setRoute(r), [])
+  useAnswerNotices(jobs.data, route.screen, navigate)
 
   const activeTab = route.screen === 'asset' ? 'library' : route.screen
   const tabIndex = tabs.findIndex((t) => t.screen === activeTab)
@@ -69,65 +78,66 @@ export function App() {
   }, [])
 
   return (
+    <CoreContext.Provider value={core}>
     <NavContext.Provider value={navigate}>
-      <div className="app">
+      <div className="app" data-platform={window.forja.platform}>
         <nav className="sidebar" aria-label="Main">
-          <SidebarSky />
           <div className="brand">
             <BrandMark />
-            <div>
-              <span className="brand-name">Forja</span>
-              <span className="brand-tag">image to game asset</span>
-            </div>
+            <span className="brand-name">Forja</span>
           </div>
           <div className="nav" style={{ '--n': tabIndex } as CSSProperties}>
             <div className="nav-indicator" />
-            {tabs.map(({ screen, label, numeral, Icon }) => (
+            {tabs.map(({ screen, label, Icon }) => (
               <button
                 key={screen}
                 aria-current={activeTab === screen ? 'page' : undefined}
                 onClick={() => transition(() => setRoute({ screen }))}
               >
-                <span className="nav-num" aria-hidden>
-                  {numeral}
-                </span>
                 <Icon />
                 <span>{label}</span>
-                {screen === 'queue' && running > 0 && (
-                  <span className="badge" aria-label={`${running} running or waiting`}>
-                    {running}
+                {screen === 'queue' && badge.count > 0 && (
+                  <span className={`badge ${generating ? 'live' : ''}`} aria-label={badge.label}>
+                    {badge.count}
                   </span>
                 )}
               </button>
             ))}
           </div>
           <div className="sidebar-foot">
-            <MoonPhases />
-            <div className="conn">
-              <span className={`dot ${!connected ? '' : generating || install ? 'live' : 'ok'}`} />
-              {!connected
-                ? 'Reconnecting to core…'
-                : generating
-                  ? 'Generating'
-                  : install
-                    ? `Installing ${install.target}${installPct !== undefined ? ` · ${installPct}%` : ''}`
-                    : 'Ready'}
+            <div className="conn" role="status">
+              <span className={`dot ${away ? (core.phase === 'starting' ? 'live' : 'bad') : generating || install ? 'live' : 'ok'}`} />
+              <span>
+                {away
+                  ? away
+                  : generating
+                    ? 'Generating'
+                    : install
+                      ? `Installing ${installing}${installPct !== undefined ? ` · ${installPct}%` : ''}`
+                      : 'Ready'}
+              </span>
             </div>
           </div>
         </nav>
         <main className="main" key={route.screen === 'asset' ? `asset-${route.id}` : route.screen}>
           <ScreenBoundary>
+            {core.phase === 'failed' && <CoreDown state={core} />}
             <Suspense fallback={<div className="screen" />}>
-              {route.screen === 'generate' && <Generate />}
-              {route.screen === 'queue' && <Queue />}
-              {route.screen === 'library' && <Library />}
-              {route.screen === 'asset' && <AssetDetail id={route.id} />}
-              {route.screen === 'models' && <Models />}
-              {route.screen === 'settings' && <Settings />}
+              {core.phase !== 'failed' && (
+                <>
+                  {route.screen === 'generate' && <Generate />}
+                  {route.screen === 'queue' && <Queue />}
+                  {route.screen === 'library' && <Library />}
+                  {route.screen === 'asset' && <AssetDetail id={route.id} />}
+                  {route.screen === 'models' && <Models />}
+                  {route.screen === 'settings' && <Settings />}
+                </>
+              )}
             </Suspense>
           </ScreenBoundary>
         </main>
       </div>
     </NavContext.Provider>
+    </CoreContext.Provider>
   )
 }

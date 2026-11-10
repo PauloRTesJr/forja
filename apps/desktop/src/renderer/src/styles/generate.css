@@ -1,0 +1,632 @@
+/* Generate: the image target, the settings form, and what became of the images after "Generate". */
+
+/* The notice of a first run, and the jobs started here, sit above the workspace. */
+.generate-notice,
+.generate > .error,
+.generate > .setup,
+.activity {
+  max-width: 1180px;
+  margin-bottom: var(--s-4);
+}
+
+/* The notice's buttons sit side by side at its right edge, not stacked like its text. */
+.generate-notice > .row {
+  flex: 0 0 auto;
+  flex-direction: row;
+  gap: var(--s-2);
+}
+
+/* What goes in on the left, the settings it goes through on the right. Both fit side by side
+   down to the smallest window, so the workspace never restacks. */
+.workspace {
+  display: grid;
+  grid-template-columns: minmax(280px, 1fr) 360px;
+  align-items: start;
+  gap: var(--s-5);
+  max-width: 1180px;
+}
+.workspace-input {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  min-width: 0;
+  container-type: inline-size;
+}
+.workspace-settings {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-4);
+  min-width: 0;
+}
+
+/* Image target: where the images wait until "Generate". */
+.target {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-height: 320px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-3);
+  background: var(--bg-deep);
+  overflow: hidden;
+}
+.target.empty {
+  border: 1px dashed var(--border-strong);
+}
+.target.blocked .target-empty {
+  opacity: 0.6;
+}
+.target-empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--s-1);
+  padding: var(--s-5);
+  color: var(--text-2);
+  text-align: center;
+}
+.target-empty > svg {
+  margin-bottom: var(--s-2);
+  color: var(--text-3);
+}
+.target-title {
+  color: var(--text);
+  font: var(--t-title);
+}
+.target-empty .btn {
+  margin-top: var(--s-3);
+}
+/* Shown while files are dragged over the window; it fades, so nothing but opacity changes. */
+.target-over {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--s-2);
+  border: 1px solid var(--accent);
+  border-radius: inherit;
+  background: color-mix(in oklab, var(--bg-deep) 88%, var(--accent));
+  color: var(--accent-hi);
+  font: var(--t-title);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--dur-2) var(--ease-out);
+}
+.target-over.on {
+  opacity: 1;
+}
+.target-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  padding: var(--s-2) var(--s-2) var(--s-2) var(--s-3);
+  border-bottom: 1px solid var(--border-soft);
+}
+.target-count {
+  flex: 1;
+  color: var(--text-2);
+  font: var(--t-strong);
+}
+
+/* One staged image, shown large. */
+.single {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+}
+/* The picture is laid over the well, so its own size never pushes the footer or the side
+   views out of the target: the well takes what is left. */
+.single-well {
+  position: relative;
+  flex: 1 1 auto;
+  height: min(440px, 60vh);
+  min-height: 160px;
+}
+.single-well img {
+  position: absolute;
+  inset: var(--s-3);
+  display: block;
+  width: calc(100% - 2 * var(--s-3));
+  height: calc(100% - 2 * var(--s-3));
+  object-fit: contain;
+  animation: fade-in var(--dur-3) var(--ease-out) both;
+}
+.thumb-broken {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: var(--s-2);
+  color: var(--text-3);
+  font: var(--t-caption);
+  text-align: center;
+}
+.tile-well,
+.side-well {
+  position: relative;
+}
+.single-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-2);
+  padding: var(--s-1) var(--s-2) var(--s-1) var(--s-3);
+  border-top: 1px solid var(--border-soft);
+  color: var(--text-2);
+}
+.single-foot > span {
+  flex: 1;
+  min-width: 0;
+}
+
+/* Several staged images: a tile each. */
+.tiles {
+  flex: 1;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
+  align-content: start;
+  gap: var(--s-2);
+  margin: 0;
+  padding: var(--s-3);
+  list-style: none;
+  overflow-y: auto;
+}
+.tile {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+  min-width: 0;
+}
+.tile-well {
+  aspect-ratio: 1;
+  border-radius: var(--r-2);
+  background: var(--surface);
+  overflow: hidden;
+}
+.tile-well img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  padding: var(--s-1);
+  object-fit: contain;
+}
+.tile-well.folder {
+  display: grid;
+  place-items: center;
+  color: var(--text-3);
+}
+.tile-kind {
+  font: var(--t-caption);
+}
+.tile-name {
+  color: var(--text-2);
+  font: var(--t-caption);
+}
+.tile-name.skeleton {
+  width: 70%;
+  height: 12px;
+  margin: 2px 0;
+}
+.tile-remove {
+  position: absolute;
+  top: var(--s-1);
+  right: var(--s-1);
+  background: var(--surface-2);
+  opacity: 0;
+  transition: opacity var(--dur-1) var(--ease-out);
+}
+.tile:hover .tile-remove,
+.tile-remove:focus-visible {
+  opacity: 1;
+}
+
+/* The other views of a single image, for a shape model that reads them. */
+.sides {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  padding: var(--s-3);
+  border-top: 1px solid var(--border-soft);
+}
+.sides-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px var(--s-2);
+  color: var(--text-2);
+  font: var(--t-caption);
+}
+.sides-head strong {
+  color: var(--text);
+  font: var(--t-strong);
+}
+.sides-head strong .dim {
+  font-weight: 400;
+}
+.sides-slots {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--s-2);
+}
+.side {
+  position: relative;
+  min-width: 0;
+}
+.side-pick {
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr);
+  grid-template-rows: auto auto;
+  align-items: center;
+  column-gap: var(--s-2);
+  width: 100%;
+  padding: var(--s-1);
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--r-2);
+  background: none;
+  color: var(--text-2);
+  text-align: left;
+  cursor: pointer;
+}
+.side.filled .side-pick {
+  border: 1px solid var(--border);
+  background: var(--surface);
+}
+.side-pick:hover:not(:disabled) {
+  background: var(--surface);
+  color: var(--text);
+}
+.side-pick:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+/* The slot under a dragged file: the edge fades in on its own layer. */
+.side::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border: 1px solid var(--accent);
+  border-radius: var(--r-2);
+  background: var(--accent-soft);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--dur-1) var(--ease-out);
+}
+.side.over::after {
+  opacity: 1;
+}
+.side-well {
+  grid-row: 1 / 3;
+  display: grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  border-radius: var(--r-1);
+  background: var(--bg-deep);
+  color: var(--text-3);
+  overflow: hidden;
+}
+.side-well img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+.side-name {
+  align-self: end;
+  color: var(--text);
+  font: var(--t-strong);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.side-hint {
+  align-self: start;
+  font: var(--t-caption);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.side-remove {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+}
+/* A narrow target puts each slot's words under its picture. */
+@container (max-width: 460px) {
+  .side-pick {
+    grid-template-columns: minmax(0, 1fr);
+    justify-items: center;
+    text-align: center;
+  }
+  .side-well {
+    grid-row: auto;
+  }
+  .side-name,
+  .side-hint {
+    max-width: 100%;
+  }
+}
+
+/* What was left out of the last images added, and why. */
+.target-notes {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  color: var(--text-2);
+  font: var(--t-caption);
+  list-style: none;
+  animation: fade-in var(--dur-2) var(--ease-out) both;
+}
+.target-notes li {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+.target-notes li.bad {
+  color: var(--bad-hi);
+}
+.target-notes svg {
+  flex: none;
+  margin-top: 1px;
+}
+
+/* Settings: quality, then a row per model, the optional steps as switches. */
+.composer {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-4);
+}
+.composer-block {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+.composer-heading {
+  color: var(--text-2);
+  font: var(--t-section);
+}
+.composer-label {
+  color: var(--text);
+  font: var(--t-body);
+}
+.composer-note {
+  color: var(--text-2);
+  font: var(--t-caption);
+}
+.composer-rows {
+  display: flex;
+  flex-direction: column;
+  border-bottom: 1px solid var(--border-soft);
+}
+.composer-row {
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr);
+  align-items: center;
+  gap: var(--s-1) var(--s-3);
+  min-height: 44px;
+  padding: 6px 0;
+  border-top: 1px solid var(--border-soft);
+}
+.composer-row.option {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: center;
+}
+.composer-control {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.composer-control .input {
+  width: 100%;
+}
+.composer-where {
+  color: var(--text-3);
+  font: var(--t-caption);
+}
+.composer-skip {
+  color: var(--text-2);
+  font: var(--t-caption);
+}
+/* The option's name and hint on the left, its switch on the right. */
+.composer-option {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+}
+.composer-option label {
+  cursor: pointer;
+}
+.composer-option .switch {
+  margin-left: auto;
+}
+/* A preset that cannot run yet says so in its own card. */
+.choice .pill {
+  align-self: flex-start;
+}
+
+/* The estimate, then the one button the screen exists for. */
+.generate-foot {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+}
+.generate-foot .btn {
+  width: 100%;
+  justify-content: center;
+}
+.generate-why {
+  margin-top: calc(var(--s-1) - var(--s-3));
+  color: var(--text-3);
+  font: var(--t-caption);
+  text-align: center;
+}
+.estimate {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  color: var(--text-2);
+  animation: fade-in var(--dur-2) var(--ease-out) both;
+}
+.estimate.skeleton {
+  height: 20px;
+}
+.estimate strong {
+  color: var(--text);
+  font: var(--t-strong);
+}
+.estimate .error {
+  margin-top: var(--s-2);
+}
+
+/* Setting up an optional step where its switch is: a model to install, or a program it needs. */
+.stage-setup {
+  margin-top: var(--s-1);
+}
+.stage-setup-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  padding: var(--s-3) 0 var(--s-1);
+}
+
+/* The jobs started here: one compact row each, a sheet's check opening under its row. */
+.activity-row {
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--s-3);
+  min-height: 48px;
+  padding: var(--s-2) var(--s-3);
+}
+.activity-row:has(.bar) {
+  grid-template-columns: 32px minmax(0, 1fr) minmax(64px, 160px) auto;
+}
+.activity-row .thumb {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--r-1);
+}
+.activity-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.activity-text strong {
+  font: var(--t-strong);
+}
+.activity-status {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  color: var(--text-2);
+  font: var(--t-caption);
+}
+.activity-status > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.activity-status svg {
+  flex: none;
+  margin-top: 1px;
+}
+.activity-item.failed .activity-status {
+  color: var(--bad-hi);
+  user-select: text;
+}
+.activity-item.done .activity-status {
+  color: var(--ok);
+}
+.activity-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--s-1);
+}
+.activity-item > .sheet-card {
+  padding: 0 var(--s-3) var(--s-3) calc(var(--s-3) + 32px + var(--s-3));
+}
+.activity-more {
+  padding: var(--s-2) var(--s-3);
+  color: var(--text-2);
+  font: var(--t-caption);
+}
+
+/* A job whose image held several views: each figure boxed on the cut-out, with its label. */
+.sheet-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  animation: fade-in var(--dur-3) var(--ease-out) both;
+}
+.sheet-figure {
+  position: relative;
+  border-radius: var(--r-2);
+  background: var(--bg-deep);
+}
+.sheet-figure img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  animation: fade-in var(--dur-3) var(--ease-out) both;
+}
+.sheet-part {
+  position: absolute;
+  border: 1px dashed var(--text-3);
+  border-radius: var(--r-1);
+}
+/* The chosen figure's edge fades with opacity, so relabelling stays on the compositor. */
+.sheet-part::after {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  border: 1px solid var(--accent);
+  border-radius: inherit;
+  background: color-mix(in oklab, var(--accent) 6%, transparent);
+  opacity: 0;
+  transition: opacity var(--dur-2) var(--ease-out);
+  pointer-events: none;
+}
+.sheet-part[data-chosen='true'] {
+  border-color: transparent;
+}
+.sheet-part[data-chosen='true']::after {
+  opacity: 1;
+}
+/* As wide as the chosen label, not the longest option: neighbouring figures can stand close. */
+.sheet-label {
+  position: absolute;
+  top: var(--s-1);
+  left: var(--s-1);
+  z-index: 1;
+  field-sizing: content;
+  height: 24px;
+  padding: 0 20px 0 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  appearance: none;
+  background: var(--surface-2)
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23a8adb5' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")
+    no-repeat right 6px center;
+  color: var(--text);
+  font: 500 11.5px/22px var(--font);
+  cursor: pointer;
+}
+.sheet-part[data-chosen='false'] .sheet-label {
+  color: var(--text-2);
+}
+.sheet-note {
+  color: var(--text-2);
+}

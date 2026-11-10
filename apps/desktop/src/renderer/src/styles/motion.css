@@ -3,10 +3,11 @@
 :root {
   --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
   --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
-  --ease-spring: cubic-bezier(0.34, 1.4, 0.64, 1);
+  /* Settles a little later than --ease-out, without overshoot: chrome never bounces. */
+  --ease-spring: cubic-bezier(0.22, 1, 0.36, 1);
   --dur-1: 120ms; /* hover, press */
-  --dur-2: 200ms; /* state changes */
-  --dur-3: 320ms; /* enter, screen change */
+  --dur-2: 180ms; /* state changes */
+  --dur-3: 260ms; /* enter, screen change */
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -25,12 +26,18 @@
 @keyframes enter-up {
   from {
     opacity: 0;
-    transform: translateY(8px) scale(0.985);
+    transform: translateY(4px);
   }
 }
 
 @keyframes fade-in {
   from {
+    opacity: 0;
+  }
+}
+
+@keyframes fade-out {
+  to {
     opacity: 0;
   }
 }
@@ -63,27 +70,16 @@
   }
 }
 
+/* Something new on screen rises in; `--i` staggers the items of a list. */
 .enter {
   animation: enter-up var(--dur-3) var(--ease-out) both;
   animation-delay: calc(var(--i, 0) * 30ms);
 }
 
-/* Screen changes use the View Transitions API: old screen fades out, new one rises in. */
+/* Screen changes use the View Transitions API: the old screen fades out, the new one rises in. */
 ::view-transition-old(screen) {
   animation: var(--dur-2) var(--ease-in-out) both fade-out;
 }
 ::view-transition-new(screen) {
   animation: var(--dur-3) var(--ease-out) both enter-up;
-}
-@keyframes fade-out {
-  to {
-    opacity: 0;
-  }
-}
-
-@keyframes view-in {
-  from {
-    opacity: 0;
-    transform: scale(0.96);
-  }
 }

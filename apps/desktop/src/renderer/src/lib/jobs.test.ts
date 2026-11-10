@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { Job, Stage } from './api'
 import { applyProgress, jobFraction, phaseState, phasesOf, previewOf, stageTime, summarize, upsertJob } from './jobs'
-import { count, roman, seconds, skeletonName, stageLabel, taskNoun } from './format'
+import { count, seconds, skeletonName, stageLabel, taskNoun } from './format'
 
 const stage = (id: string, status: Stage['status'], extra: Partial<Stage> = {}): Stage => ({
   id, use: id, status, outputs: [], seconds: 0, step: 0, total: 0, ...extra,
@@ -115,6 +115,9 @@ describe('format', () => {
     expect(seconds(0.25)).toBe('250 ms')
     expect(seconds(4.2)).toBe('4.2 s')
     expect(seconds(95)).toBe('1 min 35 s')
+    // Rounding never leaves 60 in the seconds.
+    expect(seconds(59.7)).toBe('1 min 0 s')
+    expect(seconds(119.6)).toBe('2 min 0 s')
     expect(count(4998)).toBe('5.0k')
   })
 
@@ -125,7 +128,4 @@ describe('format', () => {
     expect([skeletonName({ skeleton: 'humanoid' }), skeletonName({ skeleton: 'generic' })]).toEqual(['Humanoid', 'Generic'])
   })
 
-  it('numbers cards in roman numerals', () => {
-    expect([1, 4, 9, 14, 40].map(roman)).toEqual(['I', 'IV', 'IX', 'XIV', 'XL'])
-  })
 })

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import type { BenchEntry, BenchList, BenchResult, BenchSample } from './api'
-import { baselineFor, budgetState, deltaName, deltaValue, entryOf, pct, phaseLabel, progress, withBench } from './bench'
+import type { BenchComparison, BenchEntry, BenchList, BenchResult, BenchSample } from './api'
+import { baselineChoices, baselineFor, budgetState, deltaName, deltaValue, entryOf, pct, phaseLabel, progress, verdictOf, withBench } from './bench'
 
 const sample = (status: BenchSample['status']): BenchSample => ({
   image: 'chest',
@@ -73,6 +73,50 @@ describe('baselineFor', () => {
     ]
     expect(baselineFor(list, current)?.id).toBe('base')
     expect(baselineFor([current], current)).toBeUndefined()
+  })
+})
+
+describe('baselines', () => {
+  const entry = (id: string, started: string, status: BenchResult['status']): BenchEntry => entryOf(run({ id, status, started_at: started }))
+  const current = entry('c', '2026-10-24T12:00:00Z', 'succeeded')
+
+  it('skips a cancelled or failed run for the newest completed one', () => {
+    const list = [
+      current,
+      entry('cancelled-newest', '2026-10-24T11:30:00Z', 'cancelled'),
+      entry('failed', '2026-10-24T11:20:00Z', 'failed'),
+      entry('done', '2026-10-24T11:00:00Z', 'succeeded'),
+    ]
+    expect(baselineFor(list, current)?.id).toBe('done')
+    expect(baselineChoices(list, current).map((e) => e.id)).toEqual(['done'])
+  })
+
+  it('has no baseline when every earlier run was cancelled, or when there is none', () => {
+    const onlyCancelled = [current, entry('x', '2026-10-24T11:00:00Z', 'cancelled')]
+    expect(baselineFor(onlyCancelled, current)).toBeUndefined()
+    expect(baselineChoices(onlyCancelled, current)).toEqual([])
+    expect(baselineFor([current], current)).toBeUndefined()
+  })
+})
+
+describe('verdictOf', () => {
+  const cmp = (over: Partial<BenchComparison> = {}): BenchComparison => ({
+    baseline: { id: 'a', forja: { version: '0.1.0' }, started_at: '2026-10-24T10:00:00Z' },
+    current: { id: 'b', forja: { version: '0.1.0' }, started_at: '2026-10-24T11:00:00Z' },
+    thresholds: { pct: 12.5, min_seconds: 0.1, min_vram_mb: 64 },
+    deltas: [],
+    regressions: 0,
+    warnings: [],
+    ...over,
+  })
+  const delta = { preset: 'draft', metric: 'seconds' as const, baseline: 1, current: 1, pct: 0, regression: false }
+
+  it('says nothing was compared when the baseline shares no measure with the run', () => {
+    expect(verdictOf(cmp({ warnings: ["the baseline's draft has no stage bg"] }))).toBe('nothing')
+  })
+  it('is clean only with measures compared and none past the threshold', () => {
+    expect(verdictOf(cmp({ deltas: [delta] }))).toBe('clean')
+    expect(verdictOf(cmp({ deltas: [{ ...delta, regression: true }], regressions: 1 }))).toBe('regressed')
   })
 })
 

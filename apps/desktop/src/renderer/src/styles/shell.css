@@ -1,0 +1,209 @@
+/* The app frame: sidebar, the screen and its heads. */
+.app {
+  display: grid;
+  grid-template-columns: var(--sidebar) minmax(0, 1fr);
+  height: 100%;
+}
+
+/* Sidebar */
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-4);
+  padding: var(--s-4) var(--s-3) var(--s-3);
+  border-right: 1px solid var(--border-soft);
+  background: var(--bg-deep);
+  overflow: hidden;
+  -webkit-app-region: drag;
+}
+/* macOS draws the window buttons over the sidebar's top. */
+.app[data-platform='darwin'] .sidebar {
+  padding-top: 44px;
+}
+.brand {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  height: var(--h);
+  padding: 0 var(--s-2);
+  color: var(--accent);
+}
+.brand-name {
+  font: 600 15px/20px var(--font);
+  letter-spacing: -0.01em;
+  color: var(--text);
+}
+.nav {
+  --row: 32px;
+  --gap: 2px;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap);
+  -webkit-app-region: no-drag;
+}
+/* The current row's ground slides between rows instead of jumping. */
+.nav-indicator {
+  position: absolute;
+  inset: 0 0 auto;
+  height: var(--row);
+  border-radius: var(--r-1);
+  background: var(--surface-2);
+  transform: translateY(calc(var(--n, 0) * (var(--row) + var(--gap))));
+  transition: transform var(--dur-2) var(--ease-out);
+  pointer-events: none;
+}
+.nav button {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  height: var(--row);
+  padding: 0 var(--s-2);
+  border: 0;
+  border-radius: var(--r-1);
+  background: none;
+  color: var(--text-2);
+  font: var(--t-strong);
+  text-align: left;
+  cursor: pointer;
+}
+.nav button:hover {
+  color: var(--text);
+}
+.nav button:hover:not([aria-current='page']) {
+  background: var(--surface);
+}
+.nav button[aria-current='page'] {
+  color: var(--text);
+}
+.nav button > span:first-of-type {
+  flex: 1;
+}
+.nav button > svg {
+  flex: none;
+}
+/* The queue's count: neutral while jobs only wait, amber while something runs. */
+.badge {
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: var(--surface-3);
+  color: var(--text-2);
+  font: 600 11px/18px var(--font);
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  animation: fade-in var(--dur-2) var(--ease-out) both;
+}
+.badge.live {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+.sidebar-foot {
+  margin-top: auto;
+  -webkit-app-region: no-drag;
+}
+.conn {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  min-height: 24px;
+  padding: 0 var(--s-2);
+  color: var(--text-2);
+  font: var(--t-caption);
+}
+.conn > span:last-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Main area */
+.main {
+  position: relative;
+  min-width: 0;
+  overflow: hidden;
+  background: var(--bg);
+  view-transition-name: screen;
+}
+.screen {
+  height: 100%;
+  overflow-y: auto;
+  padding: var(--s-5) var(--s-6) var(--s-7);
+  scrollbar-gutter: stable;
+}
+/* A form or a list of rows stops growing; grids and workspaces use the whole width. */
+.screen.capped > * {
+  max-width: var(--column);
+}
+.screen-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--s-3) var(--s-4);
+  min-height: var(--h);
+  margin-bottom: 20px;
+  -webkit-app-region: drag;
+}
+.screen-head > * {
+  -webkit-app-region: no-drag;
+}
+.screen-title {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.screen-title .sub {
+  min-height: 20px;
+  color: var(--text-2);
+}
+.screen-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2);
+}
+
+.section {
+  margin-top: 28px;
+}
+.section-head {
+  margin: 28px 0 var(--s-3);
+}
+.section > .section-head:first-child {
+  margin-top: 0;
+}
+.section-head h2 {
+  font: var(--t-section);
+  color: var(--text-2);
+}
+/* The one line under a section's heading that says what the section is for. */
+.section-note {
+  max-width: 72ch;
+  margin: calc(-1 * var(--s-1)) 0 var(--s-3);
+  color: var(--text-2);
+}
+
+/* Back to the list a detail screen came from. */
+.back {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: var(--h-sm);
+  margin-left: calc(-1 * var(--s-2));
+  padding: 0 var(--s-2);
+  border: 0;
+  border-radius: var(--r-1);
+  background: none;
+  color: var(--text-2);
+  font: var(--t-strong);
+  cursor: pointer;
+}
+.back:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}

@@ -1,27 +1,13 @@
 import { useInfiniteQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { useEffect, useState, type FormEvent, type ReactNode } from 'react'
+import { useState, type FormEvent } from 'react'
 import { addHubModel, connectHub, searchCatalog, thumbnailURL, type CatalogModel } from '../lib/api'
 import { keys } from '../lib/events'
 import { money } from '../lib/format'
 import { useToast } from '../lib/toast'
-import { D20 } from './icons'
-
-function Dialog({ label, onClose, children }: { label: string; onClose: () => void; children: ReactNode }) {
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape') onClose()
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [onClose])
-  return (
-    <div className="dialog-backdrop" onClick={onClose}>
-      <div className="dialog" role="dialog" aria-modal aria-label={label} onClick={(e) => e.stopPropagation()}>
-        {children}
-      </div>
-    </div>
-  )
-}
+import { ErrorBlock, Pill } from './Controls'
+import { Dialog, DialogActions } from './Dialog'
+import { Empty } from './Empty'
+import { ImageIcon, NoResultsIcon } from './icons'
 
 /** Connects fal.ai with an API key, which is tested and then kept in the keychain. */
 export function ConnectHub({ onClose }: { onClose: () => void }) {
@@ -30,41 +16,52 @@ export function ConnectHub({ onClose }: { onClose: () => void }) {
   const connect = useMutation({
     mutationFn: () => connectHub('fal', key.trim()),
     onSuccess: () => {
-      toast('fal.ai connected: its recommended models are on the Models screen')
+      toast('fal.ai connected. Its recommended models are on the Models screen.')
       onClose()
     },
   })
   const submit = (e: FormEvent): void => {
     e.preventDefault()
-    connect.mutate()
+    if (key.trim() && !connect.isPending) connect.mutate()
   }
   return (
-    <Dialog label="Connect fal.ai" onClose={onClose}>
+    <Dialog title="Connect fal.ai" keepOpen={key !== ''} onClose={onClose}>
       <form onSubmit={submit} className="dialog-form">
-        <h2>Connect fal.ai</h2>
         <p className="muted">
-          One key reaches hosted 3D models such as Hunyuan3D 3.1 Pro, TRELLIS 2, Tripo, Meshy and Rodin. They are paid per
-          generation, run only when you pick them, and receive your reference image.
+          One key reaches hosted 3D models such as Hunyuan3D 3.1 Pro, TRELLIS 2, Tripo, Meshy and Rodin. They are paid per image, run only when you
+          choose one for a step, and receive your reference image.
         </p>
         <label className="field">
-          <span>
-            API key ·{' '}
-            <a href="https://fal.ai/dashboard/keys" target="_blank" rel="noreferrer">
-              create one in your fal.ai dashboard
-            </a>
-          </span>
-          <input className="input" type="password" autoComplete="off" value={key} onChange={(e) => setKey(e.target.value)} autoFocus required />
+          <span>API key</span>
+          <input
+            className="input"
+            type="password"
+            autoComplete="off"
+            spellCheck={false}
+            value={key}
+            onChange={(e) => setKey(e.target.value)}
+            disabled={connect.isPending}
+            aria-describedby="hub-key-help"
+            autoFocus
+            required
+          />
         </label>
-        {connect.error && <div className="error">{(connect.error as Error).message}</div>}
-        <p className="muted small">The key is checked with fal.ai, then kept in this computer's keychain, never in a file.</p>
-        <div className="row dialog-actions">
+        <p className="muted small" id="hub-key-help">
+          Create one in your{' '}
+          <a href="https://fal.ai/dashboard/keys" target="_blank" rel="noreferrer">
+            fal.ai dashboard
+          </a>
+          . It is checked with fal.ai, then kept in this computer's keychain, never in a file.
+        </p>
+        {connect.error && <ErrorBlock role="alert">{(connect.error as Error).message}</ErrorBlock>}
+        <DialogActions>
           <button type="button" className="btn ghost" onClick={onClose}>
             Cancel
           </button>
           <button className="btn primary" disabled={connect.isPending || !key.trim()}>
             {connect.isPending ? 'Checking the key…' : 'Connect'}
           </button>
-        </div>
+        </DialogActions>
       </form>
     </Dialog>
   )
@@ -72,18 +69,15 @@ export function ConnectHub({ onClose }: { onClose: () => void }) {
 
 function Thumb({ provider, url }: { provider: string; url?: string }) {
   const [failed, setFailed] = useState(false)
-  if (!url || failed) {
-    return (
-      <span className="catalog-thumb">
-        <D20 size={40} />
-      </span>
-    )
-  }
-  return <img src={thumbnailURL(provider, url)} alt="" loading="lazy" onError={() => setFailed(true)} />
+  return (
+    <span className="thumb">
+      {!url || failed ? <ImageIcon size={20} /> : <img src={thumbnailURL(provider, url)} alt="" loading="lazy" onError={() => setFailed(true)} />}
+    </span>
+  )
 }
 
 const doesLabel = (tasks: string[]): string =>
-  tasks.includes('shape') && tasks.includes('texture') ? 'Shape and texture' : tasks.includes('texture') ? 'Texture' : tasks.join(', ')
+  tasks.includes('shape') && tasks.includes('texture') ? 'Shape and texture' : tasks.includes('texture') ? 'Texture' : tasks.includes('shape') ? 'Shape' : tasks.join(', ')
 
 /** Browses a hub's image-to-3D catalog and adds models Forja can call. */
 export function Catalog({ provider, label, onClose }: { provider: string; label: string; onClose: () => void }) {
@@ -100,58 +94,99 @@ export function Catalog({ provider, label, onClose }: { provider: string; label:
   const add = useMutation({
     mutationFn: (m: CatalogModel) => addHubModel(provider, m.id),
     onSuccess: (_, m) => {
-      toast(`${m.name} added`)
+      toast(`${m.name} added. Choose it for a step on the Models screen.`)
       void qc.invalidateQueries({ queryKey: ['catalog', provider] })
+      void qc.invalidateQueries({ queryKey: keys.models })
     },
     onError: (e: Error) => toast(e.message, true),
   })
   const models = pages.data?.pages.flatMap((p) => p.models) ?? []
   return (
-    <Dialog label={`Add models from ${label}`} onClose={onClose}>
-      <h2>Add models from {label}</h2>
+    <Dialog title={`Add models from ${label}`} size="wide" onClose={onClose}>
       <form
         className="row"
+        role="search"
         onSubmit={(e) => {
           e.preventDefault()
           setQ(text.trim())
         }}
       >
-        <input className="input grow" placeholder="Search: trellis, hunyuan, low poly…" value={text} onChange={(e) => setText(e.target.value)} />
+        <input
+          className="input grow"
+          type="search"
+          aria-label={`Search ${label}'s catalog`}
+          placeholder="Search: trellis, hunyuan, low poly…"
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          autoFocus
+        />
         <button className="btn">Search</button>
       </form>
-      {pages.isPending && <div className="skeleton" style={{ height: 160 }} />}
-      {pages.error && <div className="error">{(pages.error as Error).message}</div>}
-      <div className="catalog">
-        {models.map((m) => (
-          <div key={m.id} className="catalog-item">
-            <Thumb provider={provider} url={m.thumbnail} />
-            <div>
-              <strong>{m.name}</strong>
-              <div className="muted mono">{m.id}</div>
-              <div className="chips">
-                {m.recommended && <span className="chip recommended">Recommended</span>}
-                {!m.problem && <span className="chip">{doesLabel(m.tasks)}</span>}
-                <span className="chip paid">{money(m.price)}</span>
-              </div>
-              <p className={m.problem ? 'problem' : ''}>{m.problem ? `Forja cannot use it: ${m.problem}.` : m.description}</p>
-            </div>
-            <button className="btn" disabled={m.added || !!m.problem || add.isPending} onClick={() => add.mutate(m)}>
-              {m.added ? 'Added' : 'Add'}
-            </button>
-          </div>
-        ))}
-        {models.length === 0 && pages.isSuccess && <p className="muted">Nothing matches.</p>}
-      </div>
-      <div className="row dialog-actions">
+      <p className="muted small">Every model here is paid per image by {label}. Adding one costs nothing: it is used only once you choose it for a step.</p>
+      {pages.isPending && (
+        <div className="catalog" aria-busy>
+          {[0, 1, 2, 3].map((i) => (
+            <div key={i} className="skeleton" style={{ height: 56, margin: '8px 0' }} />
+          ))}
+        </div>
+      )}
+      {pages.error && (
+        <ErrorBlock>
+          <strong className="block">The catalog could not be read.</strong>
+          <span className="block">{(pages.error as Error).message}</span>
+          <button className="btn sm" onClick={() => void pages.refetch()} disabled={pages.isFetching}>
+            Try again
+          </button>
+        </ErrorBlock>
+      )}
+      {pages.isSuccess && (
+        <ul className="catalog" aria-label="Models found">
+          {models.map((m) => {
+            const adding = add.isPending && add.variables?.id === m.id
+            return (
+              <li key={m.id} className={`catalog-item ${m.problem ? 'unusable' : ''}`}>
+                <Thumb provider={provider} url={m.thumbnail} />
+                <div className="catalog-text">
+                  <div className="catalog-name">
+                    <strong>{m.name}</strong>
+                    {m.recommended && <Pill>Recommended</Pill>}
+                    {!m.problem && <Pill>{doesLabel(m.tasks)}</Pill>}
+                  </div>
+                  <span className="mono dim">{m.id}</span>
+                  <p className={m.problem ? 'problem' : ''}>{m.problem ? `Forja cannot use it: ${m.problem}.` : m.description}</p>
+                </div>
+                <div className="catalog-act">
+                  <span className={`num ${m.price ? '' : 'dim'}`}>{m.price ? money(m.price) : 'No price listed'}</span>
+                  {m.added ? (
+                    <Pill tone="ok" dot>
+                      Added
+                    </Pill>
+                  ) : (
+                    <button className="btn sm" disabled={!!m.problem || add.isPending} onClick={() => add.mutate(m)} aria-label={`Add ${m.name}`}>
+                      {adding ? 'Checking…' : 'Add'}
+                    </button>
+                  )}
+                </div>
+              </li>
+            )
+          })}
+        </ul>
+      )}
+      {pages.isSuccess && models.length === 0 && (
+        <Empty icon={NoResultsIcon} title="No model matches">
+          {q ? `Nothing in ${label}'s image-to-3D catalog matches "${q}".` : `${label}'s catalog came back empty.`}
+        </Empty>
+      )}
+      <DialogActions>
         {pages.hasNextPage && (
           <button className="btn ghost" onClick={() => void pages.fetchNextPage()} disabled={pages.isFetchingNextPage}>
-            {pages.isFetchingNextPage ? 'Loading…' : 'More'}
+            {pages.isFetchingNextPage ? 'Loading…' : 'Show more'}
           </button>
         )}
-        <button className="btn ghost" onClick={onClose}>
+        <button className="btn" onClick={onClose}>
           Done
         </button>
-      </div>
+      </DialogActions>
     </Dialog>
   )
 }

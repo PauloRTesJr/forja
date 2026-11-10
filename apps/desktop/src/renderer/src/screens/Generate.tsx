@@ -1,293 +1,392 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useEffectEvent, useRef, useState, type DragEvent } from 'react'
-import { Composer, optionalOverrides } from '../components/Composer'
-import { Corners, DropSigil } from '../components/icons'
-import { Confirm, isPreparing, Preparing } from '../components/Prepare'
+import { Composer, EstimateNote, optionalOverrides } from '../components/Composer'
+import { ErrorBlock } from '../components/Controls'
+import { AlertIcon } from '../components/icons'
+import { ImageTarget } from '../components/ImageTarget'
+import { ActivityPanel } from '../components/Prepare'
 import { ScreenHead } from '../components/ScreenHead'
 import { Setup } from '../components/Setup'
-import { IMAGE, ViewsCard, type Draft } from '../components/ViewsCard'
-import { api, fetchEstimate, fetchPresets, importImage, submitJobs, uploadImage, type Job, type SubmitBody } from '../lib/api'
+import { queuedMessage, stillTracked } from '../lib/activity'
+import { api, fetchEstimate, fetchPresets, type Job, type Setup as SetupView } from '../lib/api'
+import {
+  addImages,
+  clearStaged,
+  draftStore,
+  generateLabel,
+  removeImage,
+  replaceImage,
+  setSide,
+  sidesInUse,
+  sideViews,
+  startingPreset,
+  storedOptions,
+  storedPreset,
+  storeOptions,
+  storePreset,
+  useDraft,
+} from '../lib/draft'
 import { keys } from '../lib/events'
-import { needsAnswer, upsertJob } from '../lib/jobs'
+import { bytes, stageLabel } from '../lib/format'
+import { droppedFrom, duplicatesNote, IMAGE_TYPE, skippedNote, sortDropped, stagePasted, stagePaths, submitStaged, type Dropped } from '../lib/intake'
+import { upsertJob } from '../lib/jobs'
 import { transition, useNavigate } from '../lib/nav'
 import { useToast } from '../lib/toast'
-import { SIDE_VIEWS, viewReader } from '../lib/views'
+import { SIDE_VIEWS, viewReader, type SideView } from '../lib/views'
 
-const OPTIONS_KEY = 'forja.options'
-// A batch shows this many images being prepared, then a count of the rest.
-const SHOWN_PREPARING = 3
-const IMAGE_TYPE = /^image\/(png|jpeg|webp)$/
-const PASTE_KEY = window.forja.platform === 'darwin' ? '⌘V' : 'Ctrl+V'
-
-// Per-viewer conveniences only: storage may be missing or full, and the screen works without it.
-function read(key: string): string | null {
-  try {
-    return localStorage.getItem(key)
-  } catch {
-    return null
-  }
+interface Config {
+  project?: { default_preset?: string }
+  models?: { stages?: Record<string, string> }
 }
 
-function write(key: string, value: string): void {
-  try {
-    localStorage.setItem(key, value)
-  } catch {
-    /* ignore */
-  }
+/** Something to say about the last images added, beside the target: what was left out, and why. */
+interface Note {
+  text: string
+  bad?: boolean
 }
 
-function storedOptions(): Record<string, boolean> {
-  try {
-    return JSON.parse(read(OPTIONS_KEY) ?? '{}') as Record<string, boolean>
-  } catch {
-    return {}
-  }
-}
+const notesOf = (problems: string[], ...info: (string | undefined)[]): Note[] => [
+  ...problems.map((text) => ({ text, bad: true })),
+  ...info.filter((t): t is string => !!t).map((text) => ({ text })),
+]
+
+const hasFiles = (e: DragEvent): boolean => e.dataTransfer.types.includes('Files')
 
 export function Generate() {
   const navigate = useNavigate()
   const toast = useToast()
   const qc = useQueryClient()
-  const [over, setOver] = useState(false)
+  const draft = useDraft()
   const jobs = useQuery({ queryKey: keys.jobs, queryFn: () => api<Job[]>('GET', '/v1/jobs?limit=100') })
-  const preparing = jobs.data?.filter(isPreparing) ?? []
-  const asking = jobs.data?.filter(needsAnswer) ?? []
-  // The jobs dropped here last. The screen keeps them while they are prepared and confirmed,
-  // then hands them to the queue.
-  const [submitted, setSubmitted] = useState<string[]>([])
-  const [preset, setPreset] = useState('mobile-prop')
+  const presets = useQuery({ queryKey: keys.presets, queryFn: () => fetchPresets() })
+  const config = useQuery({ queryKey: keys.config, queryFn: () => api<Config>('GET', '/v1/config/effective') })
+
+  // The preset chosen here is remembered; before any choice, the "Default preset" setting stands.
+  const [chosen, setChosen] = useState(storedPreset)
+  const preset = startingPreset(presets.data, chosen, config.data?.project?.default_preset)
+  const choose = (id: string): void => {
+    setChosen(id)
+    storePreset(id)
+  }
   // Switch states for optional stages, by "<preset>.<stage>".
   const [options, setOptions] = useState(storedOptions)
-  const presets = useQuery({ queryKey: keys.presets, queryFn: () => fetchPresets() })
+  const isOn = (stage: string, fallback: boolean): boolean => options[`${preset}.${stage}`] ?? fallback
+  const toggle = (stage: string, on: boolean): void => {
+    const next = { ...options, [`${preset}.${stage}`]: on }
+    setOptions(next)
+    storeOptions(next)
+  }
+
   // The same presets as if a job brought every other view: says which model would read them.
   const withViews = useQuery({ queryKey: keys.presetsWithViews, queryFn: () => fetchPresets([...SIDE_VIEWS]) })
   const reader = viewReader(withViews.data?.find((p) => p.id === preset)?.plan ?? [])
-  // A single image waiting for its other views, when the shape model reads them.
-  const [draft, setDraft] = useState<Draft | null>(null)
-  const current = presets.data?.find((p) => p.id === preset)
-  const isOn = (stage: string, fallback: boolean): boolean => options[`${preset}.${stage}`] ?? fallback
+  // With side views staged, the settings show the models that would run with exactly those.
+  const views = sideViews(draft)
+  const forViews = useQuery({
+    queryKey: [...keys.presetsWithViews, views.join(',')],
+    queryFn: () => fetchPresets(views),
+    enabled: views.length > 0,
+    placeholderData: keepPreviousData,
+  })
+  const shown = (views.length > 0 && forViews.data) || presets.data
+  const current = shown?.find((p) => p.id === preset)
   const blocked = current !== undefined && !current.ready
-  // Once shown, setup stays until it is finished or skipped: its last step, the test run,
-  // comes after the presets are already ready.
-  const [setupOpen, setSetupOpen] = useState(false)
-  if (blocked && !current?.error && !setupOpen) setSetupOpen(true)
+  // A first run: nothing can be generated with any preset, so there is nothing to stage for.
+  const noneReady = presets.data !== undefined && presets.data.length > 0 && presets.data.every((p) => !p.ready)
+  const pins = config.data?.models?.stages ?? {}
+  const pinnedMissing = current?.plan.find((p) => p.missing && !p.problem && pins[p.use])
 
   const overrides = current ? optionalOverrides(current, isOn) : {}
-  // What one image would take and cost as the recipe stands, before anything is queued. The
-  // last answer stays while the next loads, so the line changes in place.
-  const draftViews = draft ? SIDE_VIEWS.filter((v) => draft.views[v]) : []
+  const count = draft.images.length
+  // What the staged images would take and cost as the settings stand. The last answer stays
+  // while the next loads, so the line changes in place.
   const estimate = useQuery({
-    queryKey: keys.estimate(preset, overrides, draftViews),
-    queryFn: () => fetchEstimate({ preset, overrides, views: draftViews, images: 1 }),
+    queryKey: [...keys.estimate(preset, overrides, views), Math.max(1, count)],
+    queryFn: () => fetchEstimate({ preset, overrides, views, images: Math.max(1, count) }),
     enabled: current !== undefined && !blocked,
     placeholderData: keepPreviousData,
   })
 
+  const [over, setOver] = useState(false)
+  const [reading, setReading] = useState(0)
+  const [notes, setNotes] = useState<Note[]>([])
+  // Opened from the notice, and kept until closed: its last step, the test run, comes after
+  // the presets are already ready.
+  const [setupOpen, setSetupOpen] = useState(false)
+
+  // The "added to the queue" notice goes when every job it spoke of ended before it was due.
+  const queuedToast = useRef<{ ids: string[]; take: () => void } | null>(null)
+  useEffect(() => {
+    const shown = queuedToast.current
+    if (!shown || !jobs.data) return
+    const ended = shown.ids.every((id) => {
+      const status = jobs.data.find((j) => j.id === id)?.status
+      return status === 'cancelled' || status === 'failed'
+    })
+    if (!ended) return
+    shown.take()
+    queuedToast.current = null
+  }, [jobs.data])
+
+  // The button is disabled while a submit is in flight, but two activations can land before
+  // that renders: this is what keeps them from queueing the images twice.
+  const sending = useRef(false)
   const submit = useMutation({
-    mutationFn: (body: Pick<SubmitBody, 'paths' | 'input' | 'name' | 'views'>) =>
-      submitJobs({
-        ...body,
-        preset,
-        priority: (body.paths?.length ?? 1) === 1 ? 'interactive' : 'batch',
-        overrides,
-        // An image that turns out to hold several views waits for the user, on this screen.
-        sheet: 'ask',
-      }),
-    onSuccess: (created) => {
-      setDraft(null)
-      qc.setQueryData<Job[]>(keys.jobs, (list) => created.reduce((l, j) => upsertJob(l, j), list ?? []))
-      setSubmitted(created.map((j) => j.id))
+    mutationFn: () => submitStaged(draftStore.get(), { preset, overrides }),
+    onSuccess: ({ created, error }) => {
+      if (created.length > 0) {
+        qc.setQueryData<Job[]>(keys.jobs, (list) => created.reduce((l, j) => upsertJob(l, j), list ?? []))
+        // What ended earlier makes room in the panel for the jobs just started.
+        draftStore.set((d) => ({ ...clearStaged(d), tracked: [...stillTracked(d.tracked, qc.getQueryData<Job[]>(keys.jobs)), ...created.map((j) => j.id)] }))
+        const take = toast(queuedMessage(created), false, { label: 'View queue', run: () => transition(() => navigate({ screen: 'queue' })) })
+        queuedToast.current = { ids: created.map((j) => j.id), take }
+      }
+      setNotes(error ? [{ text: error.message, bad: true }] : [])
     },
-    onError: (e: Error) => toast(e.message, true),
+    onError: (e: Error) => setNotes([{ text: e.message, bad: true }]),
+    onSettled: () => {
+      sending.current = false
+    },
   })
-
-  // A drop's progress, and any question about it, go where the user is looking: the views
-  // card that led here may have left the page scrolled past them.
-  const prepsRef = useRef<HTMLDivElement>(null)
-  const firstAsk = asking[0]?.id
-  useEffect(() => {
-    if (submitted.length === 0 && !firstAsk) return
-    const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches
-    prepsRef.current?.scrollIntoView({ block: 'start', behavior: reduce ? 'auto' : 'smooth' })
-  }, [submitted, firstAsk])
-
-  // Once the jobs dropped here are prepared and none waits for the user, they go to the queue.
-  // Going there unmounts this screen; the ref keeps a late job update from going twice.
-  const handedOver = useRef<string[] | null>(null)
-  useEffect(() => {
-    if (submitted.length === 0 || handedOver.current === submitted || !jobs.data) return
-    const mine = jobs.data.filter((j) => submitted.includes(j.id))
-    if (mine.length < submitted.length || mine.some((j) => isPreparing(j) || needsAnswer(j))) return
-    handedOver.current = submitted
-    toast(`${mine.length === 1 ? mine[0]!.name : `${mine.length} images`} queued`)
-    transition(() => navigate({ screen: 'queue' }))
-  }, [jobs.data, submitted, toast, navigate])
-
-  // One image, when the shape model reads other views, waits on the views card for them;
-  // anything else queues at once.
-  const queue = async (paths: string[]): Promise<void> => {
-    if (blocked || paths.length === 0) return
-    if (paths.length > 1 || !reader) return submit.mutate({ paths })
-    try {
-      const ref = await importImage(paths[0]!)
-      transition(() => setDraft({ front: { path: paths[0]!, ref }, views: {} }))
-    } catch (e) {
-      toast((e as Error).message, true)
-    }
+  const busy = submit.isPending
+  const canGenerate = count > 0 && reading === 0 && current !== undefined && !blocked
+  const generate = (): void => {
+    if (sending.current || !canGenerate) return
+    sending.current = true
+    submit.mutate()
   }
 
-  const onDrop = (e: DragEvent): void => {
-    if (draft) return
-    e.preventDefault()
-    setOver(false)
-    if (blocked) return
-    const paths = [...e.dataTransfer.files].map((f) => window.forja.pathForFile(f)).filter((p) => IMAGE.test(p))
-    if (paths.length === 0) return toast('Drop PNG, JPEG or WebP images', true)
-    void queue(paths)
+  const stage = async (items: Dropped[]): Promise<void> => {
+    if (noneReady || sending.current) return
+    const sorted = sortDropped(items)
+    const { images, folders, skipped } = sorted
+    const adding = images.length + folders.length
+    if (adding === 0) return setNotes(notesOf([], skippedNote(skipped) ?? 'Add PNG, JPEG or WebP images.'))
+    setReading((n) => n + adding)
+    try {
+      const { staged, problems } = await stagePaths(images, folders)
+      const { draft: next, duplicates } = addImages(draftStore.get(), staged)
+      draftStore.set(next)
+      setNotes(notesOf(problems, skippedNote(skipped), duplicatesNote(duplicates)))
+    } finally {
+      setReading((n) => n - adding)
+    }
+  }
+  const browse = async (): Promise<void> => stage((await window.forja.pickImages()).map((path) => ({ path })))
+
+  const replace = async (id: string): Promise<void> => {
+    const [path] = await window.forja.pickImages()
+    if (!path) return
+    const { staged, problems } = await stagePaths([path])
+    if (staged[0]) draftStore.set((d) => replaceImage(d, id, staged[0]!))
+    setNotes(notesOf(problems))
+  }
+
+  const setSideView = async (view: SideView, path?: string): Promise<void> => {
+    if (!path) return draftStore.set((d) => setSide(d, view))
+    const { staged, problems } = await stagePaths([path])
+    if (staged[0]) draftStore.set((d) => setSide(d, view, staged[0]))
+    setNotes(notesOf(problems))
   }
 
   // Copied files paste as their paths; a copied bitmap, such as a screenshot, has no file and
   // goes to the store as bytes.
   const onPaste = async (e: ClipboardEvent): Promise<void> => {
-    if (draft || blocked || (e.target as Element | null)?.closest('input, textarea, [contenteditable]')) return
-    const files = [...(e.clipboardData?.files ?? [])]
-    if (files.length === 0) return
+    if (noneReady || (e.target instanceof Element && e.target.closest('input, textarea, select, [contenteditable]'))) return
+    const data = e.clipboardData
+    if (!data || data.files.length === 0) return
     e.preventDefault()
-    const paths = files.map((f) => window.forja.pathForFile(f)).filter((p) => IMAGE.test(p))
-    if (paths.length > 0) return queue(paths)
-    const image = files.find((f) => IMAGE_TYPE.test(f.type))
-    if (!image) return toast('Paste PNG, JPEG or WebP images', true)
+    const items = droppedFrom(data, window.forja.pathForFile)
+    if (items.some((i) => i.path)) return stage(items)
+    const image = [...data.files].find((f) => IMAGE_TYPE.test(f.type))
+    if (!image) return setNotes(notesOf([], 'Paste PNG, JPEG or WebP images.'))
+    setReading((n) => n + 1)
     try {
-      const ref = await uploadImage(image)
-      const name = `pasted.${image.type.slice('image/'.length)}`
-      if (reader) transition(() => setDraft({ front: { path: name, ref }, views: {} }))
-      else submit.mutate({ input: ref, name })
+      const pasted = await stagePasted(image)
+      const { draft: next, duplicates } = addImages(draftStore.get(), [pasted])
+      draftStore.set(next)
+      setNotes(notesOf([], duplicatesNote(duplicates)))
     } catch (err) {
-      toast((err as Error).message, true)
+      setNotes(notesOf([`The pasted picture could not be read: ${(err as Error).message}`]))
+    } finally {
+      setReading((n) => n - 1)
     }
   }
   const pasted = useEffectEvent(onPaste)
+  const pressed = useEffectEvent((e: KeyboardEvent): void => {
+    const mod = window.forja.platform === 'darwin' ? e.metaKey : e.ctrlKey
+    if (mod && e.key === 'Enter') {
+      e.preventDefault()
+      generate()
+    }
+  })
   useEffect(() => {
-    const handler = (e: ClipboardEvent): void => void pasted(e)
-    document.addEventListener('paste', handler)
-    return () => document.removeEventListener('paste', handler)
+    const paste = (e: ClipboardEvent): void => void pasted(e)
+    const key = (e: KeyboardEvent): void => pressed(e)
+    document.addEventListener('paste', paste)
+    document.addEventListener('keydown', key)
+    return () => {
+      document.removeEventListener('paste', paste)
+      document.removeEventListener('keydown', key)
+    }
   }, [])
 
-  const generate = (d: Draft): void => {
-    const views = Object.fromEntries(SIDE_VIEWS.filter((v) => d.views[v]).map((v) => [v, d.views[v]!.ref]))
-    submit.mutate({ input: d.front.ref, name: d.front.path, views })
+  // The whole screen takes a drop, and always answers the drag itself: a file let through to
+  // the browser would open in place of the app.
+  const onDragOver = (e: DragEvent): void => {
+    if (!hasFiles(e)) return
+    // A side-view slot under the pointer has taken it.
+    if (e.defaultPrevented) return setOver(false)
+    e.preventDefault()
+    if (noneReady || busy) e.dataTransfer.dropEffect = 'none'
+    else setOver(true)
+  }
+  const onDrop = (e: DragEvent): void => {
+    if (!hasFiles(e)) return
+    const taken = e.defaultPrevented
+    e.preventDefault()
+    setOver(false)
+    if (!taken) void stage(droppedFrom(e.dataTransfer, window.forja.pathForFile))
   }
 
-  const toggle = (stage: string, on: boolean): void => {
-    const next = { ...options, [`${preset}.${stage}`]: on }
-    setOptions(next)
-    write(OPTIONS_KEY, JSON.stringify(next))
-  }
+  const why = count === 0 ? 'Add an image to start.' : blocked ? `${current.name} cannot run yet.` : undefined
 
   return (
-    <div className="screen">
-      <ScreenHead eyebrow={['Arcanum I', 'The Forge']} title="Generate" sub="Drop or paste reference images. Each becomes a game-ready GLB." />
+    <div
+      className="screen generate"
+      onDragEnter={onDragOver}
+      onDragOver={onDragOver}
+      onDragLeave={(e) => {
+        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setOver(false)
+      }}
+      onDrop={onDrop}
+    >
+      <ScreenHead title="Generate" sub="Turn reference images into game-ready 3D assets." />
 
-      {blocked && current?.error && (
-        <div className="error" role="status">
+      {blocked && current.error && (
+        <ErrorBlock role="status">
           {current.name} cannot run: {current.error}
+        </ErrorBlock>
+      )}
+      {blocked && !current.error && pinnedMissing && (
+        <div className="notice generate-notice enter">
+          <div>
+            <strong>
+              {stageLabel(pinnedMissing.use)} is set to a model that is not installed
+            </strong>
+            <span>Choose another model for it in the settings below, or install it on the Models screen.</span>
+          </div>
+          <button className="btn" onClick={() => transition(() => navigate({ screen: 'models' }))}>
+            Open Models
+          </button>
         </div>
+      )}
+      {((blocked && !current.error && !pinnedMissing) || setupOpen) && (
+        <SetupNotice
+          title={!blocked ? 'Model setup' : noneReady ? 'Set up models to start' : `${current.name} needs a model that is not installed`}
+          open={setupOpen}
+          onToggle={() => setSetupOpen(!setupOpen)}
+        />
       )}
       {setupOpen && <Setup onDone={() => setSetupOpen(false)} />}
 
-      {(asking.length > 0 || preparing.length > 0) && (
-        <div className="preps" ref={prepsRef}>
-          {asking.map((j, i) => (
-            <Confirm key={j.id} job={j} index={i} />
-          ))}
-          {preparing.slice(0, SHOWN_PREPARING).map((j, i) => (
-            <Preparing key={j.id} job={j} index={asking.length + i} />
-          ))}
-          {preparing.length > SHOWN_PREPARING && (
-            <p className="prep-more">
-              and {preparing.length - SHOWN_PREPARING} more {preparing.length - SHOWN_PREPARING === 1 ? 'image' : 'images'} being
-              prepared
-            </p>
+      <ActivityPanel jobs={jobs.data} tracked={draft.tracked} />
+
+      <div className="workspace">
+        <div className="workspace-input">
+          <ImageTarget
+            images={draft.images}
+            sides={sidesInUse(draft)}
+            reader={reader}
+            over={over}
+            reading={reading}
+            blocked={noneReady}
+            busy={busy}
+            onBrowse={() => void browse()}
+            onRemove={(id) => draftStore.set((d) => removeImage(d, id))}
+            onReplace={(id) => void replace(id)}
+            onClear={() => {
+              draftStore.set(clearStaged)
+              setNotes([])
+            }}
+            onSide={setSideView}
+          />
+          {notes.length > 0 && (
+            <ul className="target-notes" role="status">
+              {notes.map((n) => (
+                <li key={n.text} className={n.bad ? 'bad' : ''}>
+                  {n.bad && <AlertIcon size={14} />}
+                  <span>{n.text}</span>
+                </li>
+              ))}
+            </ul>
           )}
         </div>
-      )}
 
-      {/* One card for the whole flow: what goes in on one side, and the recipe it goes through
-          on the other. The recipe lights up while an image is on its way in, so the settings
-          read as the ones it will get. The whole card takes a drop, not only the well. */}
-      <div
-        className={`forge enter ${(over && !blocked) || submit.isPending || draft ? 'lit' : ''}`}
-        onDragOver={(e) => {
-          if (draft) return
-          e.preventDefault()
-          setOver(true)
-        }}
-        onDragLeave={(e) => {
-          if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setOver(false)
-        }}
-        onDrop={onDrop}
-      >
-        <div className="forge-input">
-          {draft ? (
-            <ViewsCard
-              draft={draft}
-              reader={reader}
-              busy={submit.isPending}
-              onAdd={async (view, path) => {
-                try {
-                  const ref = await importImage(path)
-                  setDraft((d) => d && { ...d, views: { ...d.views, [view]: { path, ref } } })
-                } catch (e) {
-                  toast((e as Error).message, true)
-                }
-              }}
-              onRemove={(view) => setDraft((d) => d && { ...d, views: { ...d.views, [view]: undefined } })}
-              onGenerate={() => generate(draft)}
-              onCancel={() => transition(() => setDraft(null))}
-            />
-          ) : (
-            <div
-              className={`drop enter ${over && !blocked ? 'over' : ''} ${submit.isPending ? 'busy' : ''} ${blocked ? 'blocked' : ''}`}
-              role="button"
-              tabIndex={0}
-              aria-disabled={blocked}
-              onClick={async () => queue(blocked ? [] : await window.forja.pickImages())}
-              onKeyDown={async (e) => {
-                if (e.key !== 'Enter' && e.key !== ' ') return
-                queue(blocked ? [] : await window.forja.pickImages())
-              }}
-            >
-              <span className="frame" aria-hidden />
-              <Corners />
-              <div className="drop-inner">
-                <DropSigil />
-                <strong className="drop-title">
-                  {blocked ? 'Set up models to start' : submit.isPending ? 'Queuing…' : over ? 'Release to queue them' : 'Drop or paste images, or a folder of images'}
-                </strong>
-                <span className="drop-hint">
-                  or click to browse · {PASTE_KEY} to paste · PNG, JPEG, WebP
-                  {reader && !blocked && ' · one image lets you add its other views'}
+        <div className="workspace-settings">
+          {presets.isPending && <div className="skeleton" style={{ height: 320 }} />}
+          {presets.error && (
+            <ErrorBlock>
+              The settings could not be loaded: {(presets.error as Error).message}{' '}
+              <button className="text-btn" onClick={() => void presets.refetch()}>
+                Try again
+              </button>
+            </ErrorBlock>
+          )}
+          {shown && <Composer presets={shown} preset={preset} onPreset={choose} isOn={isOn} onToggle={toggle} />}
+          {shown && (
+            <div className="generate-foot">
+              <EstimateNote estimate={blocked || estimate.isError ? null : estimate.data} />
+              <button className="btn primary lg" onClick={generate} disabled={!canGenerate || busy} aria-describedby={why ? 'generate-why' : undefined}>
+                {busy ? 'Queuing…' : generateLabel(draft)}
+              </button>
+              {why && (
+                <span className="generate-why" id="generate-why">
+                  {why}
                 </span>
-              </div>
+              )}
             </div>
           )}
         </div>
+      </div>
+    </div>
+  )
+}
 
-        <div className="forge-recipe">
-          <span className="forge-link" aria-hidden />
-          {presets.isPending && <div className="skeleton" style={{ height: 320 }} />}
-          {presets.error && <div className="error">{(presets.error as Error).message}</div>}
-          {presets.data && (
-            <Composer
-              presets={presets.data}
-              preset={preset}
-              onPreset={setPreset}
-              isOn={isOn}
-              onToggle={toggle}
-              estimate={blocked || estimate.isError ? null : estimate.data}
-            />
-          )}
-        </div>
+/**
+ * Says that models are missing without taking the screen over: what this computer could run,
+ * a way into the guided setup (and back out of it), and the way to another computer or a cloud.
+ */
+function SetupNotice({ title, open, onToggle }: { title: string; open: boolean; onToggle: () => void }) {
+  const navigate = useNavigate()
+  const setup = useQuery({ queryKey: keys.setup, queryFn: () => api<SetupView>('GET', '/v1/setup') })
+  const s = setup.data
+  const gpu = s?.system?.devices?.find((d) => d.backend !== 'cpu')
+  const here = gpu ? `This computer (${gpu.name}, ${bytes(gpu.vram_bytes)})` : 'This computer'
+  const n = s?.install.length ?? 0
+  const remote = s?.stages.some((st) => st.status === 'remote') ?? false
+  const line = setup.isPending
+    ? 'Looking at what this computer can run…'
+    : !s
+      ? 'Forja needs its models before it can generate.'
+      : s.ready
+        ? 'Every preset has its models. Run the sample once to check the whole pipeline.'
+        : n > 0
+          ? `${here} can run ${remote ? 'part of the pipeline' : 'everything'}: ${n} ${n === 1 ? 'model' : 'models'}, about ${Math.round(s.disk_gb)} GB to download.`
+          : `${here} cannot run the models that are missing. Use another computer that runs Forja, or a cloud GPU.`
+  return (
+    <div className="notice generate-notice enter">
+      <div>
+        <strong>{title}</strong>
+        <span>{line}</span>
+      </div>
+      <div className="row">
+        <button className="btn ghost" onClick={() => transition(() => navigate({ screen: 'settings' }))}>
+          Use another computer or cloud
+        </button>
+        <button className={`btn ${open ? '' : 'primary'}`} aria-expanded={open} onClick={onToggle}>
+          {open ? 'Not now' : 'Set up models'}
+        </button>
       </div>
     </div>
   )

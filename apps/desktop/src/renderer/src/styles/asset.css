@@ -1,0 +1,279 @@
+/* Asset detail: a head with the name and actions, the 3D viewer, and the properties beside it. */
+.screen.asset {
+  display: flex;
+  flex-direction: column;
+}
+.asset-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  min-height: var(--h);
+  margin-bottom: var(--s-3);
+}
+.asset-head .back {
+  flex: none;
+  margin-left: calc(-1 * var(--s-2));
+}
+.screen.asset > .back {
+  align-self: flex-start;
+  margin-bottom: var(--s-3);
+}
+.asset-title {
+  flex: 1 1 0;
+  display: flex;
+  align-items: center;
+  gap: var(--s-1);
+  min-width: 0;
+}
+.asset-title.editing {
+  position: relative;
+}
+.asset-title.editing .input {
+  flex: 1;
+  font: var(--t-screen);
+  height: var(--h-lg);
+}
+.asset-title h1 {
+  /* The name's hover ground reaches past its text; the text stays on the grid. */
+  margin-left: calc(-1 * var(--s-1));
+  min-width: 0;
+  max-width: 100%;
+  font: var(--t-screen);
+}
+.asset-name {
+  display: block;
+  width: max-content;
+  max-width: 100%;
+  padding: 0 var(--s-1);
+  border: 0;
+  border-radius: var(--r-1);
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: text;
+}
+.asset-name:hover {
+  background: var(--surface-2);
+}
+.asset-title-wait {
+  display: block;
+  width: 200px;
+  height: 24px;
+}
+/* Under the field, over what follows: the sentence does not push the page down. */
+.asset-title-problem {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  margin-top: 2px;
+  color: var(--bad-hi);
+  font: var(--t-caption);
+}
+.asset-title-problem:empty {
+  display: none;
+}
+.asset-actions {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+}
+.asset-error-actions {
+  display: flex;
+  gap: var(--s-2);
+  margin-top: var(--s-3);
+}
+
+.asset-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  gap: var(--s-5);
+  align-items: start;
+}
+
+/* Viewer */
+.viewer {
+  position: sticky;
+  top: 0;
+  height: max(420px, calc(100vh - 124px));
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--r-3);
+  background: var(--bg-deep);
+  overflow: hidden;
+}
+.viewer-stage {
+  position: absolute;
+  inset: 0;
+}
+.viewer-stage canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.viewer-stage:focus-visible {
+  outline: 2px solid var(--accent-hi);
+  outline-offset: -2px;
+}
+.viewer-status {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--s-2);
+  padding: var(--s-5);
+  background: var(--bg-deep);
+  color: var(--text-2);
+  text-align: center;
+  animation: fade-in var(--dur-2) var(--ease-out) both;
+}
+.viewer-status strong {
+  color: var(--text);
+  font: var(--t-strong);
+}
+.viewer-status span {
+  max-width: 48ch;
+  font: var(--t-caption);
+  overflow-wrap: anywhere;
+}
+.viewer-progress {
+  position: relative;
+  z-index: 1;
+  width: 120px;
+}
+.viewer-placeholder {
+  position: absolute;
+  inset: 12%;
+  width: 76%;
+  height: 76%;
+  object-fit: contain;
+  opacity: 0.35;
+  filter: blur(8px);
+}
+.viewer-tools,
+.viewer-lod {
+  position: absolute;
+  top: var(--s-3);
+  z-index: 2;
+}
+.viewer-tools {
+  right: var(--s-3);
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-2);
+  background: var(--surface);
+}
+.viewer-lod {
+  left: var(--s-3);
+  width: auto;
+  max-width: calc(100% - 160px);
+}
+.viewer-modes {
+  position: absolute;
+  left: 50%;
+  bottom: var(--s-3);
+  z-index: 2;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 2px;
+  width: max-content;
+  max-width: calc(100% - 24px);
+  padding: 2px;
+  transform: translateX(-50%);
+  border: 1px solid var(--border);
+  border-radius: var(--r-2);
+  background: var(--surface);
+}
+.viewer-modes button {
+  height: 24px;
+  padding: 0 var(--s-2);
+  border: 0;
+  border-radius: var(--r-1);
+  background: none;
+  color: var(--text-2);
+  font: var(--t-strong);
+  cursor: pointer;
+}
+.viewer-modes button:hover:not(:disabled) {
+  color: var(--text);
+}
+.viewer-modes button[aria-pressed='true'] {
+  background: var(--surface-3);
+  color: var(--text);
+}
+.viewer-modes button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/* Inspector: label and value rows in groups, no boxes. */
+.inspector {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.inspector .section-head {
+  margin: var(--s-4) 0 var(--s-1);
+}
+.inspector > section:first-child .section-head {
+  margin-top: 0;
+}
+.inspector > section + section {
+  margin-top: var(--s-2);
+  border-top: 1px solid var(--border-soft);
+}
+.asset-kv {
+  gap: 0;
+}
+.asset-kv .kv-row {
+  grid-template-columns: minmax(72px, 2fr) minmax(0, 3fr);
+  align-items: center;
+  min-height: var(--h-sm);
+}
+.asset-kv dd {
+  text-align: right;
+  justify-self: end;
+  min-width: 0;
+}
+.asset-value-wait {
+  display: inline-block;
+  width: 48px;
+  height: 14px;
+  vertical-align: middle;
+}
+.asset-export {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-1);
+}
+.inspector .stage-list {
+  margin-top: var(--s-2);
+}
+
+/* Narrow windows put the properties under the viewer. */
+@media (max-width: 1100px) {
+  .asset-body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .viewer {
+    position: relative;
+  }
+  .asset-actions .btn-label {
+    display: none;
+  }
+  .asset-actions .btn.drag-out,
+  .asset-actions .btn[aria-label='Open in Blender'] {
+    width: var(--h);
+    padding: 0;
+  }
+}

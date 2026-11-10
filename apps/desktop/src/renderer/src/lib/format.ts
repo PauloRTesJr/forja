@@ -1,9 +1,10 @@
 export function seconds(s: number): string {
   if (!Number.isFinite(s) || s <= 0) return '—'
   if (s < 1) return `${Math.round(s * 1000)} ms`
-  if (s < 60) return `${s.toFixed(s < 10 ? 1 : 0)} s`
-  const m = Math.floor(s / 60)
-  return `${m} min ${Math.round(s % 60)} s`
+  if (s < 59.5) return `${s.toFixed(s < 10 ? 1 : 0)} s`
+  // Rounded before it is split, so 119.6 s reads "2 min 0 s", never "1 min 60 s".
+  const whole = Math.round(s)
+  return `${Math.floor(whole / 60)} min ${whole % 60} s`
 }
 
 export function count(n: number): string {
@@ -71,31 +72,6 @@ export function listOf(items: string[]): string {
   return `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`
 }
 
-const numerals: [number, string][] = [
-  [100, 'C'],
-  [90, 'XC'],
-  [50, 'L'],
-  [40, 'XL'],
-  [10, 'X'],
-  [9, 'IX'],
-  [5, 'V'],
-  [4, 'IV'],
-  [1, 'I'],
-]
-
-/** Tarot-style card numbers. */
-export function roman(n: number): string {
-  let out = ''
-  for (const [value, glyph] of numerals) {
-    while (n >= value) {
-      out += glyph
-      n -= value
-    }
-  }
-  return out
-}
-
-/** "$0.30", or "$0.02 per second" when the unit is not one generation. */
 /** The core's unit for a price per generation; any other unit cannot be added up per image. */
 export const PER_CALL = 'generation'
 

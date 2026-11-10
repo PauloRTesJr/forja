@@ -1,5 +1,5 @@
 // Which assets a click selects in the Library, and the small helpers its actions share.
-import type { Asset } from './api'
+import { withoutAssets } from './assets'
 
 /** The ids from `anchor` to `target` in list order, both included; just `target` when the anchor is gone. */
 export function rangeBetween(ids: readonly string[], anchor: string | null, target: string): string[] {
@@ -28,7 +28,8 @@ export function dragIds(ids: readonly string[], selected: ReadonlySet<string>, i
   return selected.has(id) ? ids.filter((x) => selected.has(x)) : [id]
 }
 
-export const withoutAsset = (list: Asset[] | undefined, id: string): Asset[] | undefined => list?.filter((a) => a.id !== id)
+/** A cached list of assets, plain or paged, without one of them. */
+export const withoutAsset = <T>(cache: T, id: string): T => withoutAssets(cache, new Set([id]))
 
 /** The file name at the end of a path the core wrote, from any OS. */
 export const baseName = (path: string): string => path.split(/[\\/]/).pop() || path
