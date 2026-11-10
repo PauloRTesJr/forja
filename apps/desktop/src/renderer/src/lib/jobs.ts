@@ -232,14 +232,14 @@ export function sections(jobs: Job[], lead?: string): Sections {
   return { asking, running, next: [...flying, ...queued], finished }
 }
 
-/** The line under the screen's title: "1 running · 28 queued · 1 needs you". */
+/** The line under the screen's title: "1 forging · 28 queued · 1 needs you". */
 export function queueSummary(s: Sections): string {
   const parts = [
-    s.running && '1 running',
+    s.running && '1 forging',
     s.next.length > 0 && `${s.next.length} queued`,
     s.asking.length > 0 && `${s.asking.length} ${s.asking.length === 1 ? 'needs' : 'need'} you`,
   ]
-  return parts.filter(Boolean).join(' · ') || 'Nothing running'
+  return parts.filter(Boolean).join(' · ') || 'Nothing forging'
 }
 
 /** How a row presents its job. The core's status says less: see `leadJob`. */

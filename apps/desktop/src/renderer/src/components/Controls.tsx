@@ -454,7 +454,7 @@ export function Pill({ tone, dot, live, title, children }: { tone?: Tone; dot?: 
 
 const STATUS: Record<string, { label: string; tone?: Tone; live?: boolean }> = {
   queued: { label: 'Queued' },
-  running: { label: 'Running', tone: 'accent', live: true },
+  running: { label: 'Forging', tone: 'accent', live: true },
   waiting: { label: 'Needs you', tone: 'accent', live: true },
   succeeded: { label: 'Done', tone: 'ok' },
   failed: { label: 'Failed', tone: 'bad' },

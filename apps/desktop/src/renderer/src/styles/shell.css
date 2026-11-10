@@ -7,6 +7,7 @@
 
 /* Sidebar */
 .sidebar {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: var(--s-4);
@@ -15,6 +16,23 @@
   background: var(--bg-deep);
   overflow: hidden;
   -webkit-app-region: drag;
+}
+/* The forge's glow, lit while something is being forged. */
+.sidebar::after {
+  content: '';
+  position: absolute;
+  left: -50px;
+  bottom: -70px;
+  width: 280px;
+  height: 190px;
+  background: radial-gradient(closest-side, color-mix(in oklab, var(--accent) 20%, transparent), transparent);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity var(--dur-3) var(--ease-out);
+}
+.sidebar[data-forging]::after {
+  opacity: 1;
+  animation: glow 3.2s var(--ease-in-out) infinite;
 }
 /* macOS draws the window buttons over the sidebar's top. */
 .app[data-platform='darwin'] .sidebar {
@@ -29,12 +47,12 @@
   color: var(--accent);
 }
 .brand-name {
-  font: 600 15px/20px var(--font);
-  letter-spacing: -0.01em;
+  font: 400 19px/24px var(--display);
+  letter-spacing: 0.06em;
   color: var(--text);
 }
 .nav {
-  --row: 32px;
+  --row: 34px;
   --gap: 2px;
   position: relative;
   display: flex;
@@ -57,7 +75,7 @@
   position: relative;
   display: flex;
   align-items: center;
-  gap: var(--s-2);
+  gap: 10px;
   height: var(--row);
   padding: 0 var(--s-2);
   border: 0;
@@ -75,6 +93,7 @@
   background: var(--surface);
 }
 .nav button[aria-current='page'] {
+  --icon-hot: var(--accent);
   color: var(--text);
 }
 .nav button > span:first-of-type {
@@ -83,24 +102,36 @@
 .nav button > svg {
   flex: none;
 }
+/* The ember bar on the current row's left edge. */
+.nav-indicator::before {
+  content: '';
+  position: absolute;
+  top: 8px;
+  bottom: 8px;
+  left: 0;
+  width: 2px;
+  background: var(--accent);
+}
 /* The queue's count: neutral while jobs only wait, amber while something runs. */
 .badge {
   min-width: 18px;
   height: 18px;
   padding: 0 5px;
-  border-radius: 9px;
+  border-radius: 2px;
   background: var(--surface-3);
   color: var(--text-2);
-  font: 600 11px/18px var(--font);
+  font: 600 11px/18px var(--mono);
   font-variant-numeric: tabular-nums;
   text-align: center;
   animation: fade-in var(--dur-2) var(--ease-out) both;
 }
 .badge.live {
-  background: var(--accent);
-  color: var(--on-accent);
+  background: var(--accent-soft);
+  color: var(--accent-hi);
 }
 .sidebar-foot {
+  position: relative;
+  z-index: 1;
   margin-top: auto;
   -webkit-app-region: no-drag;
 }
@@ -112,6 +143,16 @@
   padding: 0 var(--s-2);
   color: var(--text-2);
   font: var(--t-caption);
+}
+.conn > svg {
+  flex: none;
+}
+.conn[data-lit] {
+  --icon-hot: var(--accent);
+}
+.conn[data-lit] > svg {
+  transform-origin: 50% 90%;
+  animation: flicker 1.4s var(--ease-in-out) infinite;
 }
 .conn > span:last-child {
   min-width: 0;
@@ -178,8 +219,27 @@
   margin-top: 0;
 }
 .section-head h2 {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
   font: var(--t-section);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
   color: var(--text-2);
+}
+.section-head h2::before {
+  content: '';
+  flex: none;
+  width: 5px;
+  height: 5px;
+  background: var(--brass);
+  transform: rotate(45deg);
+}
+.section-head h2::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--border-soft);
 }
 /* The one line under a section's heading that says what the section is for. */
 .section-note {
@@ -206,4 +266,11 @@
 .back:hover {
   background: var(--surface-2);
   color: var(--text);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sidebar[data-forging]::after,
+  .conn[data-lit] > svg {
+    animation: none;
+  }
 }

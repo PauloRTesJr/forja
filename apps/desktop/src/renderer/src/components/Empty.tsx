@@ -5,7 +5,7 @@ import type { IconType } from './icons'
 export function Empty({ icon: Icon, title, children, action }: { icon: IconType; title: string; children?: ReactNode; action?: ReactNode }) {
   return (
     <div className="empty">
-      <Icon size={20} />
+      <Icon size={28} />
       <strong>{title}</strong>
       {children && <p>{children}</p>}
       {action}

@@ -210,27 +210,45 @@ export function AssetDetail({ id }: { id: string }) {
         />
       )}
       <div className="asset-body">
-        <ViewerView
-          url={a ? artifactURL(a.glb) : undefined}
-          name={a?.name}
-          rigged={!!rig}
-          placeholder={a?.thumbnail ? artifactURL(a.thumbnail, 'image/webp') : undefined}
-          onStats={setStats}
-        />
+        <div className="viewer-frame brackets">
+          <ViewerView
+            url={a ? artifactURL(a.glb) : undefined}
+            name={a?.name}
+            rigged={!!rig}
+            placeholder={a?.thumbnail ? artifactURL(a.thumbnail, 'image/webp') : undefined}
+            onStats={setStats}
+          />
+        </div>
         <aside className="inspector" aria-label="Properties">
+          <div className="stat-bar" aria-hidden />
+          {/* The name and preset are on the page already (the heading, Details); this is the stat block's title. */}
+          <div className="stat-head" aria-hidden>
+            {a ? (
+              <>
+                <p className="stat-name" title={a.name}>
+                  {a.name}
+                </p>
+                <p className="stat-sub">{[presetName(a.preset, presets.data), rig && 'Rigged'].filter(Boolean).join(' · ')}</p>
+              </>
+            ) : (
+              <span className="skeleton stat-head-wait" />
+            )}
+          </div>
+          <div className="stat-taper" aria-hidden />
           <section>
-            <SectionHead>Mesh</SectionHead>
-            <dl className="kv asset-kv">
-              <Row label="Triangles" value={tris === undefined ? undefined : count(tris)} wait={!a} />
-              <Row label="Vertices" value={a ? fmt(statNumber(a, 'vertices')) : undefined} wait={!a} />
-              <Row label="Materials" value={a ? fmt(statNumber(a, 'materials'), String) : undefined} wait={!a} />
-              <Row label="LODs" value={lodLine} wait={!a} />
-              <Row label="Size" value={stats ? stats.size.map((v) => v.toFixed(2)).join(' × ') + ' m' : undefined} wait />
-              <Row label="Textures" value={texLine} title={stats?.maps.map((m) => `${m.name} ${m.size}`).join('\n')} wait />
+            <h2 className="sr-only">Mesh</h2>
+            <dl className="stat-grid">
+              <Stat label="Triangles" value={tris === undefined ? undefined : count(tris)} wait={!a} />
+              <Stat label="Vertices" value={a ? fmt(statNumber(a, 'vertices')) : undefined} wait={!a} />
+              <Stat label="Materials" value={a ? fmt(statNumber(a, 'materials'), String) : undefined} wait={!a} />
+              <Stat label="LODs" value={lodLine} wait={!a} />
+              <Stat label="Size" value={stats ? stats.size.map((v) => v.toFixed(2)).join(' × ') + ' m' : undefined} wait />
+              <Stat label="Textures" value={texLine} title={stats?.maps.map((m) => `${m.name} ${m.size}`).join('\n')} wait />
             </dl>
           </section>
           {rig && (
             <section>
+              <div className="stat-taper" aria-hidden />
               <SectionHead>Rig</SectionHead>
               <dl className="kv asset-kv">
                 <Row label="Bones" value={count(rig.bones)} />
@@ -239,6 +257,7 @@ export function AssetDetail({ id }: { id: string }) {
             </section>
           )}
           <section>
+            <div className="stat-taper" aria-hidden />
             <SectionHead>Details</SectionHead>
             <dl className="kv asset-kv">
               <Row label="Preset" value={a ? presetName(a.preset, presets.data) : undefined} wait={!a} />
@@ -273,6 +292,7 @@ export function AssetDetail({ id }: { id: string }) {
           </section>
           {job.data && job.data.stages.length > 0 && (
             <section>
+              <div className="stat-taper" aria-hidden />
               <button className="disclosure" aria-expanded={stagesOpen} onClick={() => setStagesOpen(!stagesOpen)}>
                 <ChevronIcon size={14} />
                 {job.data.stages.length} stages · {seconds(job.data.stages.reduce((n, s) => n + (s.seconds ?? 0), 0))}
@@ -280,6 +300,7 @@ export function AssetDetail({ id }: { id: string }) {
               {stagesOpen && <StageList stages={job.data.stages} />}
             </section>
           )}
+          <div className="stat-bar" aria-hidden />
         </aside>
       </div>
     </div>
@@ -305,6 +326,16 @@ function Row({ label, value, wait, title }: { label: string; value?: ReactNode; 
       <dd className="num" title={title}>
         {value ?? (wait ? <span className="skeleton asset-value-wait" /> : '–')}
       </dd>
+    </div>
+  )
+}
+
+/** One cell of the stat block: the label over the value; `wait` shows a skeleton of the final size until there is a value. */
+function Stat({ label, value, wait, title }: { label: string; value?: ReactNode; wait?: boolean; title?: string }) {
+  return (
+    <div className="stat">
+      <dt>{label}</dt>
+      <dd title={title}>{value ?? (wait ? <span className="skeleton asset-value-wait" /> : '–')}</dd>
     </div>
   )
 }

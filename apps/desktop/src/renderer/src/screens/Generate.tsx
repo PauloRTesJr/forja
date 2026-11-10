@@ -2,7 +2,7 @@ import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tansta
 import { useEffect, useEffectEvent, useRef, useState, type DragEvent } from 'react'
 import { Composer, EstimateNote, optionalOverrides } from '../components/Composer'
 import { ErrorBlock } from '../components/Controls'
-import { AlertIcon } from '../components/icons'
+import { AlertIcon, GenerateIcon } from '../components/icons'
 import { ImageTarget } from '../components/ImageTarget'
 import { ActivityPanel } from '../components/Prepare'
 import { ScreenHead } from '../components/ScreenHead'
@@ -338,6 +338,7 @@ export function Generate() {
             <div className="generate-foot">
               <EstimateNote estimate={blocked || estimate.isError ? null : estimate.data} />
               <button className="btn primary lg" onClick={generate} disabled={!canGenerate || busy} aria-describedby={why ? 'generate-why' : undefined}>
+                <GenerateIcon />
                 {busy ? 'Queuing…' : generateLabel(draft)}
               </button>
               {why && (

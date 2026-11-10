@@ -51,6 +51,26 @@
 .job-stopped {
   color: var(--bad-hi);
 }
+/* The sparks of a finished job start at the thumbnail's centre; the thumb itself clips, so they
+   live beside it, inside the row (the row's content-visibility clips paint to it). */
+.job-thumb-wrap {
+  position: relative;
+}
+.sparks {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+}
+.sparks i {
+  position: absolute;
+  width: 4px;
+  height: 4px;
+  background: var(--accent-hi);
+  animation: spark var(--dur-3) var(--ease-out) both;
+}
 .job-thumb img {
   opacity: 0;
   transition: opacity var(--dur-2) var(--ease-out);
@@ -146,7 +166,8 @@
   }
 }
 
-/* Stage track: a segment per stage, grouped by phase; each fill scales on the compositor. */
+/* Stage track: a segment per stage, grouped by phase; each fill scales on the compositor.
+   Cold iron waits (the well), ember is being worked (the heat fill), steel is finished. */
 .track {
   display: flex;
   gap: var(--s-3);
@@ -167,7 +188,7 @@
 }
 .track-head {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   justify-content: space-between;
   gap: var(--s-2);
   color: var(--text-3);
@@ -177,14 +198,28 @@
   overflow: hidden;
 }
 .track-name {
+  display: flex;
+  align-items: center;
+  gap: var(--s-1);
+  min-width: 0;
+}
+.track-name > svg {
+  flex: none;
+}
+.track-name > span {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.track-phase.done .track-name,
-.track-phase.running .track-name {
+.track-tally {
+  font: 400 11px/16px var(--mono);
+}
+.track-phase.done .track-name {
   color: var(--text-2);
 }
-.track-phase.running .track-tally {
+.track-phase.running {
+  --icon-hot: var(--accent-hi);
+}
+.track-phase.running :is(.track-name, .track-tally) {
   color: var(--accent-hi);
 }
 .track-phase.failed .track-tally {
@@ -192,34 +227,68 @@
 }
 .track-segs {
   display: flex;
-  gap: 2px;
+  gap: 3px;
 }
 .seg {
   position: relative;
   flex: 1;
-  height: 4px;
-  border-radius: 2px;
+  height: 6px;
+  border-radius: 0;
   background: var(--surface-3);
+  transform: skewX(-24deg);
   overflow: hidden;
+}
+.track.compact .seg {
+  height: 4px;
 }
 .seg > i {
   position: absolute;
   inset: 0;
-  border-radius: inherit;
-  background: var(--accent);
+  background: var(--heat);
   transform: scaleX(var(--p, 0));
   transform-origin: left;
   transition: transform var(--dur-3) var(--ease-out);
+}
+.seg.running > i {
+  overflow: hidden;
+  animation: heat 1.6s var(--ease-in-out) infinite;
+}
+/* A light crosses the working ember. */
+.seg.running > i::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, color-mix(in oklab, color-mix(in oklab, var(--accent-hi) 35%, white) 75%, transparent), transparent);
+  animation: sweep 1.8s var(--ease-in-out) infinite;
+}
+/* Quench: the ember fades and the steel under it shows. */
+.seg.succeeded {
+  background: var(--steel);
+}
+.seg.succeeded > i {
+  opacity: 0;
+  transform: none;
+  transition: opacity var(--dur-3) var(--ease-out);
 }
 .seg.failed > i {
   background: var(--bad);
   transform: none;
 }
 /* A track that is not moving stays readable without calling for attention: a finished job's,
-   and one that waits its turn after a first step. */
-.job:is(.succeeded, .failed, .cancelled) .seg.succeeded > i,
+   and one that waits its turn after a first step. Nothing in it is hot or moves. */
+.job:is(.succeeded, .failed, .cancelled) .seg.succeeded,
+.job:is([data-state='queued'], [data-state='cancelling']) .seg.succeeded {
+  background: var(--text-3);
+}
 .job:is([data-state='queued'], [data-state='cancelling']) .seg > i {
   background: var(--text-3);
+}
+.job:is(.succeeded, .failed, .cancelled, [data-state='queued'], [data-state='cancelling']) .seg.running > i,
+.job:is(.succeeded, .failed, .cancelled, [data-state='queued'], [data-state='cancelling']) .seg.running > i::after {
+  animation: none;
+}
+.job:is(.succeeded, .failed, .cancelled, [data-state='queued'], [data-state='cancelling']) .seg.running > i::after {
+  display: none;
 }
 
 /* The full stage list, expanded in place. */
@@ -235,11 +304,11 @@
   flex: none;
   width: 6px;
   height: 6px;
-  border-radius: 50%;
   background: var(--surface-3);
+  transform: rotate(45deg);
 }
 .stage-list .succeeded .stage-dot {
-  background: var(--ok);
+  background: var(--steel);
 }
 .stage-list .running .stage-dot {
   background: var(--accent);
@@ -275,7 +344,12 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .seg.running > i,
+  .seg.running > i::after,
   .stage-list .running .stage-dot {
     animation: none;
+  }
+  .seg.running > i::after {
+    display: none;
   }
 }

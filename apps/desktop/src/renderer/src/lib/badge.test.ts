@@ -15,7 +15,7 @@ describe('queueBadge', () => {
       job('w', 'waiting', { sheet: { found: 3 } as unknown as Job['sheet'] }),
       job('done', 'succeeded'),
     ]
-    expect(queueBadge(jobs)).toEqual({ count: 4, label: '1 running, 2 queued, 1 needs you' })
+    expect(queueBadge(jobs)).toEqual({ count: 4, label: '1 forging, 2 queued, 1 needs you' })
   })
   it('is empty without jobs', () => {
     expect(queueBadge(undefined).count).toBe(0)

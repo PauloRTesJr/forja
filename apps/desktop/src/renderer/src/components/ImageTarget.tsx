@@ -49,7 +49,7 @@ export function ImageTarget({
   const empty = n === 0 && reading === 0
   const only = n === 1 && reading === 0 && !images[0]!.folder ? images[0] : undefined
   return (
-    <section className={`target ${empty ? 'empty' : ''} ${blocked ? 'blocked' : ''}`} aria-label="Images to generate from" aria-busy={reading > 0}>
+    <section className={`target brackets ${empty ? 'empty' : ''} ${blocked ? 'blocked' : ''}`} aria-label="Images to generate from" aria-busy={reading > 0}>
       {empty ? (
         <div className="target-empty">
           <UploadIcon size={20} />
