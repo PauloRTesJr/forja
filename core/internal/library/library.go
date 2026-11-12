@@ -12,6 +12,8 @@ import (
 	"time"
 
 	_ "modernc.org/sqlite"
+
+	"forja/internal/materials"
 )
 
 var ErrNotFound = errors.New("not found")
@@ -195,6 +197,9 @@ type Asset struct {
 	Project    string         `json:"project,omitempty"`
 	ExportPath string         `json:"export_path,omitempty"`
 	CreatedAt  time.Time      `json:"created_at"`
+	// Materials are the roughness and metallic a person set per material (forja assets
+	// materials); the GLB's map carries them. Empty until one is set.
+	Materials []materials.Choice `json:"-"`
 }
 
 type DB struct {
@@ -306,6 +311,7 @@ var added = []struct{ table, column, ddl string }{
 	{"jobs", "hidden", "INTEGER NOT NULL DEFAULT 0"},
 	{"jobs", "sample", "INTEGER NOT NULL DEFAULT 0"},
 	{"jobs", "resumes", "INTEGER NOT NULL DEFAULT 0"},
+	{"assets", "materials", "TEXT NOT NULL DEFAULT '[]'"},
 }
 
 func addColumns(db *sql.DB) error {
@@ -582,20 +588,39 @@ func (d *DB) SaveAsset(ctx context.Context, a *Asset) error {
 	return err
 }
 
-const assetColumns = `id, job_id, name, preset, glb, input, thumbnail, stats, project, export_path, created_at`
+// SetAssetGLB points an asset at another GLB, with the stats read from it and the roughness
+// and metallic a person set per material, and returns the asset. It changes only those
+// columns: a rename or a thumbnail saved at the same moment is not undone. The old GLB stays
+// in the store until the next sweep.
+func (d *DB) SetAssetGLB(ctx context.Context, id, glb string, stats map[string]any, choices []materials.Choice) (*Asset, error) {
+	st, _ := json.Marshal(stats)
+	mats, _ := json.Marshal(choices)
+	res, err := d.sql.ExecContext(ctx, `UPDATE assets SET glb = ?, stats = ?, materials = ? WHERE id = ?`,
+		glb, string(st), string(mats), id)
+	if err != nil {
+		return nil, err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return nil, ErrNotFound
+	}
+	return d.Asset(ctx, id)
+}
+
+const assetColumns = `id, job_id, name, preset, glb, input, thumbnail, stats, project, export_path, created_at, materials`
 
 func scanAsset(row interface{ Scan(...any) error }) (*Asset, error) {
 	var a Asset
-	var stats string
+	var stats, mats string
 	var created int64
 	if err := row.Scan(&a.ID, &a.JobID, &a.Name, &a.Preset, &a.GLB, &a.Input, &a.Thumbnail, &stats, &a.Project,
-		&a.ExportPath, &created); err != nil {
+		&a.ExportPath, &created, &mats); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
 		return nil, err
 	}
 	_ = json.Unmarshal([]byte(stats), &a.Stats)
+	_ = json.Unmarshal([]byte(mats), &a.Materials)
 	a.CreatedAt = time.UnixMilli(created)
 	return &a, nil
 }

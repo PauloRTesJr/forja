@@ -157,7 +157,7 @@ func (a *app) assetsCmd() *cobra.Command {
 	}, "GET /v1/assets/{id}", "GET /v1/artifacts/{ref}")
 	get.Flags().StringVarP(&out, "output", "o", "", "a .glb file, or a folder to save into")
 	cmd.AddCommand(get)
-	cmd.AddCommand(a.exportCmd(), a.formatsCmd(), a.blenderCmd(), a.rmCmd())
+	cmd.AddCommand(a.exportCmd(), a.formatsCmd(), a.blenderCmd(), a.rmCmd(), a.materialsCmd())
 	return cmd
 }
 

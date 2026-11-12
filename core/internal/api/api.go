@@ -56,6 +56,9 @@ type Server struct {
 
 	reach healthBook
 
+	// materialsMu serializes edits of an asset's materials.
+	materialsMu sync.Mutex
+
 	benchOnce sync.Once
 	bench     *bench.Bench
 }
@@ -112,6 +115,8 @@ func (s *Server) routes() []route {
 		{"GET /v1/assets/{id}", s.assetGet},
 		{"PATCH /v1/assets/{id}", s.assetRename},
 		{"DELETE /v1/assets/{id}", s.assetDelete},
+		{"GET /v1/assets/{id}/materials", s.assetMaterialsGet},
+		{"PUT /v1/assets/{id}/materials", s.assetMaterialsSet},
 		{"PUT /v1/assets/{id}/thumbnail", s.assetThumbnail},
 		{"POST /v1/assets/{id}/blender", s.assetBlender},
 		{"POST /v1/assets/{id}/drag", s.assetDrag},
