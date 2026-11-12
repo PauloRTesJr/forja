@@ -289,7 +289,8 @@ func TestMatchReadsTheSideViewsAJobHas(t *testing.T) {
 	if got := stageIDs(j); got != plain {
 		t.Fatalf("without views the stages are %s", got)
 	}
-	if m := fp.spec("match"); strings.Join(m.Inputs, ",") != "stage:paint,stage:frame" || len(m.Views) != 0 {
+	// The cut-out comes from the batch before (a model made it), so it arrives as an artifact hash.
+	if m := fp.spec("match"); len(m.Inputs) != 3 || strings.Join(m.Inputs[:2], ",") != "stage:paint,stage:frame" || !strings.HasPrefix(m.Inputs[2], "blake3:") || len(m.Views) != 0 {
 		t.Fatalf("without views match got %v %v", m.Inputs, m.Views)
 	}
 
@@ -299,8 +300,9 @@ func TestMatchReadsTheSideViewsAJobHas(t *testing.T) {
 		t.Fatalf("with views the stages are %s", got)
 	}
 	m := fp.spec("match")
-	if strings.Join(m.Inputs, ",") != "stage:paint,stage:frame,stage:frame-left,stage:frame-back,stage:frame-right" ||
-		strings.Join(m.Views, ",") != ",front,left,back,right" {
+	// The cut-out stays untagged, after the framed front and before the side views.
+	if strings.Join(m.Inputs, ",") != "stage:paint,stage:frame,stage:bg,stage:frame-left,stage:frame-back,stage:frame-right" ||
+		strings.Join(m.Views, ",") != ",front,,left,back,right" {
 		t.Fatalf("with views match got %v %v", m.Inputs, m.Views)
 	}
 	if p := fp.spec("paint"); len(p.Views) != 0 || len(p.Inputs) != 2 {

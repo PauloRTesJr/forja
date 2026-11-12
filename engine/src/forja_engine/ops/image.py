@@ -3,6 +3,7 @@ from __future__ import annotations
 import numpy as np
 from numpy.typing import NDArray
 from PIL import Image, ImageOps
+from scipy import ndimage
 
 MAX_SIDE = 4096
 
@@ -28,7 +29,39 @@ def alpha_bbox(img: Image.Image, threshold: int = 16) -> tuple[int, int, int, in
     return int(np.min(xs)), int(np.min(ys)), int(np.max(xs)) + 1, int(np.max(ys)) + 1
 
 
-def frame(img: Image.Image, size: int, margin: float = 0.08) -> Image.Image:
+FRAME_MARGIN = 0.08
+_SPECK = 0.0005  # of the largest part's area
+
+
+def drop_specks(img: Image.Image, threshold: int = 16) -> Image.Image:
+    """Clear the alpha of parts of the subject far smaller than its largest part.
+
+    The bounding box of every visible pixel is what framing crops to, so one stray fleck of
+    matte far from the subject would shrink the subject in the frame. Parts touching only at a
+    corner count as one; a subject made of several real parts keeps all of them.
+    """
+    alpha = np.asarray(img.getchannel("A"))
+    labels, count = ndimage.label(alpha > threshold, structure=np.ones((3, 3)))
+    if count < 2:
+        return img
+    area = np.bincount(labels.ravel())
+    area[0] = 0
+    speck = area < _SPECK * int(np.max(area))
+    speck[0] = False
+    if not speck.any():
+        return img
+    out = img.copy()
+    out.putalpha(Image.fromarray(np.where(speck[labels], 0, alpha).astype(np.uint8), "L"))
+    return out
+
+
+def natural_side(img: Image.Image, margin: float = FRAME_MARGIN) -> int:
+    """Side of the square `frame` crops before it resizes: the most it can give without upscaling."""
+    x0, y0, x1, y1 = alpha_bbox(drop_specks(img))
+    return int(max(x1 - x0, y1 - y0) * (1 + 2 * margin))
+
+
+def frame(img: Image.Image, size: int, margin: float = FRAME_MARGIN) -> Image.Image:
     """Crop to the subject, pad to a centered square with a margin, resize to `size`."""
     if not (np.asarray(img.getchannel("A")) > 16).any():  # the threshold alpha_bbox crops by
         # A blank or one-colour picture: the stages after this one would model nothing.
@@ -36,6 +69,7 @@ def frame(img: Image.Image, size: int, margin: float = 0.08) -> Image.Image:
             "No subject was found in the image: nothing is left once its background is removed. "
             "Use a picture of one subject that stands out from its background."
         )
+    img = drop_specks(img)
     x0, y0, x1, y1 = alpha_bbox(img)
     subject = img.crop((x0, y0, x1, y1))
     side = int(max(subject.size) * (1 + 2 * margin))
