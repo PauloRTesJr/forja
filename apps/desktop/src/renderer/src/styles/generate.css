@@ -472,6 +472,30 @@
   font: var(--t-caption);
 }
 
+/* Side views the chosen model will not read: a calm line under the models, not a warning. It
+   rises in like new content and fades out when a model that reads the views takes its place. */
+.views-notice {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  color: var(--text-2);
+  font: var(--t-caption);
+}
+.views-notice p {
+  margin: 0;
+}
+.views-notice.leaving {
+  pointer-events: none;
+  animation: views-notice-leave var(--dur-2) var(--ease-in-out) both;
+}
+@keyframes views-notice-leave {
+  to {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+
 /* A row of settings: hairlines between, none after the last. */
 .opt-list {
   display: flex;

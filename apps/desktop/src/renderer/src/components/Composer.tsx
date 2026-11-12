@@ -9,6 +9,7 @@ import { ErrorBlock, Hint, Pill, Switch } from './Controls'
 import { FinishPhaseIcon, PaintPhaseIcon, PreparePhaseIcon, RigPhaseIcon, ShapePhaseIcon } from './icons'
 import { SectionHead } from './ScreenHead'
 import { StageSetup } from './StageSetup'
+import { ViewsNotice } from './ViewsNotice'
 
 interface Config {
   models?: { stages?: Record<string, string>; stubs?: boolean }
@@ -229,6 +230,7 @@ export function Composer({
               )
             })}
           </div>
+          <ViewsNotice plan={current.plan} onOpenModels={() => transition(() => navigate({ screen: 'models' }))} />
           <p className="composer-note">
             A model chosen here is used for every job.{' '}
             <button className="text-btn" onClick={() => transition(() => navigate({ screen: 'models' }))}>

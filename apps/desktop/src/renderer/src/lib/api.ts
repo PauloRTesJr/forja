@@ -358,6 +358,23 @@ export interface Pick {
   views?: View[]
   /** Views it cannot run without that the job lacks. */
   needs_views?: View[]
+  /** The job's views this step's model does not read, so they cannot change its result. */
+  unread_views?: View[]
+  /** The best model for this step that reads more of them and could be used instead. */
+  read_by?: ReadBy
+}
+
+/** A model that would read more of a job's views than the one picked, and is not ready yet. */
+export interface ReadBy {
+  model: string
+  model_name?: string
+  /** The provider it can be installed on, and how people call it. */
+  install_on: string
+  provider_label?: string
+  /** On the provider already, but it cannot run there yet; otherwise it has to be installed. */
+  installed?: boolean
+  /** The job's views it reads. */
+  reads: View[]
 }
 
 export interface Preset {

@@ -43,6 +43,25 @@ type Pick struct {
 	// are views it cannot run without that the job lacks.
 	Views      []string `json:"views,omitempty"`
 	NeedsViews []string `json:"needs_views,omitempty"`
+	// UnreadViews are the job's views this stage's model does not read, so they cannot change
+	// its result. Only model stages have them (a built-in names its own views), and only for a
+	// job with views. ReadBy is the best model for the stage that reads more of them, when one
+	// could run here: the pick itself never changes.
+	UnreadViews []string `json:"unread_views,omitempty"`
+	ReadBy      *ReadBy  `json:"read_by,omitempty"`
+}
+
+// ReadBy is a model that would read more of a job's views than the one picked. It is not ready
+// now: Installed says it is on the provider but cannot run there yet, otherwise it still has to
+// be installed on InstallOn (the provider's id; ProviderLabel names it for people).
+type ReadBy struct {
+	Model         string `json:"model"`
+	ModelName     string `json:"model_name,omitempty"`
+	InstallOn     string `json:"install_on"`
+	ProviderLabel string `json:"provider_label,omitempty"`
+	Installed     bool   `json:"installed,omitempty"`
+	// Reads are the job's views it reads.
+	Reads []string `json:"reads"`
 }
 
 // MissingError is a job that cannot run until models are installed for some stage types, or
@@ -197,6 +216,11 @@ func (r *Runner) resolve(ctx context.Context, cfg *config.Loaded, preset *preset
 		if err != nil {
 			return nil, nil, err
 		}
+		// Only a stage that reads the prepared reference image is handed the other views: the
+		// stages that prepare it get a copy per view, and later ones work on what was made.
+		if !preset.TakesViews(s.ID) {
+			pick.UnreadViews, pick.ReadBy = nil, nil
+		}
 		picks = append(picks, pick)
 	}
 
@@ -282,6 +306,8 @@ func (r *Runner) pick(ctx context.Context, cfg *config.Loaded, s presets.Stage, 
 			pick.Provider, pick.ProviderLabel = want, r.label(cfg, want)
 		case !ok:
 			pick.Missing = true
+		default:
+			r.suggestReader(ctx, cfg, []string{want}, &pick, views)
 		}
 		return pick, nil, nil
 	}
@@ -322,6 +348,7 @@ func (r *Runner) pick(ctx context.Context, cfg *config.Loaded, s presets.Stage, 
 	}
 	switch {
 	case len(opts) > 0:
+		r.suggestReader(ctx, cfg, ids, &opts[0], views)
 		return opts[0], opts[1:], nil
 	case len(silent) > 0 && len(silent) == len(ids):
 		return base, nil, firstErr
@@ -357,6 +384,7 @@ func (r *Runner) on(ctx context.Context, cfg *config.Loaded, base Pick, id strin
 		}
 		r.describe(cfg, &pick, &m)
 		pick.NeedsViews = m.Lacks(views)
+		pick.UnreadViews = unread(views, m.Views)
 		return pick, m.Ready(), true, nil
 	}
 	// Not every provider runs every built-in (a Blender stage needs Blender there).
@@ -367,10 +395,61 @@ func (r *Runner) on(ctx context.Context, cfg *config.Loaded, base Pick, id strin
 	if m := best(e.Models, base.Use, cfg.Models.Stubs, views); m != nil {
 		pick.Model = m.ID
 		r.describe(cfg, &pick, m)
+		pick.UnreadViews = unread(views, m.Views)
 		return pick, true, false, nil
 	}
 	pick.Problem = e.Unavailable[base.Use]
 	return pick, false, false, nil
+}
+
+// unread lists the views the model does not read, in the order they are given.
+func unread(views, reads []string) []string {
+	var out []string
+	for _, v := range views {
+		if !slices.Contains(reads, v) {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
+// suggestReader sets pick.ReadBy to the best model that reads more of the job's views than the
+// picked one, among the models the providers in ids list for the stage type, ready or not. A
+// ready model is not offered: where policy allows it, it would have been picked. Paid providers
+// are left out (nothing there is installed), and so are models that cannot run on their provider
+// (too big, unsupported) or need a view the job lacks. Ties go by rank, then id; stubs only when
+// allowed, as in best.
+func (r *Runner) suggestReader(ctx context.Context, cfg *config.Loaded, ids []string, pick *Pick, views []string) {
+	if len(pick.UnreadViews) == 0 {
+		return
+	}
+	have := len(views) - len(pick.UnreadViews)
+	var top *engineapi.Model
+	for _, id := range ids {
+		if p, ok := r.providers.Get(id); !ok || p.Paid() {
+			continue
+		}
+		e, err := r.catalog.Get(ctx, id)
+		if err != nil {
+			continue
+		}
+		for i := range e.Models {
+			m := &e.Models[i]
+			if !m.Does(pick.Use) || m.Ready() || (m.Stub && !cfg.Models.Stubs) || len(m.Lacks(views)) > 0 ||
+				m.Fit == "too-big" || m.Fit == "unsupported" || len(m.Reads(views)) <= have {
+				continue
+			}
+			if top != nil {
+				mine, theirs := len(m.Reads(views)), len(top.Reads(views))
+				if mine < theirs || (mine == theirs && (m.Rank < top.Rank || (m.Rank == top.Rank && m.ID >= top.ID))) {
+					continue
+				}
+			}
+			top = m
+			pick.ReadBy = &ReadBy{Model: m.ID, ModelName: m.Name, InstallOn: id, ProviderLabel: r.label(cfg, id),
+				Installed: m.Status == "ready" || m.Status == "loaded", Reads: m.Reads(views)}
+		}
+	}
 }
 
 // describe copies what the job needs to know of the model into its pick. A price table entry
