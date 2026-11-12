@@ -7,14 +7,13 @@ import logging
 import shutil
 import subprocess
 
-import numpy as np
 import trimesh
 from PIL import Image
-from scipy.spatial import cKDTree
 
 from forja_engine import blender
 from forja_engine.ops import bake, blender_mesh
 from forja_engine.ops import image as img_ops
+from forja_engine.ops import lods as lods_ops
 from forja_engine.ops import match as match_ops
 from forja_engine.ops import mesh as mesh_ops
 from forja_engine.ops import skin as skin_ops
@@ -302,8 +301,9 @@ class Lods(Adapter):
     """
 
     # 3 came twice, on two branches: keeping a rigged mesh's skin, and MikkTSpace tangents with
-    # LOD0 keeping the normals its maps were baked against. 4 is both.
-    version = "4"
+    # LOD0 keeping the normals its maps were baked against. 4 is both. 5 simplifies the geometry
+    # welded by position and rebuilds UVs per island, so levels no longer crack along UV seams.
+    version = "5"
 
     def capabilities(self) -> Capabilities:
         return Capabilities(tasks=(StageType.MESH_LODS,), devices=CPU)
@@ -321,23 +321,15 @@ class Lods(Adapter):
         scene = trimesh.Scene()
         scene.add_geometry(lod0, node_name=f"{name}_LOD0", geom_name=f"{name}_LOD0")
         ratios = ctx.params.get("ratios", [0.5, 0.25])
-        centroids = cKDTree(lod0.triangles_center)
+        source = lods_ops.Source(lod0)
         for level, ratio in enumerate(ratios, start=1):
             ctx.check_cancel()
-            lod = mesh_ops.decimate(lod0, max(4, int(len(lod0.faces) * float(ratio))))
-            _, tri_ids = centroids.query(lod.vertices)
-            bary = np.clip(
-                trimesh.triangles.points_to_barycentric(lod0.triangles[tri_ids], lod.vertices), 0, 1
-            )
-            bary /= np.maximum(bary.sum(axis=1, keepdims=True), 1e-9)
-            uv0 = mesh_ops.uvs_of(lod0)[lod0.faces[tri_ids]]
-            uv = np.einsum("ij,ijk->ik", bary, uv0)
-            lod.visual = trimesh.visual.TextureVisuals(uv=uv, material=getattr(lod0.visual, "material", None))
+            lod, tris, bary = source.level(max(4, int(len(lod0.faces) * float(ratio))))
             if normal_mapped:
-                lod.metadata[mesh_ops.TANGENTS] = mesh_ops.vertex_tangents(lod, uv)
+                lod.metadata[mesh_ops.TANGENTS] = mesh_ops.vertex_tangents(lod, mesh_ops.uvs_of(lod))
             if weights is not None and skeleton is not None:
                 lod.metadata[skin_ops.SKIN] = skin_ops.interpolate(
-                    weights, len(skeleton), lod0.faces[tri_ids], bary
+                    weights, len(skeleton), lod0.faces[tris], bary
                 )
             scene.add_geometry(lod, node_name=f"{name}_LOD{level}", geom_name=f"{name}_LOD{level}")
             ctx.progress(level, len(ratios))

@@ -335,3 +335,12 @@ def uv_coverage(parts: list[tuple[NDArray[np.float64], NDArray[np.int64]]], size
         for tri in uv[faces] * size:
             draw.polygon([(float(x), float(y)) for x, y in tri], fill=1)
     return round(float(np.asarray(mask, dtype=bool).mean()), 4)
+
+
+def open_edges(mesh: trimesh.Trimesh) -> int:
+    """Edges only one triangle uses once vertices at the same position count as one: cracks in
+    the surface, which UV seams are not."""
+    welded = trimesh.Trimesh(mesh.vertices, mesh.faces, process=False)
+    welded.merge_vertices(merge_tex=True, merge_norm=True)
+    _, counts = np.unique(welded.edges_sorted, axis=0, return_counts=True)
+    return int(np.count_nonzero(counts == 1))
