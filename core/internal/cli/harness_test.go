@@ -293,6 +293,7 @@ type harness struct {
 	addr     string
 	dir      string
 	store    *store.Store
+	db       *library.DB
 	eng      *fakeEngine
 	reg      *provider.Registry
 	stopped  chan struct{}
@@ -335,7 +336,7 @@ func newHarness(t *testing.T) *harness {
 	sweeper := sweep.New(db, st, runner, log)
 	runner.OnIdle = sweeper.Nudge
 	sweeper.Start()
-	h := &harness{t: t, dir: dir, store: st, eng: eng, reg: reg, stopped: make(chan struct{})}
+	h := &harness{t: t, dir: dir, store: st, db: db, eng: eng, reg: reg, stopped: make(chan struct{})}
 	s := &api.Server{
 		Version: "test", DataDir: filepath.Join(dir, "data"), DB: db, Store: st, Hub: hub, Providers: reg, Catalog: cat,
 		Log: log, Config: cfg, Runner: runner, Sweeper: sweeper, Installs: installs.New(reg, cat, hub, log),

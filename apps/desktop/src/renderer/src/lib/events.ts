@@ -6,6 +6,7 @@ import { withBench } from './bench'
 import { guardFreshness, onConnected, STARTING, type CoreState } from './connection'
 import { isNameSortedList, withAsset } from './assets'
 import { applyProgress, upsertJob } from './jobs'
+import { isEditingHere, materialsKey } from './materials'
 import { withoutAsset } from './selection'
 
 export const keys = {
@@ -109,7 +110,10 @@ export function useCoreEvents(qc: QueryClient): CoreState {
           // A rename or a new thumbnail: the card changes in place, no list is read again.
           const a = ev.data as Asset
           // A new name moves the asset in a list sorted by name; the lists of other sorts stay put.
-          const renamed = qc.getQueryData<Asset>(keys.asset(a.id))?.name !== a.name
+          const before = qc.getQueryData<Asset>(keys.asset(a.id))
+          const renamed = before?.name !== a.name
+          // A new GLB means other materials values, unless this window set them and has the answer.
+          if (before && before.glb !== a.glb && !isEditingHere(a.id)) void qc.invalidateQueries({ queryKey: materialsKey(a.id) })
           qc.setQueryData(keys.asset(a.id), a)
           qc.setQueriesData({ queryKey: ['assets'] }, (cache) => withAsset(cache, a))
           if (renamed) void qc.invalidateQueries({ queryKey: ['assets'], predicate: (q) => isNameSortedList(q.queryKey) })

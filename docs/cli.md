@@ -19,7 +19,7 @@ forja daemon stop     # stop it and its engine
 | `forja setup` | Install what the built-in presets need on this computer, then test them ([install](install.md)) |
 | `forja generate <image-or-folder>...` | One job per image (a folder: the PNG, JPEG and WebP files directly inside it, by name), followed until it ends ([install](install.md#make-your-first-asset)); `--with` and `--skip` turn optional stages such as `rig`, `remesh` and `uv` on and off ([presets](presets.md#optional-stages)); `--estimate` shows each stage's expected time, cost and provider instead ([routing](routing.md#estimates-before-queueing)), `--dry-run` the plan |
 | `forja jobs ls / show / watch / cancel / sheet` | Jobs: list, inspect, follow, cancel, answer a turnaround sheet |
-| `forja assets ls / show / get / export / formats / blender / rm` | The library ([library](library.md)); `ls` and `show` say how an asset is rigged ([rigging](rigging.md#see-the-rig)) |
+| `forja assets ls / show / get / export / formats / blender / materials / rm` | The library ([library](library.md)); `ls` and `show` say how an asset is rigged ([rigging](rigging.md#see-the-rig)); `materials` sets how rough and how metallic each material is ([library](library.md#materials)) |
 | `forja presets ls / show` | Presets and the plan each would run now, and which optional stages cannot be turned on now and why ([presets](presets.md)) |
 | `forja models ls / install / rm / checks / fix / pin / unpin` | Models ([models](models.md)) |
 | `forja installs ls / watch / cancel` | Installs, removals and fixes in progress |

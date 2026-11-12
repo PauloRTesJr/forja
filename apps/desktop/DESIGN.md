@@ -107,6 +107,7 @@ Components are in `components/Controls.tsx` unless another file is named; classe
 | Field | `label.field` (a span, then the input) | Label over input, in dialogs |
 | Search | `label.search` with `SearchIcon` and `.input` | |
 | Switch | `<Switch>` | A boolean that applies at once. Name it with children, `label`, or a `<label htmlFor>`. |
+| Slider | `<Slider value label onChange>` (`.slider`); show the value beside it in `.num` | A value from 0 to 1 that is set by feel and saved a moment after the last move (materials). Not for a number that must be exact: that is a `NumberInput`. |
 | Choices | `<Choices>` (`.choices` / `.choice`; `.two` for two columns) | One of 2 to 5 options that deserve a line of help each |
 | Hint | `<Hint>` | The `?` beside an option whose effect is not obvious |
 | Pill | `<Pill tone dot live>`, `<StatusPill status>` | A state or a short tag. `StatusPill` for job, task and benchmark states, so they read the same everywhere. No tone for neutral tags. |

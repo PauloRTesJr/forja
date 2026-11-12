@@ -4,6 +4,7 @@ import { ConfirmDelete } from '../components/ConfirmDelete'
 import { ErrorBlock, Pill } from '../components/Controls'
 import { Empty } from '../components/Empty'
 import { ExportMenu } from '../components/ExportMenu'
+import { MaterialsSection } from '../components/Materials'
 import { BackIcon, ChevronIcon, DragHandleIcon, FolderIcon, NoResultsIcon, Open3DIcon, RenameIcon } from '../components/icons'
 import { MenuItem, MoreMenu } from '../components/Menu'
 import { StageList } from '../components/StageTrack'
@@ -280,6 +281,12 @@ export function AssetDetail({ id }: { id: string }) {
               />
             </dl>
           </section>
+          {a && (
+            <>
+              <div className="stat-taper" aria-hidden />
+              <MaterialsSection id={a.id} />
+            </>
+          )}
           {a && (
             <>
               <div className="stat-taper" aria-hidden />

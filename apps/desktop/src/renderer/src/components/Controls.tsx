@@ -426,6 +426,49 @@ export function Switch({
   )
 }
 
+/**
+ * A value between `min` and `max` set by dragging, with the arrow keys for fine steps. It reports
+ * every move; the caller decides when to save. Name it with `label` (the readout beside it is
+ * the caller's).
+ */
+export function Slider({
+  value,
+  min = 0,
+  max = 1,
+  step = 0.01,
+  label,
+  valueText,
+  disabled,
+  onChange,
+}: {
+  value: number
+  min?: number
+  max?: number
+  step?: number
+  label: string
+  /** How the value reads aloud, when the number alone is not enough. */
+  valueText?: string
+  disabled?: boolean
+  onChange: (value: number) => void
+}) {
+  const fill = ((value - min) / (max - min)) * 100
+  return (
+    <input
+      type="range"
+      className="slider"
+      min={min}
+      max={max}
+      step={step}
+      value={value}
+      aria-label={label}
+      aria-valuetext={valueText}
+      disabled={disabled}
+      style={{ '--fill': `${fill}%` } as CSSProperties}
+      onChange={(e) => onChange(e.currentTarget.valueAsNumber)}
+    />
+  )
+}
+
 /** The ? beside an option: what it does, on hover or focus. */
 export function Hint({ children }: { children: string }) {
   const tip = useId()

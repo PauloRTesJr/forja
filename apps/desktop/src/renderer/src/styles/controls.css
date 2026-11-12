@@ -329,6 +329,44 @@ select.input:disabled {
   transform: translateX(12px);
 }
 
+/* Slider: a hairline track that fills with the accent up to the value (--fill, set by the
+   control) and a diamond thumb that grows with transform. The fill is a gradient the value
+   moves; nothing transitions but the thumb. */
+.slider {
+  appearance: none;
+  display: block;
+  width: 100%;
+  height: var(--h-sm);
+  margin: 0;
+  padding: 0;
+  background: none;
+  cursor: pointer;
+}
+.slider:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.slider::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 2px;
+  background: linear-gradient(var(--accent), var(--accent)) 0 / var(--fill, 0%) 100% no-repeat, var(--surface-3);
+}
+.slider::-webkit-slider-thumb {
+  appearance: none;
+  width: 11px;
+  height: 11px;
+  margin-top: -3.5px;
+  border: 0;
+  background: var(--text);
+  transform: rotate(45deg);
+  transition: transform var(--dur-1) var(--ease-out);
+}
+.slider:hover:not(:disabled)::-webkit-slider-thumb,
+.slider:active:not(:disabled)::-webkit-slider-thumb {
+  background: var(--accent-hi);
+  transform: rotate(45deg) scale(1.2);
+}
+
 /* Choices: one bordered group of options, hairlines between them, an amber edge on the chosen one. */
 .choices {
   display: flex;

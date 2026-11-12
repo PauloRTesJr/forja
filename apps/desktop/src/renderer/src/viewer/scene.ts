@@ -312,7 +312,8 @@ export class Viewer {
     this.sphere = new THREE.Box3().setFromObject(pivot).getBoundingSphere(new THREE.Sphere())
     if (!keepCamera) this.frameCamera()
     this.applyMode()
-    this.intro = { start: performance.now(), from: 0.94 }
+    // A new model grows in; the same model with other materials replaces the old one in place.
+    if (!keepCamera) this.intro = { start: performance.now(), from: 0.94 }
     this.request()
   }
 
