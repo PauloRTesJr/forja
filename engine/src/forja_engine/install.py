@@ -439,10 +439,19 @@ class Installer:
         # Weights the main repository's code loads from elsewhere (an image encoder, a small
         # upsampler), each pinned like the main one and kept under the same folder.
         for extra in w.get("extra") or []:
-            if "url" in extra:
-                self._file(extra["url"], extra["sha256"], dest / extra["path"])
-            else:
-                self._hub(extra, dest / extra["dir"])
+            try:
+                if "url" in extra:
+                    self._file(extra["url"], extra["sha256"], dest / extra["path"])
+                else:
+                    self._hub(extra, dest / extra["dir"])
+            except InstallCancelled:
+                raise
+            except InstallError as e:
+                # The adapter works without an optional weight and says so when it is missing, so
+                # an unreachable download must not undo an install that is otherwise complete.
+                if not extra.get("optional"):
+                    raise
+                self.log(f"skipping optional weights {extra.get('url') or extra.get('repo')}: {e}")
         return dest
 
     def _hub(self, w: dict[str, Any], dest: Path) -> None:

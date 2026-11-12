@@ -1,3 +1,4 @@
+import dataclasses
 import io
 import json
 import sys
@@ -238,6 +239,62 @@ def test_an_install_record_cut_short_reads_as_not_installed(tmp_path):
     inst._record(env, inst.manifest("triposg"), "cuda")
     assert install.installed_models(env) == {"triposg"}
     assert [p.name for p in env.iterdir() if p.is_file()] == ["forja-installed.json"]
+
+
+def extras_installer(tmp_path, monkeypatch, optional, fetch):
+    """An installer over a model whose only extra weight is one file over HTTPS."""
+    monkeypatch.setattr(install, "_run", lambda cmd, log, **kw: None)
+    monkeypatch.setattr(install, "fetch_verified", fetch)
+    extra = {"url": "https://example.test/up.pth", "sha256": "0" * 64, "path": "up/up.pth"}
+    if optional:
+        extra["optional"] = True
+    weights = {"hub": "huggingface", "repo": "o/m", "revision": "0" * 40, "extra": [extra]}
+    model = dataclasses.replace(Registry.load().models["triposg"], weights=weights)
+    logs: list[str] = []
+    return install.Installer(Registry([model]), tmp_path / "envs", tmp_path / "models", log=logs.append), logs
+
+
+def unreachable(*args, **kwargs):
+    raise install.InstallError("could not download https://example.test/up.pth: offline")
+
+
+def test_an_optional_weight_that_cannot_be_fetched_does_not_fail_the_install(tmp_path, monkeypatch):
+    inst, logs = extras_installer(tmp_path, monkeypatch, True, unreachable)
+    assert inst.weights(inst.manifest("triposg")) == tmp_path / "models" / "triposg"
+    assert any("skipping optional weights https://example.test/up.pth" in line for line in logs)
+    inst, _ = extras_installer(tmp_path, monkeypatch, False, unreachable)
+    with pytest.raises(install.InstallError, match="offline"):
+        inst.weights(inst.manifest("triposg"))
+
+
+def test_an_optional_weight_is_fetched_by_install_and_repair_and_a_cancel_still_stops_it(
+    tmp_path, monkeypatch
+):
+    blob = tmp_path / "blob"
+    blob.write_bytes(b"up")
+    inst, _ = extras_installer(tmp_path, monkeypatch, True, lambda *a, **kw: blob)
+    inst.weights(inst.manifest("triposg"))
+    assert (tmp_path / "models" / "triposg" / "up" / "up.pth").read_bytes() == b"up"
+
+    def cancelled(*args, **kwargs):
+        raise install.InstallCancelled("cancelled")
+
+    inst, _ = extras_installer(tmp_path, monkeypatch, True, cancelled)
+    with pytest.raises(install.InstallCancelled):
+        inst.weights(inst.manifest("triposg"))
+
+
+def test_a_model_installed_before_an_optional_weight_was_added_stays_installed(tmp_path):
+    """Hunyuan3D-2 Paint gained its upscaler after people installed it: it must not turn
+    'not installed' for lacking a file only a repair fetches."""
+    env = tmp_path / "envs" / "hunyuan3d2"
+    python = families.interpreter(env)
+    python.parent.mkdir(parents=True)
+    python.write_bytes(b"")
+    (env / "forja-installed.json").write_text(json.dumps({"models": {"hunyuan3d2-paint": {}}}))
+    paint = Registry.load().bind(tmp_path / "envs", tmp_path / "models").models["hunyuan3d2-paint"]
+    assert any(e.get("optional") for e in paint.weights["extra"])
+    assert paint.installed and not (tmp_path / "models" / "hunyuan3d2-paint").exists()
 
 
 def test_a_command_that_cannot_start_names_the_program():

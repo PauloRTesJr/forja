@@ -79,13 +79,13 @@
           "separate license above 1M monthly active users"
         ]
       },
-      "adapter_version": "2",
+      "adapter_version": "3",
       "vram_gb": 12.5,
       "disk_gb": 23.1,
       "rank": 10,
       "stub": false,
       "manifest": "engine/src/forja_engine/manifests/hunyuan3d2-paint.yaml",
-      "sha256": "21ff9fe4077f6fd937cb177e1f328051bfb4217f2361cb7c2aa869d806655e82"
+      "sha256": "cabb0d391e25358fa48b254797c3ccaeb7e97d37a0194f40bdb446ca5e27dfb2"
     },
     {
       "id": "pixal3d-mv",

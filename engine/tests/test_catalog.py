@@ -71,6 +71,19 @@ def test_the_schema_pins_what_install_downloads():
     assert any("sha256" in p for p in problems(schema("family"), fam))
 
 
+def test_an_extra_weight_may_be_optional_but_stays_pinned():
+    doc = yaml.safe_load((catalog.MANIFESTS / "hunyuan3d2-paint.yaml").read_text(encoding="utf-8"))
+    validator = schema("manifest")
+    (extra,) = doc["weights"]["extra"]
+    assert extra["optional"] is True and problems(validator, doc) == []
+    extra["optional"] = "yes"
+    assert problems(validator, doc)
+    del extra["optional"]  # mandatory is the default
+    assert problems(validator, doc) == []
+    del extra["sha256"]
+    assert problems(validator, doc)  # optional or not, it is pinned
+
+
 def test_the_schema_knows_every_stage_type_and_view():
     """Adding a stage type or a view means adding it to catalog/schema/manifest.schema.json too."""
     props = json.loads((catalog.SCHEMAS / "manifest.schema.json").read_text(encoding="utf-8"))["properties"]
