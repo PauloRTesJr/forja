@@ -537,11 +537,18 @@ func (f *File) replaceImage(images []object, i int, png []byte) error {
 		return fmt.Errorf("the GLB has no bufferView %d", old)
 	}
 	inPlace := hasOld
+	var sharers []int
 	if inPlace {
-		// Only a view nothing else reads, and no other view overlaps, can change size.
+		// Only a view nothing else reads, and no other view overlaps, can change size. An image
+		// read for its occlusion alone may share it: Forja writes one map as both the occlusion
+		// and the metallic-roughness image, and the new map keeps the red channel occlusion reads.
 		for j, other := range images {
 			if bv, ok := get[int](other, "bufferView"); ok && bv == old && j != i {
-				inPlace = false
+				if f.occlusionOnly(j) {
+					sharers = append(sharers, j)
+				} else {
+					inPlace = false
+				}
 			}
 		}
 		for _, a := range accessors {
@@ -563,6 +570,9 @@ func (f *File) replaceImage(images []object, i int, png []byte) error {
 		}
 		if inPlace {
 			delta := f.spliceImage(images, views, i, old, start, length, png)
+			for _, j := range sharers {
+				setImage(images[j], old)
+			}
 			size, _ := get[int](buffers[0], "byteLength")
 			return f.finishViews(views, buffers, size+delta)
 		}
@@ -578,6 +588,61 @@ func (f *File) replaceImage(images []object, i int, png []byte) error {
 	views = append(views, view)
 	setImage(images[i], len(views)-1)
 	return f.finishViews(views, buffers, len(f.bin))
+}
+
+// occlusionOnly says whether image i is read only as materials' occlusion map, whose red
+// channel is all a renderer takes from it. Any other use of a texture of that image, in a
+// material's own slots or in an extension's, makes it false; so does a damaged document.
+func (f *File) occlusionOnly(i int) bool {
+	textures, err := f.list("textures")
+	if err != nil {
+		return false
+	}
+	of := map[float64]bool{}
+	for t, tex := range textures {
+		// A texture that names the image through an extension has another copy to keep in step.
+		if _, ok := tex["extensions"]; ok {
+			return false
+		}
+		if src, ok := get[int](tex, "source"); ok && src == i {
+			of[float64(t)] = true
+		}
+	}
+	if len(of) == 0 {
+		return false // nothing says what reads it, so nothing says the red channel is enough
+	}
+	var mats []map[string]any
+	if raw, ok := f.doc["materials"]; ok && json.Unmarshal(raw, &mats) != nil {
+		return false
+	}
+	var reads func(v any) bool
+	reads = func(v any) bool {
+		switch v := v.(type) {
+		case map[string]any:
+			if idx, ok := v["index"].(float64); ok && of[idx] {
+				return true
+			}
+			for _, child := range v {
+				if reads(child) {
+					return true
+				}
+			}
+		case []any:
+			for _, child := range v {
+				if reads(child) {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	for _, m := range mats {
+		delete(m, "occlusionTexture")
+		if reads(m) {
+			return false
+		}
+	}
+	return true
 }
 
 // setImage points an image entry at a bufferView holding a PNG.

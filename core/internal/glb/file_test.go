@@ -451,6 +451,70 @@ func TestAViewTwoThingsReadIsNeverOverwritten(t *testing.T) {
 	}
 }
 
+// engineChest is the chest as the engine writes it: the occlusion and the metallic-roughness
+// slots each have an image and a texture of their own, and both images read one view.
+func engineChest(t testing.TB) textured {
+	c := chest(t, true)
+	c.doc["images"] = append(c.doc["images"].([]any), map[string]any{"bufferView": 2, "mimeType": "image/png"})
+	c.doc["textures"] = append(c.doc["textures"].([]any), map[string]any{"source": 2})
+	material := c.doc["materials"].([]any)[0].(map[string]any)
+	material["pbrMetallicRoughness"].(map[string]any)["metallicRoughnessTexture"] = map[string]any{"index": 2}
+	return c
+}
+
+func TestAMapSharedWithOcclusionIsReplacedForBoth(t *testing.T) {
+	c := engineChest(t)
+	before := mustParse(t, c.glb(t))
+	views := len(before.listOf(t, "bufferViews"))
+	replacement := pngOf(t, 12, 12, 4)
+	if err := before.SetMetallicRoughnessMap([]int{0}, replacement); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := before.Bytes()
+	after := mustParse(t, data)
+	for _, i := range []int{1, 2} {
+		if got := imageBytes(t, after, i); !bytes.Equal(got, replacement) {
+			t.Errorf("image %d does not hold the new map", i)
+		}
+	}
+	if got := len(after.listOf(t, "bufferViews")); got != views {
+		t.Errorf("the file has %d bufferViews, want the %d it had: the map was stored twice", got, views)
+	}
+	if got := imageBytes(t, after, 0); !bytes.Equal(got, c.baseData) {
+		t.Error("the base color changed")
+	}
+}
+
+func TestAMapSharedWithAnotherUseIsNotOverwritten(t *testing.T) {
+	// The image that shares the view is also a base color: its green and blue matter.
+	c := engineChest(t)
+	c.doc["materials"] = append(c.doc["materials"].([]any), map[string]any{
+		"pbrMetallicRoughness": map[string]any{"baseColorTexture": map[string]any{"index": 1}},
+	})
+	f := mustParse(t, c.glb(t))
+	replacement := pngOf(t, 12, 12, 4)
+	if err := f.SetMetallicRoughnessMap([]int{0}, replacement); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := f.Bytes()
+	after := mustParse(t, data)
+	if got := imageBytes(t, after, 1); !bytes.Equal(got, c.ormData) {
+		t.Error("the image another material reads as its base color changed")
+	}
+	if got := imageBytes(t, after, 2); !bytes.Equal(got, replacement) {
+		t.Error("the replacement was not written")
+	}
+}
+
+func (f *File) listOf(t testing.TB, name string) []object {
+	t.Helper()
+	out, err := f.list(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
 func TestImagesThatAreNotPNGOrJPEGAreRefused(t *testing.T) {
 	c := chest(t, false)
 	ktx := append([]byte("\xABKTX 20\xBB\r\n\x1a\n"), make([]byte, 40)...)
