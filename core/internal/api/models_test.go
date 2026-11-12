@@ -39,6 +39,8 @@ type fakeEngine struct {
 	mu        sync.Mutex
 	installed map[string]bool
 	tasks     map[string]engineapi.Task
+	// extra are models listed besides the fixed ones.
+	extra []engineapi.Model
 }
 
 var gpu = "cuda:0"
@@ -66,14 +68,14 @@ func (e *fakeEngine) Models(context.Context) ([]engineapi.Model, error) {
 	}
 	mit := engineapi.License{SPDX: "MIT", Commercial: true}
 	restricted := engineapi.License{SPDX: "LicenseRef-Test", Commercial: true, Restrictions: []string{"not in the EU"}}
-	return []engineapi.Model{
+	return append([]engineapi.Model{
 		model("bg", "background-removal", 10, "fits", mit),
 		model("shape", "shape", 10, "fits", mit),
 		model("shape-big", "shape", 20, "too-big", mit),
 		model("paint", "texture", 10, "offload", restricted),
 		model("rig-small", "rig", 5, "fits", mit),
 		model("rig-big", "rig", 10, "too-big", mit),
-	}, nil
+	}, e.extra...), nil
 }
 
 func (e *fakeEngine) Install(_ context.Context, model string, _ engineapi.InstallRequest) (*engineapi.Task, error) {

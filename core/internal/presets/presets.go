@@ -222,19 +222,39 @@ func (p *Preset) Active() *Preset {
 	return &cp
 }
 
-// WithViews hands a job's other views of the subject to the stages whose model reads them.
-// Each view goes through its own copy of the stages that prepare the reference image
-// (background removal, then framing: "bg-left", "frame-left"), and joins the inputs of each
-// stage that reads the prepared front, tagged with its view. reads says which of views a
-// stage's model takes. Views come in the order given; nothing changes when no stage reads one.
-func (p *Preset) WithViews(views []string, reads func(Stage) []string) *Preset {
-	chain, ref := 0, InputImage
+// prepared is how many stages at the start turn the reference image into what models read, and
+// the id of the last of them.
+func (p *Preset) prepared() (chain int, ref string) {
+	ref = InputImage
 	for _, s := range p.Stages {
 		if !prepares[s.Use] || len(s.Inputs) != 1 || s.Inputs[0] != ref {
 			break
 		}
 		chain, ref = chain+1, s.ID
 	}
+	return chain, ref
+}
+
+// TakesViews says whether a job's other views can reach the stage: it reads the prepared
+// reference image, which is what WithViews hands them to. A stage that prepares the image, or
+// works on what an earlier stage made, never sees them.
+func (p *Preset) TakesViews(stage string) bool {
+	chain, ref := p.prepared()
+	for _, s := range p.Stages[chain:] {
+		if s.ID == stage {
+			return slices.Contains(s.Inputs, ref)
+		}
+	}
+	return false
+}
+
+// WithViews hands a job's other views of the subject to the stages whose model reads them.
+// Each view goes through its own copy of the stages that prepare the reference image
+// (background removal, then framing: "bg-left", "frame-left"), and joins the inputs of each
+// stage that reads the prepared front, tagged with its view. reads says which of views a
+// stage's model takes. Views come in the order given; nothing changes when no stage reads one.
+func (p *Preset) WithViews(views []string, reads func(Stage) []string) *Preset {
+	chain, ref := p.prepared()
 	takes := map[string][]string{}
 	needed := map[string]bool{}
 	for _, s := range p.Stages[chain:] {

@@ -183,6 +183,11 @@ func (a *app) showEstimate(est *jobs.Estimate) {
 			row(s.Stage, model, where, took, cost)
 		}
 	})
+	for _, s := range est.Stages {
+		if note := unreadNote(s.Pick); note != "" {
+			a.printf("\n%s\n", note)
+		}
+	}
 	per := "about " + duration(est.Seconds)
 	switch {
 	case est.Seconds <= 0:
@@ -336,6 +341,11 @@ func (a *app) showPlan(p *api.PresetView) {
 			row(pick.Stage, pick.Use, model, orDash(pick.Provider), note)
 		}
 	})
+	for _, pick := range p.Plan {
+		if note := unreadNote(pick); note != "" {
+			a.printf("\n%s\n", note)
+		}
+	}
 	for _, s := range p.Stages {
 		if s.Optional == nil {
 			continue
