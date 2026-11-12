@@ -38,6 +38,43 @@ func TestAStagesNoteOnItsOutputIsPrinted(t *testing.T) {
 	}
 }
 
+// What a stage measured about its output is worded while the job is followed and in jobs show, and
+// jobs show --json carries the numbers as the core has them.
+func TestAStagesMetricsArePrintedInWords(t *testing.T) {
+	h := newHarness(t)
+	h.eng.set(func(e *fakeEngine) {
+		e.metrics = map[string]map[string]float64{
+			"shape": {"match_iou": 0.93, "match_left_iou": 0.62, "uv_coverage": 0.71, "lod_open_edges": 0, "odd_one": 2},
+		}
+	})
+	img := h.image("chest.png")
+	out := h.ok("generate", img, "--preset", "draft")
+	for _, want := range []string{
+		"shape                reference fit 93%\n",
+		"shape                left view fit 62%\n",
+		"shape                UV space used 71%\n",
+		"shape                LOD cracks: 0 open edges\n",
+		"shape                odd_one 2\n",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("generate printed no %q:\n%s", want, out)
+		}
+	}
+	var jobsList []*library.Job
+	h.okJSON(&jobsList, "jobs", "ls")
+	show := h.ok("jobs", "show", jobsList[0].ID)
+	if !strings.Contains(show, "\nshape: reference fit 93%\nshape: left view fit 62%\n") {
+		t.Fatalf("jobs show:\n%s", show)
+	}
+	var job library.Job
+	h.okJSON(&job, "jobs", "show", jobsList[0].ID)
+	for _, s := range job.Stages {
+		if s.ID == "shape" && s.Metrics()["match_iou"] != 0.93 {
+			t.Fatalf("--json lost the numbers: %+v", s.Outputs)
+		}
+	}
+}
+
 func TestGenerateFollowsAJobToAnAssetTheLibraryCanSave(t *testing.T) {
 	h := newHarness(t)
 	img := h.image("chest.png")

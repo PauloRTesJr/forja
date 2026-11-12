@@ -40,6 +40,8 @@ type Output struct {
 	// Note is what the stage said about the output for the person, such as a stand-in made when
 	// it could not do what it was asked.
 	Note string `json:"note,omitempty"`
+	// Metrics are what the stage measured about the output (see internal/quality).
+	Metrics map[string]float64 `json:"metrics,omitempty"`
 }
 
 type Stage struct {
@@ -74,6 +76,21 @@ func (s *Stage) OutputNotes() []string {
 		}
 	}
 	return notes
+}
+
+// Metrics are what the stage measured about its outputs, merged: a name two outputs both carry
+// keeps the later output's value. Nil when it measured nothing.
+func (s *Stage) Metrics() map[string]float64 {
+	var merged map[string]float64
+	for _, o := range s.Outputs {
+		for k, v := range o.Metrics {
+			if merged == nil {
+				merged = map[string]float64{}
+			}
+			merged[k] = v
+		}
+	}
+	return merged
 }
 
 // Fallback is a stage moving to another provider after a failure there.

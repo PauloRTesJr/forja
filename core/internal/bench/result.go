@@ -10,6 +10,7 @@ import (
 	"forja/internal/engineapi"
 	"forja/internal/jobs"
 	"forja/internal/library"
+	"forja/internal/quality"
 )
 
 // ResultSchema is the version of the result format. Readers refuse other versions instead of
@@ -135,6 +136,9 @@ type StageResult struct {
 	PeakRAMBytes  *int64                  `json:"peak_ram_bytes"`
 	GPUUtil       *float64                `json:"gpu_util"`
 	Outputs       []engineapi.OutputStats `json:"outputs,omitempty"`
+	// Metrics are what the stage measured about its outputs (match_iou, bake_hit_ratio, ...).
+	// Results written before the engine reported them have none.
+	Metrics map[string]float64 `json:"metrics,omitempty"`
 }
 
 // Summary is what the run comes to, against the suite's budgets.
@@ -185,6 +189,9 @@ type StageSummary struct {
 	Triangles  *float64 `json:"triangles"`
 	Watertight *float64 `json:"watertight"`
 	UVCoverage *float64 `json:"uv_coverage"`
+	// Metrics are the stage's own measures over the succeeded samples: the median of each, except
+	// a count of flaws (lod_open_edges), which keeps the worst sample.
+	Metrics map[string]float64 `json:"metrics,omitempty"`
 }
 
 type DeviceUse struct {
@@ -206,7 +213,7 @@ func jobResult(base JobResult, s jobs.Sample) JobResult {
 	base.Stages = make([]StageResult, 0, len(j.Stages))
 	for _, st := range j.Stages {
 		r := StageResult{ID: st.ID, Use: st.Use, Model: st.Model, Provider: st.Provider, Status: st.Status,
-			Error: st.Error, Seconds: st.Seconds}
+			Error: st.Error, Seconds: st.Seconds, Metrics: st.Metrics()}
 		if st.PeakVRAM > 0 {
 			r.PeakVRAMBytes = ptr(st.PeakVRAM)
 		}
@@ -325,6 +332,7 @@ func stageSummary(preset string, runs []StageResult) StageSummary {
 		}
 	}
 	ss.Seconds, ss.LoadSeconds = spread(secs), spread(loads)
+	ss.Metrics = stageMetrics(runs)
 	if utilSecs > 0 {
 		ss.GPUUtil = ptr(round(utilSum/utilSecs, 1))
 	}
@@ -336,6 +344,29 @@ func stageSummary(preset string, runs []StageResult) StageSummary {
 		ss.UVCoverage = ptr(spread(cover).Median)
 	}
 	return ss
+}
+
+// stageMetrics sums up a stage's metrics over its samples. A metric some samples lack is summed
+// over those that have it.
+func stageMetrics(runs []StageResult) map[string]float64 {
+	values := map[string][]float64{}
+	for _, r := range runs {
+		for k, v := range r.Metrics {
+			values[k] = append(values[k], v)
+		}
+	}
+	if len(values) == 0 {
+		return nil
+	}
+	out := make(map[string]float64, len(values))
+	for k, vs := range values {
+		if quality.DirectionOf(k) == quality.FewerIsBetter {
+			out[k] = slices.Max(vs)
+		} else {
+			out[k] = spread(vs).Median
+		}
+	}
+	return out
 }
 
 // spread uses the nearest rank, as the M0 report did (bench/m0/report.py).

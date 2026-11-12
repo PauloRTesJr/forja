@@ -43,6 +43,10 @@ type Output struct {
 	// Note is what the person should know about the output, such as a stand-in the stage made
 	// when it could not do what it was asked (API 1.8).
 	Note string `json:"note,omitempty"`
+	// Metrics are numbers the stage measured about the output, by snake_case name: how well the
+	// mesh fits the reference, how much of the texture the bake reached (API 1.9). The core
+	// words them in internal/quality.
+	Metrics map[string]float64 `json:"metrics,omitempty"`
 }
 
 type StageState struct {

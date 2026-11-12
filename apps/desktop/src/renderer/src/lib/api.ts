@@ -38,6 +38,8 @@ export interface Output {
   preview?: boolean
   /** What the stage said about this output, such as a stand-in it made when it could not do what it was asked. */
   note?: string
+  /** What the stage measured about this output, by snake_case name: how well the mesh fits the reference, how much of the texture the bake reached. Worded in `lib/quality.ts`. */
+  metrics?: Record<string, number>
 }
 
 export interface Stage {
@@ -199,6 +201,8 @@ export interface BenchStage {
   /** Share (0..1) of samples whose mesh was watertight. */
   watertight: number | null
   uv_coverage: number | null
+  /** What the stage measured about its outputs: the median over the samples, the worst for a count of cracks. */
+  metrics?: Record<string, number>
 }
 
 /** One reference image through one preset, measured. */
@@ -301,7 +305,8 @@ export interface BenchList {
 export interface BenchDelta {
   preset?: string
   stage?: string
-  metric: 'seconds' | 'peak_vram_bytes' | 'core_overhead' | 'failed'
+  /** The core's own measures, or the name of a stage's measure (`match_iou`, `lod_open_edges`...), worded in `lib/quality.ts`. */
+  metric: 'seconds' | 'peak_vram_bytes' | 'core_overhead' | 'failed' | (string & {})
   baseline: number
   current: number
   /** Change in percent of the baseline; null when the baseline is zero. */

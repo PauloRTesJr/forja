@@ -17,6 +17,7 @@ import (
 	"forja/internal/api"
 	"forja/internal/bench"
 	"forja/internal/library"
+	"forja/internal/quality"
 )
 
 // exitRegression means `forja bench compare` found a regression past the threshold.
@@ -131,7 +132,10 @@ func (a *app) benchCompareCmd() *cobra.Command {
 		Long: "Each side is a result file (" + benchJSON + ") or the id of a result the core keeps. Per preset it\n" +
 			"compares the median image-to-GLB time and the failures, per stage the median time and peak\n" +
 			"VRAM, and the core's overhead per job. A value regresses when it grows by more than the\n" +
-			"threshold and by at least --min-seconds or --min-vram-mb. Defaults: the [bench] section of\n" +
+			"threshold and by at least --min-seconds or --min-vram-mb. It also compares what stages\n" +
+			"measured about their outputs: a share (reference fit, bake hits, UV space used) regresses\n" +
+			"when it falls by more than the threshold and by more than 0.01, and open edges in the LODs\n" +
+			"regress when there are more. Defaults: the [bench] section of\n" +
 			"config.toml (threshold_pct, min_seconds, min_vram_mb).\n" +
 			"Without <current>, the newest finished run the core keeps is compared; a cancelled run is refused.",
 		Args: cobra.RangeArgs(1, 2),
@@ -386,6 +390,22 @@ func (a *app) showBench(r *bench.Result) {
 				pctOf(st.UVCoverage, 100))
 		}
 	})
+	a.printMeasures(s.Stages)
+}
+
+// printMeasures words what stages measured about their outputs, as the medians over the samples.
+func (a *app) printMeasures(stages []bench.StageSummary) {
+	header := false
+	for _, st := range stages {
+		if len(st.Metrics) == 0 {
+			continue
+		}
+		if !header {
+			a.printf("\nWhat the stages measured about their outputs:\n")
+			header = true
+		}
+		a.printf("  %-14s %-20s %s\n", st.Preset, st.Stage, strings.Join(quality.Lines(st.Metrics), "; "))
+	}
 }
 
 func (a *app) showComparison(c *bench.Comparison) {
@@ -421,8 +441,10 @@ func metric(name string, v float64) string {
 		return fmt.Sprintf("%.0f", v)
 	case bench.MetricOverhead:
 		return fmt.Sprintf("%.0f ms", v*1000)
+	case bench.MetricSeconds:
+		return secs(v)
 	}
-	return secs(v)
+	return quality.Value(name, v)
 }
 
 func secs(s float64) string { return fmt.Sprintf("%.2fs", s) }

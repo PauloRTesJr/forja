@@ -214,7 +214,9 @@ class TextureMatch(Adapter):
         )
         path = mesh_ops.save(out, ctx.out_dir / "matched.glb")
         ctx.progress(3, 3)
-        return [StageOutput(path, ArtifactKind.MESH_GLB)]
+        metrics = {"match_iou": result.iou, "match_reprojected": result.reprojected}
+        metrics |= {f"match_{name}_iou": side[0] for name, side in result.sides.items()}
+        return [StageOutput(path, ArtifactKind.MESH_GLB, metrics=metrics)]
 
 
 class Bake(Adapter):
@@ -314,7 +316,8 @@ class Bake(Adapter):
         out.metadata[mesh_ops.TANGENTS] = result.tangents
         path = mesh_ops.save(out, ctx.out_dir / "baked.glb")
         ctx.progress(3, 3)
-        return [StageOutput(path, ArtifactKind.MESH_GLB)]
+        metrics = {"bake_hit_ratio": result.hit_ratio, "bake_cage": result.cage}
+        return [StageOutput(path, ArtifactKind.MESH_GLB, metrics=metrics)]
 
 
 class Lods(Adapter):
@@ -357,7 +360,11 @@ class Lods(Adapter):
                 )
             scene.add_geometry(lod, node_name=f"{name}_LOD{level}", geom_name=f"{name}_LOD{level}")
             ctx.progress(level, len(ratios))
-        return [StageOutput(mesh_ops.save(scene, ctx.out_dir / "lods.glb"), ArtifactKind.MESH_GLB)]
+        metrics = {"lod_open_edges": float(max(mesh_ops.open_edges(g) for g in scene.geometry.values()))}
+        if getattr(lod0.visual, "uv", None) is not None:
+            metrics["uv_coverage"] = mesh_ops.uv_coverage([(mesh_ops.uvs_of(lod0), lod0.faces)])
+        path = mesh_ops.save(scene, ctx.out_dir / "lods.glb")
+        return [StageOutput(path, ArtifactKind.MESH_GLB, metrics=metrics)]
 
 
 class Export(Adapter):

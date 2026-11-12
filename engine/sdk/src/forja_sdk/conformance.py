@@ -24,6 +24,8 @@ import hashlib
 import importlib
 import importlib.util
 import json
+import math
+import re
 import shutil
 import tempfile
 import time
@@ -184,6 +186,21 @@ def _digest(path: Path) -> str:
 
 def _error(e: BaseException) -> str:
     return f"{type(e).__name__}: {e}"
+
+
+_METRIC_NAME = re.compile(r"[a-z][a-z0-9]*(_[a-z0-9]+)*")
+
+
+def _bad_metrics(metrics: Any) -> str:
+    """What is wrong with a StageOutput's metrics, or "" when they are snake_case names of finite numbers."""
+    if not isinstance(metrics, dict):
+        return "must be a dict of snake_case names to finite numbers"
+    for key, value in metrics.items():
+        if not isinstance(key, str) or not _METRIC_NAME.fullmatch(key):
+            return f"{key!r} is not a snake_case name"
+        if isinstance(value, bool) or not isinstance(value, int | float) or not math.isfinite(value):
+            return f"{key} is {value!r}, not a finite number"
+    return ""
 
 
 class _Peak:
@@ -462,6 +479,10 @@ class _Suite:
         for i, o in enumerate(outputs):
             if not isinstance(o, StageOutput) or not isinstance(o.kind, ArtifactKind):
                 self.record(name, "fail", f"output {i} is not a StageOutput with an ArtifactKind")
+                return None
+            bad = _bad_metrics(o.metrics)
+            if bad:
+                self.record(name, "fail", f"output {i} metrics {bad}")
                 return None
             path = Path(o.path).resolve()
             if not path.is_file():

@@ -1,5 +1,6 @@
 """The adapter SDK as a package of its own, its artifact validators and its conformance suite."""
 
+import dataclasses
 import json
 import random
 import struct
@@ -120,6 +121,16 @@ class EditsInputs(Good):
         return super().run(ctx)
 
 
+class NotFiniteMetrics(Good):
+    def run(self, ctx):
+        return [dataclasses.replace(o, metrics={"fit": float("nan")}) for o in super().run(ctx)]
+
+
+class CamelCaseMetrics(Good):
+    def run(self, ctx):
+        return [dataclasses.replace(o, metrics={"matchIou": 0.9}) for o in super().run(ctx)]
+
+
 class BadEstimate(Good):
     def estimate_vram(self, params):
         return 1.5  # GB as a float, not bytes
@@ -134,6 +145,8 @@ class BadEstimate(Good):
         (Corrupt, "run[shape]", "indexes past"),
         (OpaqueCutout, "run[background-removal]", "no alpha"),
         (EditsInputs, "inputs[shape]", "changed its inputs"),
+        (NotFiniteMetrics, "run[shape]", "fit is nan, not a finite number"),
+        (CamelCaseMetrics, "run[shape]", "not a snake_case name"),
         (BadEstimate, "vram", "want bytes"),
     ],
 )

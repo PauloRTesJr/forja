@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"io"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -22,6 +23,8 @@ type benchEngine struct {
 	*fakeEngine
 	st   *store.Store
 	hold chan struct{}
+	// metrics are what a stage type measured about its output.
+	metrics map[string]map[string]float64
 }
 
 func (e *benchEngine) SharesStore() bool { return true }
@@ -48,7 +51,7 @@ func (e *benchEngine) Run(ctx context.Context, req engineapi.RunRequest, _ chan<
 			ref, _ = e.st.PutBytes([]byte(`{"sheet": false, "size": [1, 1], "parts": []}`))
 			kind = "application/json"
 		}
-		st := engineapi.StageState{Status: "succeeded", Seconds: &secs, Outputs: []engineapi.Output{{Hash: ref, Kind: kind}}}
+		st := engineapi.StageState{Status: "succeeded", Seconds: &secs, Outputs: []engineapi.Output{{Hash: ref, Kind: kind, Metrics: e.metrics[s.Use]}}}
 		if req.Measure {
 			st.Metrics = &engineapi.StageMetrics{Device: "cpu-pool", PeakRAMBytes: &ram}
 		}
@@ -132,6 +135,57 @@ func TestBenchRunsASuiteAndKeepsItsResult(t *testing.T) {
 		if code := call(t, ts, c.method, c.path, c.body, nil); code != c.want {
 			t.Errorf("%s %s: %d, want %d", c.method, c.path, code, c.want)
 		}
+	}
+}
+
+// What a stage measured about its output is kept per stage in the result, summed up, worded in the
+// report and compared with a baseline that has none.
+func TestBenchKeepsWhatStagesMeasuredAboutTheirOutputs(t *testing.T) {
+	ts, s, eng, suite := benchServer(t)
+	eng.metrics = map[string]map[string]float64{"shape": {"match_iou": 0.93, "lod_open_edges": 2}}
+	var started bench.Result
+	if code := call(t, ts, "POST", "/v1/bench", bench.Request{Suite: suite(apiSuite)}, &started); code != 202 {
+		t.Fatalf("status %d", code)
+	}
+	s.benches().Wait()
+	var res bench.Result
+	if code := call(t, ts, "GET", "/v1/bench/"+started.ID, nil, &res); code != 200 || res.Summary == nil {
+		t.Fatalf("status %d: %+v", code, res)
+	}
+	for _, st := range res.Jobs[0].Stages {
+		want := map[string]float64(nil)
+		if st.Use == "shape" {
+			want = map[string]float64{"match_iou": 0.93, "lod_open_edges": 2}
+		}
+		if !maps.Equal(st.Metrics, want) {
+			t.Errorf("stage %s: metrics %v", st.ID, st.Metrics)
+		}
+	}
+	for _, st := range res.Summary.Stages {
+		if st.Use == "shape" && !maps.Equal(st.Metrics, map[string]float64{"match_iou": 0.93, "lod_open_edges": 2}) {
+			t.Errorf("summary of %s: %v", st.Stage, st.Metrics)
+		}
+	}
+	resp, err := http.Get(ts.URL + "/v1/bench/" + res.ID + "/report")
+	if err != nil {
+		t.Fatal(err)
+	}
+	page, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if !strings.Contains(string(page), "reference fit 93%") || !strings.Contains(string(page), "LOD cracks: 2 open edges") {
+		t.Fatalf("the report does not word the measures:\n%s", page)
+	}
+	// The same suite after a change that cracks the LODs further and blurs the reference fit.
+	eng.metrics = map[string]map[string]float64{"shape": {"match_iou": 0.6, "lod_open_edges": 9}}
+	var next bench.Result
+	if code := call(t, ts, "POST", "/v1/bench", bench.Request{Suite: suite(apiSuite)}, &next); code != 202 {
+		t.Fatalf("status %d", code)
+	}
+	s.benches().Wait()
+	var cmp bench.Comparison
+	if code := call(t, ts, "POST", "/v1/bench/compare", CompareRequest{Baseline: res.ID, Current: next.ID}, &cmp); code != 200 ||
+		cmp.Regressions != 2 {
+		t.Fatalf("compare %d: %+v", code, cmp)
 	}
 }
 

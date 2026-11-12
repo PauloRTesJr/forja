@@ -16,7 +16,7 @@ All in `forja_sdk` (source: `engine/sdk/src/forja_sdk/types.py`).
 | `ArtifactKind` | `image/png`, `mesh/glb`, `application/json`. |
 | `Device` | `cuda`, `mps`, `rocm`, `cpu`. |
 | `StageInput` | `path`, `kind`, `hash` (a content ref), `view` (one of `VIEWS`, or None for the front). |
-| `StageOutput` | `path`, `kind`, `preview` (show it before the job ends). |
+| `StageOutput` | `path`, `kind`, `preview` (show it before the job ends), `note` (a sentence for the person), `metrics` (what the stage measured about the output, as snake_case names of finite numbers; the job shows them and `forja bench compare` gates on the ones it knows). |
 | `StageContext` | `stage_id`, `task`, `inputs`, `params`, `seed`, `out_dir`; `input(kind, index)`, `views()`, `progress(step, total)`, `check_cancel()`. |
 | `Cancelled` | Raised by `check_cancel()` once the stage is cancelled. Let it propagate. |
 | `VIEWS` | `("front", "left", "back", "right")`; "left" shows the subject's left side. |

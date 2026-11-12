@@ -122,6 +122,22 @@ Each sample also records:
 
 A quality score (CLIP similarity of rendered views, spec section 10) is not computed yet; the field is always `null`.
 
+### What stages measure about their outputs
+
+Several stages already know how good their output is, and say so (engine API 1.9, `StageOutput.metrics`). A result keeps these numbers per stage of every sample (`metrics` on the stage), and the summary and the report give each stage's median over its samples, except for cracks, which keep the worst sample. `forja bench show` lists them in words, as `forja jobs show` does for any job.
+
+| Metric | Stage | What it is | Better |
+|---|---|---|---|
+| `match_iou` | `texture.match` | How well the mesh's silhouette fits the reference's (0 to 1) | higher |
+| `match_<view>_iou` | `texture.match` | The same for a side view (`left`, `back`, `right`) the job has | higher |
+| `match_reprojected` | `texture.match` | Share of the texture's texels that took the reference | higher |
+| `bake_hit_ratio` | `bake` | Share of texels whose rays found the high-poly | higher |
+| `bake_cage` | `bake` | The cage distance used first, as a share of the model's size; shown, never compared | |
+| `uv_coverage` | `mesh.lods` | Share of the UV square LOD0's triangles cover | higher |
+| `lod_open_edges` | `mesh.lods` | The most open edges any level has once vertices at one position count as one: cracks, which UV seams are not | fewer |
+
+A result file written before these existed has none and still loads and compares.
+
 The summary adds these up: per preset, the median, 90th percentile and maximum image-to-GLB time of the samples that succeeded, the failures and the samples over budget; per stage, the same spread of times and loads, the highest peaks, the GPU utilization weighted by time, the median triangle count, the share of watertight meshes and the median UV coverage; the core's overhead per job against its budget; and how busy each device kept over the run.
 
 ## Results and the report
@@ -149,6 +165,14 @@ forja bench compare baseline/bench.json results/bench.json --threshold 5
 Each side is a result file or the id of a result the core keeps. Without `current`, the newest finished run the core keeps is used; a cancelled run is refused (its numbers are partial) and a run with failed samples is compared with a warning. The comparison reads, per preset, the failures and the median image-to-GLB time; per stage, the median time and the peak VRAM; and the median core overhead per job.
 
 A value is a regression when it grows by more than the threshold, in percent, **and** by at least its noise floor: a 20 ms stage that takes 30 ms once is noise, not a 50% regression. A preset with more failed samples than the baseline is always a regression.
+
+The measures above are compared too, per stage, under their own names. A share (`match_iou`, `match_<view>_iou`, `match_reprojected`, `bake_hit_ratio`, `uv_coverage`) regresses when it falls by more than the threshold, in percent of the baseline, **and** by more than 0.01 in absolute terms; `lod_open_edges` regresses on any increase. A measure only one of the two runs has, such as any measure against a baseline made before they existed, is a warning and never a failure. Exit code 6 covers these regressions too:
+
+```
+PRESET       STAGE  METRIC          BASELINE  CURRENT  CHANGE
+mobile-prop  match  match_iou       93%       70%      -24.7%  REGRESSION
+mobile-prop  lods   lod_open_edges  0         3        -       REGRESSION
+```
 
 | Setting | Default | Flag | What it is |
 |---|---|---|---|
