@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { isPreparing } from './activity'
 import type { Job, Pick, SheetPart } from './api'
 import { needsAnswer, summarize } from './jobs'
-import { assignView, boxStyle, chosenParts, viewOption, viewReader } from './views'
+import { assignView, boxStyle, chosenParts, sheetSides, viewOption, viewReader } from './views'
 
 const pick = (stage: string, use: string, extra: Partial<Pick> = {}): Pick => ({ stage, use, ...extra })
 
@@ -107,5 +107,17 @@ describe('viewOption', () => {
     expect(viewOption('right')).toBe('Right side (faces right)')
     expect(viewOption('front')).toBe('Front')
     expect(viewOption('back')).toBe('Back')
+  })
+})
+
+describe('sheetSides', () => {
+  it('lists the side views the labels of a sheet choose, in view order, whatever order the figures come in', () => {
+    expect(sheetSides(['front', 'right', '', 'left'])).toEqual(['left', 'right'])
+    expect(sheetSides(['back', 'front'])).toEqual(['back'])
+  })
+
+  it('has none until a figure is the front, and none for a front alone', () => {
+    expect(sheetSides(['', 'left', 'back'])).toEqual([])
+    expect(sheetSides(['front', ''])).toEqual([])
   })
 })

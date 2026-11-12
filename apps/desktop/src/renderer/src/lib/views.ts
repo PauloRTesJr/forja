@@ -34,6 +34,11 @@ export function viewReader(plan: Pick[]): Pick | undefined {
   return plan.find((p) => p.use === 'shape' && !p.skipped && (p.views ?? []).some((v) => v !== 'front'))
 }
 
+/** The side views among the labels given to a sheet's figures, in view order; none without a front. */
+export function sheetSides(labels: (View | '')[]): SideView[] {
+  return labels.includes('front') ? SIDE_VIEWS.filter((v) => labels.includes(v)) : []
+}
+
 /**
  * Gives part `index` a view. A view belongs to one part, so the part that had it takes this
  * part's old view: relabelling front and back swaps them instead of losing one.

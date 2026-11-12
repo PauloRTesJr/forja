@@ -1,11 +1,13 @@
-import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import type { CSSProperties } from 'react'
-import { answerSheet, artifactURL, type Job, type View } from '../lib/api'
+import { answerSheet, artifactURL, fetchPresets, type Job, type View } from '../lib/api'
 import { draftStore, useDraft } from '../lib/draft'
 import { keys } from '../lib/events'
 import { upsertJob } from '../lib/jobs'
+import { transition, useNavigate } from '../lib/nav'
 import { useToast } from '../lib/toast'
-import { assignView, boxStyle, chosenParts, VIEWS, viewHints, viewLabels, viewOption } from '../lib/views'
+import { assignView, boxStyle, chosenParts, sheetSides, VIEWS, viewHints, viewLabels, viewOption } from '../lib/views'
+import { ViewsNotice } from './ViewsNotice'
 
 /**
  * Answers a job that waits on its sheet of views. Once answered, Generate keeps following the
@@ -42,6 +44,17 @@ export function SheetCard({ job, maxHeight = 440 }: { job: Job; /** The cut-out 
   const answer = useSheetAnswer(job)
   const chosen = chosenParts(parts, labels)
   const hasFront = labels.includes('front')
+  // The preset as it would run with the views chosen so far: a sheet is where most side views
+  // come from, so this is where to say that a model will not read them.
+  const sides = sheetSides(labels)
+  const withSides = useQuery({
+    queryKey: [...keys.presetsWithViews, sides.join(',')],
+    queryFn: () => fetchPresets(sides),
+    enabled: sides.length > 0,
+    placeholderData: keepPreviousData,
+  })
+  const plan = (sides.length > 0 && withSides.data?.find((p) => p.id === job.preset)?.plan) || []
+  const navigate = useNavigate()
   const [w, h] = sheet.size
 
   return (
@@ -78,6 +91,7 @@ export function SheetCard({ job, maxHeight = 440 }: { job: Job; /** The cut-out 
           ? 'Check the labels: an outline cannot tell a front from a back, or which way a side view faces.'
           : 'Choose which figure is the front.'}
       </p>
+      <ViewsNotice plan={plan} onOpenModels={() => transition(() => navigate({ screen: 'models' }))} />
       <div className="row">
         <button className="btn primary" disabled={!hasFront || answer.isPending} onClick={() => answer.mutate({ views: chosen })}>
           Build from {chosen.length} {chosen.length === 1 ? 'view' : 'views'}
