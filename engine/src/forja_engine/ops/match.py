@@ -19,6 +19,9 @@ Cameras are orthographic along -Z after the view rotation (glTF front is +Z); im
 from __future__ import annotations
 
 import logging
+import math
+import os
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -258,34 +261,70 @@ def _fill(values: F64, mask: NDArray[np.bool_]) -> F64:
     return values[iy, ix]
 
 
+_ZBUFFER_BATCH = 1 << 18  # candidate pixels per batch: small enough to stay in cache
+
+
 def zbuffer(
     vertices: F64, faces: NDArray[np.int64], proj: Projection, size: int
 ) -> tuple[NDArray[np.int64], NDArray[np.float32], F64]:
-    """Nearest triangle id (-1 where empty), its barycentrics and its depth (+Z is near) per pixel."""
-    tri_id = np.full((size, size), -1, dtype=np.int64)
-    bary = np.zeros((size, size, 3), dtype=np.float32)
-    depth = np.full((size, size), -np.inf)
+    """Nearest triangle id (-1 where empty), its barycentrics and its depth (+Z is near) per pixel.
+
+    Triangles are rasterized over their bounding boxes in batches, in parallel; the batches are
+    merged in order, so where two triangles are equally near the lower id wins, as when drawing
+    them one after the other and replacing a pixel only by a nearer one.
+    """
+    tri_id = np.full(size * size, -1, dtype=np.int64)
+    bary = np.zeros((size * size, 3), dtype=np.float32)
+    depth = np.full(size * size, -np.inf)
     tri = proj(vertices)[faces] - 0.5  # pixel centers
+    lo = np.clip(np.floor(tri.min(axis=1)).astype(np.int64), 0, size - 1)
+    span = np.clip(np.ceil(tri.max(axis=1)).astype(np.int64), 0, size - 1) - lo + 1
+    a, b, c = tri[:, 0], tri[:, 1], tri[:, 2]
+    # Per-triangle terms of the barycentric formula, each computed as the per-pixel one would be.
+    det = (b[:, 1] - c[:, 1]) * (a[:, 0] - c[:, 0]) + (c[:, 0] - b[:, 0]) * (a[:, 1] - c[:, 1])
+    coef = np.stack(
+        [b[:, 1] - c[:, 1], c[:, 0] - b[:, 0], c[:, 1] - a[:, 1], a[:, 0] - c[:, 0], c[:, 0], c[:, 1], det],
+        1,
+    )
     tz = vertices[:, 2][faces]
-    lo = np.clip(np.floor(tri.min(axis=1)).astype(int), 0, size - 1)
-    hi = np.clip(np.ceil(tri.max(axis=1)).astype(int), 0, size - 1)
-    for t in range(len(faces)):
-        (x0, y0), (x1, y1) = lo[t], hi[t]
-        xs, ys = np.meshgrid(np.arange(x0, x1 + 1), np.arange(y0, y1 + 1))
-        a, b, c = tri[t]
-        det = (b[1] - c[1]) * (a[0] - c[0]) + (c[0] - b[0]) * (a[1] - c[1])
-        if abs(det) < 1e-12:
-            continue
-        w0 = ((b[1] - c[1]) * (xs - c[0]) + (c[0] - b[0]) * (ys - c[1])) / det
-        w1 = ((c[1] - a[1]) * (xs - c[0]) + (a[0] - c[0]) * (ys - c[1])) / det
+    ids = np.nonzero(np.abs(det) >= 1e-12)[0]
+    ends = np.cumsum(span[ids, 0] * span[ids, 1])
+    bounds: list[NDArray[np.int64]] = []
+    start = 0
+    while start < len(ids):
+        done = ends[start - 1] if start else 0
+        stop = min(len(ids), max(start + 1, int(np.searchsorted(ends, done + _ZBUFFER_BATCH, side="right"))))
+        bounds.append(ids[start:stop])
+        start = stop
+
+    def batch(t: NDArray[np.int64]) -> tuple[NDArray[np.int64], F64, NDArray[np.int64], F64]:
+        n = span[t, 0] * span[t, 1]
+        owner = np.repeat(t, n)
+        local = np.arange(int(n.sum())) - np.repeat(np.cumsum(n) - n, n)
+        xs = lo[owner, 0] + local % span[owner, 0]
+        ys = lo[owner, 1] + local // span[owner, 0]
+        k = coef[owner]
+        dx, dy = xs - k[:, 4], ys - k[:, 5]
+        w0 = (k[:, 0] * dx + k[:, 1] * dy) / k[:, 6]
+        w1 = (k[:, 2] * dx + k[:, 3] * dy) / k[:, 6]
         w2 = 1.0 - w0 - w1
-        z = w0 * tz[t, 0] + w1 * tz[t, 1] + w2 * tz[t, 2]
-        win = (w0 >= -1e-4) & (w1 >= -1e-4) & (w2 >= -1e-4) & (z > depth[ys, xs])
-        yy, xx = ys[win], xs[win]
-        tri_id[yy, xx] = t
-        depth[yy, xx] = z[win]
-        bary[yy, xx] = np.stack([w0[win], w1[win], w2[win]], axis=-1)
-    return tri_id, bary, depth
+        inside = np.nonzero((w0 >= -1e-4) & (w1 >= -1e-4) & (w2 >= -1e-4))[0]
+        w0, w1, w2, h = w0[inside], w1[inside], w2[inside], tz[owner[inside]]
+        z = w0 * h[:, 0] + w1 * h[:, 1] + w2 * h[:, 2]
+        return (ys * size + xs)[inside], z, owner[inside], np.stack([w0, w1, w2], axis=-1)
+
+    threads = max(1, min(4, os.cpu_count() or 1, len(bounds)))
+    with ThreadPoolExecutor(threads) as pool:
+        for first in range(0, len(bounds), 4 * threads):  # a few waves in flight bound the memory
+            for texel, z, owner, w in pool.map(batch, bounds[first : first + 4 * threads]):
+                # Of equally near triangles in one batch the lowest id stays, so the candidates
+                # are written last-to-first and the lowest lands last.
+                before = depth[texel]
+                np.maximum.at(depth, texel, z)
+                won = ((z == depth[texel]) & (z > before))[::-1]
+                tri_id[texel[::-1][won]] = owner[::-1][won]
+                bary[texel[::-1][won]] = w[::-1][won]
+    return tri_id.reshape(size, size), bary.reshape(size, size, 3), depth.reshape(size, size)
 
 
 def _sample(img: F64, px: F64) -> F64:
@@ -440,6 +479,16 @@ def _tex_at(uv: F64, f: NDArray[np.int64], face: NDArray[np.int64], weights: F64
     return _sample(image, np.stack([puv[:, 0] * image.shape[1], (1 - puv[:, 1]) * image.shape[0]], -1))
 
 
+_TUNED_AT = 1024
+
+
+def _scale(size: int) -> float:
+    """How much larger than the 1024 px the alignment and visibility widths were tuned at a
+    picture is. Smaller pictures keep those widths: blocks shrunk below them would lock onto
+    noise."""
+    return max(1.0, size / _TUNED_AT)
+
+
 def _project(
     out: F64,
     mesh: trimesh.Trimesh,
@@ -465,7 +514,12 @@ def _project(
     hy, hx = np.nonzero(hit)
     seen = np.zeros((size, size))
     seen[hy, hx] = _tex_at(uv, f, tri_id[hy, hx], bary[hy, hx].astype(np.float64), out) @ _LUMA
-    motion = flow(_fill(seen, hit), rgb @ _LUMA, hit & alpha) if align else np.zeros((size, size, 2))
+    if align:
+        block = 2 * round(24 * _scale(size))
+        radius = round(16 * _scale(size))
+        motion = flow(_fill(seen, hit), rgb @ _LUMA, hit & alpha, block, block // 2, radius)
+    else:
+        motion = np.zeros((size, size, 2))
     tid, tb = raster
     ty, tx = np.nonzero(tid >= 0)
     corners = f[tid[ty, tx]]
@@ -476,8 +530,9 @@ def _project(
     px = view.proj(pos)
     ix = np.clip(px[:, 0].astype(int), 0, size - 1)
     iy = np.clip(px[:, 1].astype(int), 0, size - 1)
-    # Visible when nothing in the 3x3 neighbourhood is nearer: conservative at silhouette edges.
-    near = ndimage.maximum_filter(depth, size=3)
+    # Visible when nothing in the 3x3 neighbourhood (at 1024 px) is nearer: conservative at
+    # silhouette edges, and as wide in the picture whatever its resolution.
+    near = ndimage.maximum_filter(depth, size=2 * math.ceil(_scale(size)) + 1)
     tol = 0.005 * float(np.linalg.norm(mesh.extents))
     visible = pos[:, 2] >= near[iy, ix] - tol
     edge = ndimage.distance_transform_edt(alpha)
@@ -522,6 +577,24 @@ def _arrays(image: Image.Image) -> tuple[F64, NDArray[np.bool_]]:
         img = canvas
     rgba = np.asarray(img, dtype=np.float64) / 255
     return rgba[..., :3], rgba[..., 3] > 0.5
+
+
+_SAME_PICTURE_IOU = 0.9
+
+
+def _same_picture(hi: Image.Image | None, alpha: NDArray[np.bool_]) -> tuple[F64, NDArray[np.bool_]] | None:
+    """RGB and silhouette of a larger version of the reference, or None when `hi` is not one:
+    not larger, not square, or its outline does not match, which would put the picture on the
+    wrong texels."""
+    size = alpha.shape[0]
+    if hi is None or hi.width != hi.height or hi.width <= size:
+        return None
+    rgb, big = _arrays(hi)
+    shrunk = Image.fromarray(big.astype(np.uint8) * 255).resize((size, size), Image.Resampling.BOX)
+    if _iou(np.asarray(shrunk) > 127, alpha) < _SAME_PICTURE_IOU:
+        log.warning("texture.match: the larger reference is not the same picture as the framed one: ignored")
+        return None
+    return rgb, big
 
 
 def _fit_sides(
@@ -620,6 +693,7 @@ def match(
     seed: int = 0,
     sides: dict[str, Image.Image] | None = None,
     min_side_iou: float = 0.75,
+    reference_hi: Image.Image | None = None,
 ) -> MatchResult:
     """`color` and `lightness` weight the chroma and lightness parts of the color transfer;
     `reproject` weights the reference on texels that face the fitted camera, and `align` lets
@@ -632,6 +706,11 @@ def match(
     goes last. Colors are learned from the front alone. They pass at `min_side_iou`, a little
     below the front's bar: the shape model saw only the front, so its back and sides are a
     guess that fits their drawings less tightly, and the alignment absorbs the difference.
+
+    `reference_hi` is the same picture as `reference` at a larger size (framed from the
+    original cut-out instead of the downscaled one). Only the front's final projection reads it,
+    so a large texture gets the detail the reference has; the camera fit and the colors keep
+    the small one, and a picture that is not larger, square and the same silhouette is ignored.
 
     Lightness stays off by default: the reference carries its lighting, the painted texture is
     delit, so matching L would paint the key light into the albedo everywhere.
@@ -699,7 +778,15 @@ def match(
             ids = zbuffer(sv, f, side.view.proj, side.rgb.shape[0])
             share = project(side.view, (sv, *ids), side.rgb, side.alpha)
             done[side.name] = (side.iou, share, side.as_labelled)
-        reprojected = project(view, (v, tri_id, bary, depth), ref_rgb, alpha)
+        hi = _same_picture(reference_hi, alpha)
+        if hi is None:
+            reprojected = project(view, (v, tri_id, bary, depth), ref_rgb, alpha)
+        else:
+            hi_rgb, hi_alpha = hi
+            hi_size = hi_rgb.shape[0]
+            hi_view = View(view.yaw, view.pitch, view.proj.resized(hi_size / size))
+            hi_ids = zbuffer(v, f, hi_view.proj, hi_size)
+            reprojected = project(hi_view, (v, *hi_ids), hi_rgb, hi_alpha)
 
     img = Image.fromarray((np.clip(out, 0, 1) * 255).round().astype(np.uint8), "RGB")
     return MatchResult(

@@ -46,7 +46,7 @@ stages:
   - { id: paint, use: texture, params: { resolution: 2048 }, inputs: [dense, frame] }
   - id: match
     use: texture.match
-    inputs: [paint, frame]
+    inputs: [paint, frame, bg]
     optional:
       label: Match the reference colors
       help: >-

@@ -25,6 +25,7 @@ from forja_engine.sdk import (
     Capabilities,
     Device,
     StageContext,
+    StageInput,
     StageOutput,
     StageType,
 )
@@ -34,6 +35,9 @@ log = logging.getLogger(__name__)
 
 
 class Framing(Adapter):
+    # 2: parts of the matte far smaller than the subject no longer shrink it in the frame.
+    version = "2"
+
     def capabilities(self) -> Capabilities:
         return Capabilities(tasks=(StageType.FRAMING,), devices=CPU)
 
@@ -150,17 +154,37 @@ def _factor(material: object, name: str, default: float) -> float:
 class TextureMatch(Adapter):
     """Pulls a painted base color back toward the reference it was painted from.
 
-    Inputs: the painted mesh and the framed reference. Geometry, UVs, roughness and metallic
+    Inputs: the painted mesh and the framed reference, then optionally the cut-out it was framed
+    from (a second front or untagged image), which the front is projected from at up to
+    `reference_size` px instead of the framed size. Geometry, UVs, roughness and metallic
     (factors, and the map when the painter made one) pass through, so the bake stage after it
     works unchanged. See ops/match.py for the method.
     """
 
     # 2: keeps a painted roughness and metallic map.
     # 3: projects the back and side views the job has, the front last.
-    version = "3"
+    # 4: projects the front from the cut-out at up to `reference_size` px when it has one.
+    version = "4"
 
     def capabilities(self) -> Capabilities:
         return Capabilities(tasks=(StageType.TEXTURE_MATCH,), devices=CPU)
+
+    @staticmethod
+    def _reference_hi(ctx: StageContext, framed: StageInput, framed_size: int) -> Image.Image | None:
+        """The cut-out framed like the reference but larger, or None when there is no cut-out
+        input or the original has no more detail than the framed image."""
+        cutouts = [
+            i
+            for i in ctx.inputs
+            if i.kind == ArtifactKind.IMAGE_PNG and i.view in (None, "front") and i is not framed
+        ]
+        if not cutouts:
+            return None
+        cutout = img_ops.normalize(Image.open(cutouts[0].path))
+        size = min(int(ctx.params.get("reference_size", 2048)), img_ops.natural_side(cutout))
+        if size <= framed_size:
+            return None
+        return img_ops.frame(cutout, size)
 
     def run(self, ctx: StageContext) -> list[StageOutput]:
         mesh = mesh_ops.load(ctx.input(ArtifactKind.MESH_GLB).path)
@@ -173,10 +197,13 @@ class TextureMatch(Adapter):
             v: Image.open(views[v].path) for v in ("left", "back", "right") if v in views
         }
         ctx.progress(1, 3)
+        framed = ctx.input(ArtifactKind.IMAGE_PNG)
+        reference = Image.open(framed.path)
         result = match_ops.match(
             mesh,
             base,
-            Image.open(ctx.input(ArtifactKind.IMAGE_PNG).path),
+            reference,
+            reference_hi=self._reference_hi(ctx, framed, reference.width),
             color=float(ctx.params.get("color", 1.0)),
             lightness=float(ctx.params.get("lightness", 0.0)),
             reproject=float(ctx.params.get("reproject", 1.0)),
