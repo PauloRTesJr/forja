@@ -60,9 +60,13 @@ class BakeResult:
     ray_engine: str
     # The low-poly the maps belong to: the input, with vertices split where MikkTSpace needs it.
     mesh: trimesh.Trimesh
-    # The high-poly's own colors in the low-poly's UVs, when asked for and the high-poly has any
-    # (a textured mesh from a model that does shape and texture in one pass).
+    # Base color in the low-poly's UVs, when asked for and the mesh it comes from has any: the
+    # high-poly's (a textured mesh from a model that does shape and texture in one pass) or the
+    # `color_from` mesh's.
     color: Image.Image | None = None
+    # The `color_from` mesh's metallic-roughness map in the low-poly's UVs (glTF: G roughness,
+    # B metallic; R is unused), when that mesh has one.
+    mr: Image.Image | None = None
     cage: float = 0.0  # the cage distance used first, as a fraction of the low-poly's diagonal
 
 
@@ -310,12 +314,14 @@ def _bilinear(img: F, uv: F64) -> F32:
 
 
 class _Colors:
-    """Samples a high-poly's own colors at (triangle, barycentric) points."""
+    """Samples a mesh's own colors, and its metallic-roughness map, at (triangle, barycentric)
+    points."""
 
     def __init__(self, mesh: trimesh.Trimesh) -> None:
         self.faces = np.asarray(mesh.faces)
         visual = mesh.visual
         self.texture: F | None = None
+        self.mr_texture: F | None = None
         if isinstance(visual, trimesh.visual.TextureVisuals):
             material = visual.material
             image = getattr(material, "baseColorTexture", None) or getattr(material, "image", None)
@@ -326,6 +332,9 @@ class _Colors:
             self.factor = (
                 np.ones(3, np.float32) if factor is None else np.asarray(factor[:3], np.float32) / 255
             )
+            maps = getattr(material, "metallicRoughnessTexture", None)
+            if maps is not None:
+                self.mr_texture = np.asarray(maps.convert("RGB"), dtype=np.float32) / 255
         else:
             assert isinstance(visual, trimesh.visual.ColorVisuals)
             self.vertex = np.asarray(visual.vertex_colors, dtype=np.float32)[:, :3] / 255
@@ -336,6 +345,12 @@ class _Colors:
             uv = np.einsum("ij,ijk->ik", bary, self.uv[corners])
             return (_bilinear(self.texture, uv) * self.factor).astype(np.float32)
         return np.einsum("ij,ijk->ik", bary, self.vertex[corners]).astype(np.float32)
+
+    def mr_at(self, tris: NDArray[np.int64], bary: F) -> F32:
+        """Roughness and metallic (G and B of the map) in [0, 1], shape (n, 2)."""
+        assert self.mr_texture is not None
+        uv = np.einsum("ij,ijk->ik", bary, self.uv[self.faces[tris]])
+        return _bilinear(self.mr_texture, uv)[:, 1:3]
 
 
 def sample_color(mesh: trimesh.Trimesh, tris: NDArray[np.int64], bary: F) -> F32:
@@ -466,11 +481,16 @@ def bake(
     seed: int = 0,
     color: bool = False,
     samples: int = 4,
+    color_from: trimesh.Trimesh | None = None,
 ) -> BakeResult:
     """`cage` and `ao_radius` are fractions of the low-poly's bounding-box diagonal; without
     `cage` it is measured from the meshes. `samples` per texel is 1 or 4.
 
     With `color`, the high-poly's base color is baked too, from the same hits as the normals.
+    With `color_from`, the base color (and the metallic-roughness map, if it has one) comes from
+    that mesh instead, typically a painted version of the shape denser than the low-poly: its own
+    rays, from the same cage with the same retries, samples per texel and gutter filling. Normals
+    and AO still come from the high-poly.
     """
     uv = mesh_ops.uvs_of(low)
     corner, groups = tangent_ops.corner_tangents(low.vertices, low.vertex_normals, uv, low.faces)
@@ -501,9 +521,20 @@ def bake(
 
     offsets = (_RGSS if samples > 1 else np.zeros((1, 2))).astype(np.float32)
     grads = _bary_gradients(uv, space.faces, size)
-    colors = _Colors(high) if color and has_color(high) else None
+    source = color_from if color_from is not None else (high if color else None)
+    colors = _Colors(source) if source is not None and has_color(source) else None
+    paint_rays = None
+    if colors is not None and color_from is not None:
+        paint_rays = _Rays(
+            (np.asarray(color_from.vertices, np.float64) - center) / diag,
+            color_from.faces,
+            np.asarray(color_from.vertex_normals),
+        )
+    with_mr = colors is not None and colors.mr_texture is not None
 
-    def normals_chunk(part: slice) -> tuple[F, NDArray[np.bool_], F | None]:
+    def normals_chunk(
+        part: slice,
+    ) -> tuple[F, NDArray[np.bool_], tuple[F, F | None, NDArray[np.bool_]] | None]:
         tr, b0 = t_tris[part], t_bary[part]
         k = len(offsets)
         sub = _near_triangle(b0[:, None, :] + np.einsum("ijk,lk->ilj", grads[tr], offsets))
@@ -517,14 +548,21 @@ def bake(
             n_ts[hit] = _to_tangent_space(n_high, tng[hit], btg[hit], nrm[hit])
         texel = _unit(n_ts.reshape(-1, k, 3).mean(axis=1))
         hits = hit.reshape(-1, k)
-        rgb = None
+        painted = None
         if colors is not None:
-            c = np.zeros((len(pos), 3), dtype=np.float32)
-            if hit.any():
-                c[hit] = colors.at(h_tris[hit], h_bary[hit])
-            got = hits.sum(axis=1)
-            rgb = (c.reshape(-1, k, 3) * hits[..., None]).sum(axis=1) / np.maximum(got, 1)[:, None]
-        return texel, hits.any(axis=1), rgb
+            # The painted mesh has its own surface, so its rays are cast apart from the high-poly's.
+            c_hit, c_tris, c_bary = hit, h_tris, h_bary
+            if paint_rays is not None:
+                c_hit, c_tris, c_bary = _cast(paint_rays, pos, nrm, cage_d)
+            c_hits = c_hit.reshape(-1, k)
+            rgb = _texel_mean(colors.at(c_tris[c_hit], c_bary[c_hit]) if c_hit.any() else None, c_hit, k, 3)
+            mr = None
+            if with_mr:
+                mr = _texel_mean(
+                    colors.mr_at(c_tris[c_hit], c_bary[c_hit]) if c_hit.any() else None, c_hit, k, 2
+                )
+            painted = (rgb, mr, c_hits.any(axis=1))
+        return texel, hits.any(axis=1), painted
 
     parts = _parallel(normals_chunk, len(ys))
     covered = tri_id >= 0
@@ -540,16 +578,26 @@ def bake(
     ring[ys[~inside & hits], xs[~inside & hits]] = True
     normal_tex = fill_gutters(normal_tex * 0.5 + 0.5, covered, keep=ring)
 
-    color_img = None
+    color_img, mr_img = None, None
     if colors is not None:
         rgb = np.zeros((size, size, 3), dtype=np.float32)
+        mr = np.zeros((size, size, 2), dtype=np.float32)
         got = np.zeros((size, size), dtype=bool)
+        c_ring = np.zeros((size, size), dtype=bool)
         if parts:
-            rgb[ys, xs] = np.concatenate([p[2] for p in parts])
-            got[ys[inside & hits], xs[inside & hits]] = True
+            rgb[ys, xs] = np.concatenate([p[2][0] for p in parts])
+            if with_mr:
+                mr[ys, xs] = np.concatenate([p[2][1] for p in parts])
+            c_hits = np.concatenate([p[2][2] for p in parts])
+            got[ys[inside & c_hits], xs[inside & c_hits]] = True
+            c_ring[ys[~inside & c_hits], xs[~inside & c_hits]] = True
         # Texels whose rays all missed take their neighbors' color; gutters stay filled for mipmaps.
-        rgb = fill_gutters(rgb, got, keep=ring)
+        rgb = fill_gutters(rgb, got, keep=c_ring)
         color_img = Image.fromarray((np.clip(rgb, 0, 1) * 255).round().astype(np.uint8), "RGB")
+        if with_mr:
+            mr = fill_gutters(mr, got, keep=c_ring)
+            maps = (np.clip(mr, 0, 1) * 255).round().astype(np.uint8)
+            mr_img = Image.fromarray(np.dstack([np.full(maps.shape[:2], 255, np.uint8), maps]), "RGB")
 
     ao_full = _bake_ao(space, rays, size, ao_scale, ao_samples, ao_radius, cage_d, seed)
     white = Image.new("L", (size, size), 255)
@@ -561,8 +609,20 @@ def bake(
         ray_engine=rays.engine,
         mesh=low,
         color=color_img,
+        mr=mr_img,
         cage=cage_d,
     )
+
+
+def _texel_mean(values: F | None, hit: NDArray[np.bool_], k: int, width: int) -> F:
+    """Per texel, the mean of the values of those of its k samples that hit (zeros when none
+    did). `values` holds one row per hit sample, in order, and is None when nothing hit."""
+    full = np.zeros((len(hit), width), dtype=np.float32)
+    if values is not None:
+        full[hit] = values
+    hits = hit.reshape(-1, k)
+    got = hits.sum(axis=1)
+    return (full.reshape(-1, k, width) * hits[..., None]).sum(axis=1) / np.maximum(got, 1)[:, None]
 
 
 def _split(

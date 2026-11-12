@@ -28,6 +28,20 @@ describe('optionalOverrides', () => {
     })
   })
 
+  it('offers the denser mesh as a switch that is off until it is turned on', () => {
+    const mobile: Preset = {
+      ...preset,
+      id: 'mobile-prop',
+      stages: [
+        { id: 'lowpoly', use: 'mesh.decimate' },
+        { id: 'dense', use: 'mesh.decimate', optional: { label: 'Paint a denser mesh', default: false } },
+        { id: 'paint', use: 'texture' },
+      ],
+    }
+    expect(optionalOverrides(mobile, (_s, d) => d)).toEqual({ 'dense.enabled': false })
+    expect(optionalOverrides(mobile, (s, d) => s === 'dense' || d)).toEqual({ 'dense.enabled': true })
+  })
+
   it('keeps a step off where no provider can run it, even if switched on before', () => {
     const blocked = { ...preset, unavailable: { remesh: 'Blender 4.2 or newer was not found' } }
     expect(optionalOverrides(blocked, () => true)).toEqual({ 'remesh.enabled': false, 'match.enabled': true })

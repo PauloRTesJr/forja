@@ -58,13 +58,16 @@ class Cleanup(Adapter):
 
 
 class Decimate(Adapter):
+    """Simplifies a mesh to `target_tris` triangles. `source` picks which mesh input it reads
+    (default the first): a preset can wire a stage in front of it whose output it must not touch."""
+
     version = "2"
 
     def capabilities(self) -> Capabilities:
         return Capabilities(tasks=(StageType.MESH_DECIMATE,), devices=CPU)
 
     def run(self, ctx: StageContext) -> list[StageOutput]:
-        mesh = mesh_ops.load(ctx.input(ArtifactKind.MESH_GLB).path)
+        mesh = mesh_ops.load(ctx.input(ArtifactKind.MESH_GLB, int(ctx.params.get("source", 0))).path)
         low = mesh_ops.decimate(mesh, int(ctx.params.get("target_tris", 5000)))
         return [StageOutput(mesh_ops.save(low, ctx.out_dir / "lowpoly.glb"), ArtifactKind.MESH_GLB)]
 
@@ -225,11 +228,22 @@ class Bake(Adapter):
     When the low-poly was not painted (a model did shape and texture in one pass, so the paint
     stage was skipped), it is unwrapped here and the high-poly's colors are baked as its base
     color (docs/decisions.md, 16).
+
+    A third mesh input is optional. When it has fewer triangles than the first, it is the
+    low-poly and the first mesh is a denser painted version of the shape that only gives its
+    colors (docs/presets.md, "Paint a denser mesh"): the low-poly is unwrapped here if it has no
+    UVs, normals and AO still come from the high-poly, and the base color, with the painter's
+    roughness and metallic map when it made one, is sampled from the painted mesh onto the
+    low-poly's UVs. A first mesh with no colors of its own cannot give any, so the bake then runs
+    as for an unpainted low-poly. Otherwise (no third mesh, or one with as many triangles as the
+    first, which is then the painted low-poly itself) the third is ignored and the bake is as
+    described above.
     """
 
     # 3: MikkTSpace tangents, measured cage, 4 samples per texel, padded gutters, smoother AO.
     # 4: keeps a painted roughness and metallic map in the ORM's G and B.
-    version = "4"
+    # 5: an optional third input, the low-poly, takes its colors from a denser painted mesh.
+    version = "5"
 
     def capabilities(self) -> Capabilities:
         return Capabilities(tasks=(StageType.BAKE,), devices=CPU)
@@ -238,10 +252,18 @@ class Bake(Adapter):
         # The maps are baked against the low-poly's normals, so the GLB must carry those same ones.
         low = mesh_ops.load(ctx.input(ArtifactKind.MESH_GLB, 0).path, keep_normals=True)
         high = mesh_ops.load(ctx.input(ArtifactKind.MESH_GLB, 1).path)
+        paint: trimesh.Trimesh | None = None
+        if sum(i.kind == ArtifactKind.MESH_GLB for i in ctx.inputs) > 2:
+            plain = mesh_ops.load(ctx.input(ArtifactKind.MESH_GLB, 2).path, keep_normals=True)
+            if len(plain.faces) < len(low.faces):
+                paint, low = (low if bake.has_color(low) else None), plain
         if getattr(low.visual, "uv", None) is None:
             low = mesh_ops.unwrap(low)
         material = getattr(low.visual, "material", None)
         base = getattr(material, "baseColorTexture", None)
+        paint_material = getattr(paint.visual, "material", None) if paint is not None else material
+        if paint is not None:
+            base = getattr(paint_material, "baseColorTexture", None) or getattr(paint_material, "image", None)
         size = int(ctx.params.get("resolution") or (base.size[0] if base is not None else 1024))
         cage = ctx.params.get("cage")
         ctx.progress(1, 3)
@@ -255,8 +277,9 @@ class Bake(Adapter):
             seed=ctx.seed,
             color=base is None,
             samples=int(ctx.params.get("samples", 4)),
+            color_from=paint,
         )
-        if base is None:
+        if base is None or paint is not None:
             base = result.color
         ctx.progress(2, 3)
         ctx.check_cancel()
@@ -269,9 +292,10 @@ class Bake(Adapter):
                 result.hit_ratio * 100,
             )
         orm = result.orm
-        painted = getattr(material, "metallicRoughnessTexture", None)
-        if painted is not None:
-            occlusion = orm.getchannel("R")
+        occlusion = orm.getchannel("R")
+        if result.mr is not None:
+            orm = Image.merge("RGB", (occlusion, result.mr.getchannel("G"), result.mr.getchannel("B")))
+        elif paint is None and (painted := getattr(material, "metallicRoughnessTexture", None)) is not None:
             maps = painted.convert("RGB").resize(occlusion.size, Image.Resampling.BILINEAR)
             orm = Image.merge("RGB", (occlusion, maps.getchannel("G"), maps.getchannel("B")))
         low = result.mesh
@@ -283,8 +307,8 @@ class Bake(Adapter):
                 normalTexture=result.normal,
                 occlusionTexture=orm,
                 metallicRoughnessTexture=orm,
-                roughnessFactor=_factor(material, "roughnessFactor", 0.8),
-                metallicFactor=_factor(material, "metallicFactor", 0.0),
+                roughnessFactor=_factor(paint_material, "roughnessFactor", 0.8),
+                metallicFactor=_factor(paint_material, "metallicFactor", 0.0),
             ),
         )
         out.vertex_normals = low.vertex_normals  # type: ignore[method-assign]  # trimesh property setter

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { Job, Stage } from './api'
 import { applyProgress, jobFraction, phaseState, phasesOf, previewOf, stageTime, summarize, upsertJob } from './jobs'
-import { count, seconds, skeletonName, stageLabel, taskNoun } from './format'
+import { count, seconds, skeletonName, stageLabel, stageName, taskNoun } from './format'
 
 const stage = (id: string, status: Stage['status'], extra: Partial<Stage> = {}): Stage => ({
   id, use: id, status, outputs: [], seconds: 0, step: 0, total: 0, ...extra,
@@ -126,6 +126,12 @@ describe('format', () => {
     expect(taskNoun('rig')).toBe('rigging')
     expect(stageLabel('rig')).toBe('Rig')
     expect([skeletonName({ skeleton: 'humanoid' }), skeletonName({ skeleton: 'generic' })]).toEqual(['Humanoid', 'Generic'])
+  })
+
+  it('tells the denser mesh a preset paints from the low-poly beside it', () => {
+    expect(stageName({ id: 'lowpoly', use: 'mesh.decimate' })).toBe('Low-poly')
+    expect(stageName({ id: 'dense', use: 'mesh.decimate' })).toBe('Dense mesh')
+    expect(stageName({ id: 'bg-left', use: 'background-removal' })).toBe('Background · left side')
   })
 
 })

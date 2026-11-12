@@ -1,6 +1,9 @@
 package presets
 
-import "testing"
+import (
+	"slices"
+	"testing"
+)
 
 func TestBuiltinsParse(t *testing.T) {
 	all, err := Load()
@@ -69,7 +72,7 @@ func TestOptionalStagesSwitchAndRewire(t *testing.T) {
 		return nil
 	}
 	off := mp.Active()
-	if got := bakeInputs(off); got[0] != "paint" || got[1] != "cleanup" {
+	if got := bakeInputs(off); got[0] != "paint" || got[1] != "cleanup" || got[2] != "lowpoly" {
 		t.Fatalf("with match off, bake reads %v", got)
 	}
 	for _, id := range ids(off) {
@@ -86,6 +89,93 @@ func TestOptionalStagesSwitchAndRewire(t *testing.T) {
 	}
 	if _, err := mp.WithOverrides(map[string]any{"paint.enabled": false}); err == nil {
 		t.Fatal("switched off a stage that is not optional")
+	}
+}
+
+// reads is what the stage called id reads in p, or nil when p has no such stage.
+func reads(p *Preset, id string) []string {
+	for _, s := range p.Stages {
+		if s.ID == id {
+			return s.Inputs
+		}
+	}
+	return nil
+}
+
+func TestPaintingADenserMeshRewiresThePainterAndTheBake(t *testing.T) {
+	all, _ := Load()
+	tests := []struct {
+		name   string
+		preset string
+		on     map[string]any
+		dense  []string // what dense reads, nil when it does not run
+		paint  string   // the mesh the painter reads
+		bake   []string
+	}{
+		{"mobile-prop off", "mobile-prop", nil, nil, "lowpoly", []string{"paint", "cleanup", "lowpoly"}},
+		{"mobile-prop on", "mobile-prop", map[string]any{"dense.enabled": true},
+			[]string{"lowpoly", "cleanup"}, "dense", []string{"paint", "cleanup", "lowpoly"}},
+		{"mobile-prop on with match", "mobile-prop", map[string]any{"dense.enabled": true, "match.enabled": true},
+			[]string{"lowpoly", "cleanup"}, "dense", []string{"match", "cleanup", "lowpoly"}},
+		{"environment-piece off", "environment-piece", nil, nil, "lowpoly", []string{"paint", "cleanup", "lowpoly"}},
+		{"environment-piece on", "environment-piece", map[string]any{"dense.enabled": true},
+			[]string{"lowpoly", "cleanup"}, "dense", []string{"paint", "cleanup", "lowpoly"}},
+		{"environment-piece uv", "environment-piece", map[string]any{"uv.enabled": true},
+			nil, "uv", []string{"paint", "cleanup", "uv"}},
+		{"environment-piece remesh", "environment-piece", map[string]any{"remesh.enabled": true},
+			nil, "remesh", []string{"paint", "cleanup", "remesh"}},
+		{"environment-piece on with uv", "environment-piece", map[string]any{"dense.enabled": true, "uv.enabled": true},
+			[]string{"uv", "cleanup"}, "dense", []string{"paint", "cleanup", "uv"}},
+		{"environment-piece on with remesh", "environment-piece", map[string]any{"dense.enabled": true, "remesh.enabled": true},
+			[]string{"remesh", "cleanup"}, "dense", []string{"paint", "cleanup", "remesh"}},
+		{"environment-piece on with uv and remesh", "environment-piece",
+			map[string]any{"dense.enabled": true, "uv.enabled": true, "remesh.enabled": true, "match.enabled": true},
+			[]string{"uv", "cleanup"}, "dense", []string{"match", "cleanup", "uv"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p, err := all[tt.preset].WithOverrides(tt.on)
+			if err != nil {
+				t.Fatal(err)
+			}
+			a := p.Active()
+			if got := reads(a, "dense"); !slices.Equal(got, tt.dense) {
+				t.Errorf("dense reads %v, want %v", got, tt.dense)
+			}
+			if got := reads(a, "paint"); got[0] != tt.paint || got[1] != "frame" {
+				t.Errorf("paint reads %v, want [%s frame]", got, tt.paint)
+			}
+			if got := reads(a, "bake"); !slices.Equal(got, tt.bake) {
+				t.Errorf("bake reads %v, want %v", got, tt.bake)
+			}
+			if tt.dense != nil && reads(a, "lowpoly") == nil && reads(a, "remesh") == nil {
+				t.Error("the low-poly is gone while dense is on")
+			}
+		})
+	}
+}
+
+func TestDenseIsAnOptionalDecimationOfTheHighPolyThatIsOffByDefault(t *testing.T) {
+	all, _ := Load()
+	for _, id := range []string{"mobile-prop", "environment-piece"} {
+		var dense *Stage
+		for i, s := range all[id].Stages {
+			if s.ID == "dense" {
+				dense = &all[id].Stages[i]
+			}
+		}
+		if dense == nil || dense.Use != "mesh.decimate" || dense.Optional == nil || !dense.Off || dense.Optional.Default {
+			t.Fatalf("%s: dense = %+v", id, dense)
+		}
+		// It reads the high-poly (input 1), never the low-poly it is wired behind.
+		if dense.Params["target_tris"] != 40000 || dense.Params["source"] != 1 || dense.Inputs[1] != "cleanup" {
+			t.Errorf("%s: dense = %+v", id, dense)
+		}
+	}
+	// The hero is already at 30k triangles: no switch, and the bake reads two meshes as before.
+	hero := all["hero-character"].Active()
+	if reads(hero, "dense") != nil || len(reads(hero, "bake")) != 2 {
+		t.Errorf("hero-character: dense %v, bake %v", reads(hero, "dense"), reads(hero, "bake"))
 	}
 }
 

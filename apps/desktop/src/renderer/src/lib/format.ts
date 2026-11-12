@@ -53,10 +53,14 @@ export const stageLabel = (use: string): string => stageLabels[use] ?? use
 
 const sideViews: Record<string, string> = { left: 'left side', back: 'back', right: 'right side' }
 
-/** A job's stage by name: the copies that prepare another view say which ("bg-left"). */
+/**
+ * A job's stage by name: the copies that prepare another view say which ("bg-left"), and the
+ * denser mesh a preset can paint is told apart from the low-poly it sits beside.
+ */
 export function stageName(s: { id: string; use: string }): string {
   const view = /-(left|back|right)$/.exec(s.id)?.[1]
-  return view && (s.use === 'background-removal' || s.use === 'framing') ? `${stageLabel(s.use)} · ${sideViews[view]}` : stageLabel(s.use)
+  if (view && (s.use === 'background-removal' || s.use === 'framing')) return `${stageLabel(s.use)} · ${sideViews[view]}`
+  return s.id === 'dense' && s.use === 'mesh.decimate' ? 'Dense mesh' : stageLabel(s.use)
 }
 
 /** A stage type as a noun in a sentence: "a background removal model". */

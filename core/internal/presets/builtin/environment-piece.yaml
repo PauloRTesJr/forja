@@ -30,7 +30,20 @@ stages:
         unwrap, which suits hard-surface pieces and makes the texture easier to edit by hand.
         Needs Blender 4.2 or newer.
       default: false
-  - { id: paint, use: texture, params: { resolution: 2048 }, inputs: [uv, frame] }
+  # Off, `dense` hands the painter the low-poly (with the UVs above, when they are on); on, a
+  # denser mesh whose colors the bake carries onto the low-poly and its UVs.
+  - id: dense
+    use: mesh.decimate
+    inputs: [uv, cleanup]
+    params: { target_tris: 40000, source: 1 }
+    optional:
+      label: Paint a denser mesh
+      help: >-
+        Paints a 40,000-triangle version of the shape and bakes its colors onto the low-poly,
+        so painted detail lines up with the detail in the normal map. Slower: the painter
+        unwraps the denser mesh.
+      default: false
+  - { id: paint, use: texture, params: { resolution: 2048 }, inputs: [dense, frame] }
   - id: match
     use: texture.match
     inputs: [paint, frame]
@@ -41,6 +54,6 @@ stages:
         painted texture back toward them, and projects the reference onto the parts of the
         asset it shows. When the job has back and side views, those are projected too.
       default: false
-  - { id: bake, use: bake, inputs: [match, cleanup] }
+  - { id: bake, use: bake, inputs: [match, cleanup, uv] }
   - { id: lods, use: mesh.lods, params: { ratios: [0.5, 0.25] } }
   - { id: export, use: export, params: { format: glb, compression: meshopt } }

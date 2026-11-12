@@ -104,3 +104,25 @@ def test_cleanup_turns_flipped_faces_of_a_textured_mesh_outward():
     assert (outward > 0).all()
     assert bake.has_color(clean)
     assert len(clean.visual.uv) == len(clean.vertices)
+
+
+def test_decimate_reads_the_mesh_input_its_source_names(tmp_path):
+    from forja_engine.adapters.builtin import Decimate
+    from forja_engine.sdk import ArtifactKind, StageContext, StageInput, StageType
+
+    small = trimesh.creation.icosphere(subdivisions=3)  # 1,280 triangles, 2 wide
+    big = trimesh.creation.box((4, 4, 4)).subdivide().subdivide().subdivide()  # 768 triangles, 4 wide
+    paths = [m.save(big, tmp_path / "big.glb"), m.save(small, tmp_path / "small.glb")]
+    inputs = [StageInput(p, ArtifactKind.MESH_GLB, "") for p in paths]
+
+    def run(name: str, **params) -> trimesh.Trimesh:
+        out = tmp_path / name
+        out.mkdir()
+        ctx = StageContext("d", StageType.MESH_DECIMATE, inputs, {"target_tris": 200, **params}, 0, out)
+        return m.load(Decimate().run(ctx)[0].path)
+
+    first, explicit, second = run("a"), run("b", source=0), run("c", source=1)
+    assert explicit.bounds.tolist() == first.bounds.tolist()  # 0 is the default
+    assert first.extents.max() > 3.5  # the box
+    assert second.extents.max() < 2.1  # the sphere
+    assert 0 < len(second.faces) <= 200
