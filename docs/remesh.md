@@ -96,3 +96,14 @@ forja generate statue.png --preset hero-character --set bake.cage=0.02
 ```
 
 Ray casting uses Embree, through `embreex`, on Windows, macOS and Linux on x86-64. Where it has no build, normals fall back to the nearest high-poly vertex and AO is left white, so a bake never fails for lack of it.
+
+### Baking colors from a denser mesh
+
+Painters condition on renders of the mesh they are given, and Hunyuan3D-2 Paint's own tooling reduces meshes to 40,000 faces before painting, never to 5,000. Painted detail on a 5,000-triangle low-poly cannot line up with the detail the bake takes from the high-poly into the normal map. The **Paint a denser mesh** switch (`dense`, off by default, on Mobile prop and Environment piece; [optional stages](presets.md#optional-stages)) paints a 40,000-triangle decimation of the high-poly instead and lets the bake carry its colors onto the low-poly:
+
+- The bake takes the painted dense mesh as its first input, the high-poly as its second and the unpainted low-poly as a third. A third mesh with **fewer triangles** than the first is the low-poly; the first then gives only its colors. With no third mesh, or one with as many triangles as the first, the bake runs as described above.
+- The low-poly is unwrapped in the bake when it has no UVs (it does not on Mobile prop, and on Environment piece with the Smart UV switch off; with it on, those UVs are the ones baked into). Normals and AO come from the high-poly as before.
+- The base color, and the painter's roughness and metallic map when it made one, are sampled from the painted mesh by rays from the same cage, with the same retries, samples per texel and gutter filling as the normals. Roughness and metallic factors come from the painted mesh's material, and the maps' size is `bake.resolution`, else the painted texture's size.
+- A dense mesh with no colors of its own (a hosted model that does shape and texture skips the paint stage) cannot give any: the bake then takes the high-poly's colors, as it does when the paint stage is skipped.
+
+The second set of rays makes the bake about half again as long: on a 5,000-triangle low-poly with a 40,000-triangle painted mesh at 1024 pixels, about 5 seconds instead of 3 on a developer laptop. The painter has more triangles to unwrap too. Whether the painted detail is better in the end has not been measured on real painters; compare both on your own images with `forja generate chest.png` and `forja generate chest.png --with dense`.

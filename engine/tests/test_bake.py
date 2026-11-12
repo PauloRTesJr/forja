@@ -307,3 +307,122 @@ def test_the_baked_glb_carries_mikktspace_tangents_of_its_own_normals(tmp_path):
     written = np.frombuffer(raw[start : start + view["byteLength"]], dtype="<f4").reshape(-1, 4)
     out = m.load(path, keep_normals=True)
     assert np.allclose(written, m.vertex_tangents(out, m.uvs_of(out)), atol=1e-5)
+
+
+def painted_sphere(
+    subdivisions: int = 4, size: int = 256
+) -> tuple[trimesh.Trimesh, trimesh.Trimesh, Image.Image]:
+    """A dense unit sphere painted with its own position (RGB = position / 2 + 1/2) that carries
+    the same texture as its metallic-roughness map, and its unpainted 10x-decimated low-poly."""
+    dense = m.unwrap(trimesh.creation.icosphere(subdivisions=subdivisions))
+    tri_id, b = bake.raster_uv(m.uvs_of(dense), dense.faces, size)
+    covered = tri_id >= 0
+    corners = np.asarray(dense.vertices)[dense.faces[tri_id[covered]]]
+    tex = np.zeros((size, size, 3), dtype=np.float32)
+    tex[covered] = np.einsum("nj,njk->nk", b[covered], corners) * 0.5 + 0.5
+    tex = bake.fill_gutters(tex, covered)
+    image = Image.fromarray((np.clip(tex, 0, 1) * 255).round().astype(np.uint8), "RGB")
+    painted = m.textured(dense, image, 0.7, 0.2, metallic_roughness=image)
+    low = m.decimate(trimesh.creation.icosphere(subdivisions=subdivisions), len(dense.faces) // 10)
+    return painted, low, image
+
+
+def covered_positions(low: trimesh.Trimesh, size: int) -> tuple[np.ndarray, np.ndarray]:
+    """Where each covered texel of the low-poly lies on the unit sphere, and which texels are covered."""
+    tri_id, b = bake.raster_uv(m.uvs_of(low), low.faces, size)
+    covered = tri_id >= 0
+    corners = np.asarray(low.vertices)[low.faces[tri_id[covered]]]
+    p = np.einsum("nj,njk->nk", b[covered], corners)
+    return p / np.linalg.norm(p, axis=1, keepdims=True), covered
+
+
+def test_colors_of_a_denser_painted_mesh_land_on_the_low_poly():
+    painted, low, _ = painted_sphere()
+    high = trimesh.creation.icosphere(subdivisions=6)
+    r = bake.bake(m.unwrap(low), high, 128, ao_samples=2, color_from=painted)
+    assert r.hit_ratio >= 0.95 and r.color is not None and r.color.size == (128, 128)
+    want, covered = covered_positions(r.mesh, 128)
+    got = np.asarray(r.color, dtype=np.float64)[covered] / 255 * 2 - 1
+    err = np.linalg.norm(got - want, axis=1)
+    # The painted texture is read bilinearly and the low-poly sits a little inside the sphere, so
+    # the match is close, not exact.
+    assert np.median(err) < 0.03 and np.percentile(err, 95) < 0.15
+
+
+def test_a_painted_metallic_roughness_map_follows_the_colors_onto_the_low_poly():
+    painted, low, _ = painted_sphere()
+    high = trimesh.creation.icosphere(subdivisions=6)
+    r = bake.bake(m.unwrap(low), high, 128, ao_samples=2, color_from=painted)
+    assert r.mr is not None and r.mr.size == (128, 128)
+    covered = bake.raster_uv(m.uvs_of(r.mesh), r.mesh.faces, 128)[0] >= 0
+    rgb, maps = np.asarray(r.color)[covered], np.asarray(r.mr)[covered]
+    # The map is the colors' own texture, so on the low-poly its G and B are the colors' G and B.
+    assert np.abs(maps[:, 1].astype(int) - rgb[:, 1]).max() <= 1
+    assert np.abs(maps[:, 2].astype(int) - rgb[:, 2]).max() <= 1
+    assert maps[:, 1].std() > 20  # it varies: not a constant that happens to match
+    unmapped = painted.copy()
+    unmapped.visual = trimesh.visual.TextureVisuals(
+        uv=m.uvs_of(painted), material=trimesh.visual.material.PBRMaterial(baseColorTexture=r.color)
+    )
+    assert bake.bake(m.unwrap(low), high, 64, ao_samples=2, color_from=unmapped).mr is None
+
+
+def bake_ctx(folder, *meshes, **params):
+    from forja_engine.sdk import ArtifactKind, StageContext, StageInput, StageType
+
+    folder.mkdir()
+    paths = [m.save(mesh, folder / f"in{i}.glb") for i, mesh in enumerate(meshes)]
+    (folder / "out").mkdir()
+    return StageContext(
+        "bake",
+        StageType.BAKE,
+        [StageInput(p, ArtifactKind.MESH_GLB, "") for p in paths],
+        {"ao_samples": 2, **params},
+        0,
+        folder / "out",
+    )
+
+
+def test_bake_stage_takes_colors_from_a_denser_painted_first_input(tmp_path):
+    from forja_engine.adapters.builtin import Bake
+
+    painted, low, image = painted_sphere()
+    high = trimesh.creation.icosphere(subdivisions=5)
+    [out] = Bake().run(bake_ctx(tmp_path / "a", painted, high, low))
+    baked = m.load(out.path, keep_normals=True)
+    mat = baked.visual.material
+    assert len(low.faces) <= len(baked.faces) < len(painted.faces)  # the low-poly's topology
+    assert mat.baseColorTexture.size == image.size  # the painter's resolution
+    assert mat.normalTexture.size == image.size
+    assert mat.roughnessFactor == pytest.approx(0.7) and mat.metallicFactor == pytest.approx(0.2)
+    orm = np.asarray(mat.metallicRoughnessTexture.convert("RGB"))
+    assert orm[..., 1].std() > 10 and orm[..., 2].std() > 10  # the painted map, moved to the new UVs
+    [forced] = Bake().run(bake_ctx(tmp_path / "b", painted, high, low, resolution=64))
+    assert m.load(forced.path).visual.material.normalTexture.size == (64, 64)
+
+
+def test_a_first_input_without_colors_bakes_the_high_polys_colors_as_before(tmp_path):
+    """A hosted model did shape and texture, and the denser stage only made an unpainted mesh."""
+    from forja_engine.adapters.builtin import Bake
+
+    high = trimesh.creation.icosphere(subdivisions=4)
+    blue = np.tile([10, 20, 230, 255], (len(high.vertices), 1))
+    high.visual = trimesh.visual.ColorVisuals(high, vertex_colors=blue)
+    dense = trimesh.creation.icosphere(subdivisions=3)
+    low = m.decimate(trimesh.creation.icosphere(subdivisions=3), 100)
+    [out] = Bake().run(bake_ctx(tmp_path / "x", dense, high, low, resolution=64))
+    base = m.load(out.path).visual.material.baseColorTexture
+    assert base is not None and np.asarray(base.convert("RGB"))[..., 2].mean() > 150
+
+
+def test_a_third_input_with_as_many_triangles_changes_nothing(tmp_path):
+    """Without a denser mesh the third input is the painted low-poly's own unpainted twin."""
+    from forja_engine.adapters.builtin import Bake
+
+    high = trimesh.creation.icosphere(subdivisions=4)
+    plain = m.decimate(high, 300)
+    maps = Image.new("RGB", (64, 64), (0, 150, 30))
+    low = m.textured(m.unwrap(plain), Image.new("RGB", (128, 128), (9, 99, 199)), 1.0, 1.0, maps)
+    two = Bake().run(bake_ctx(tmp_path / "two", low, high))[0].path.read_bytes()
+    three = Bake().run(bake_ctx(tmp_path / "three", low, high, plain))[0].path.read_bytes()
+    assert two == three

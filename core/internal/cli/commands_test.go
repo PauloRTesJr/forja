@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -116,6 +117,32 @@ func TestBlenderSwitchesSayWhyTheyCannotRunAndRefuseTheJob(t *testing.T) {
 	r = h.cli("", "generate", img, "--preset", "hero-character", "--with", "remesh")
 	if r.code == 0 || !strings.Contains(r.err, "no provider can run mesh.remesh: Blender 4.2 or newer was not found") {
 		t.Fatalf("exit %d: %s", r.code, r.err)
+	}
+}
+
+func TestPaintingADenserMeshIsASwitchOnTheCommandLine(t *testing.T) {
+	h := newHarness(t)
+	img := h.image("chest.png")
+	if out := h.ok("generate", img, "--preset", "mobile-prop", "--dry-run"); !strings.Contains(out, "Paint a denser mesh (dense.enabled)") {
+		t.Fatalf("the plan does not offer the switch:\n%s", out)
+	}
+	ran := func(args ...string) (ids []string) {
+		var jobs []*library.Job
+		h.okJSON(&jobs, append([]string{"generate", img, "--preset", "mobile-prop"}, args...)...)
+		if len(jobs) != 1 || jobs[0].Status != library.Succeeded {
+			t.Fatalf("job %+v", jobs)
+		}
+		for _, s := range jobs[0].Stages {
+			ids = append(ids, s.ID)
+		}
+		return ids
+	}
+	if off := ran(); slices.Contains(off, "dense") {
+		t.Fatalf("dense runs by default: %v", off)
+	}
+	on := ran("--with", "dense")
+	if at := slices.Index(on, "dense"); at < 0 || at > slices.Index(on, "paint") {
+		t.Fatalf("stages with --with dense: %v", on)
 	}
 }
 

@@ -6,9 +6,21 @@ stages:
   - { id: frame, use: framing, params: { size: 1024 } }
   - { id: shape, use: shape }
   - { id: cleanup, use: mesh.cleanup }
-  - { id: lowpoly, use: mesh.decimate, params: { target_tris: 5000 } }
-  # Painters unwrap UVs themselves, so there is no separate UV stage.
-  - { id: paint, use: texture, params: { resolution: 1024 }, inputs: [lowpoly, frame] }
+  - { id: lowpoly, use: mesh.decimate, inputs: [cleanup], params: { target_tris: 5000 } }
+  # Painters unwrap UVs themselves, so there is no separate UV stage. Off, `dense` hands the
+  # painter the low-poly; on, a denser mesh whose colors the bake carries onto the low-poly.
+  - id: dense
+    use: mesh.decimate
+    inputs: [lowpoly, cleanup]
+    params: { target_tris: 40000, source: 1 }
+    optional:
+      label: Paint a denser mesh
+      help: >-
+        Paints a 40,000-triangle version of the shape and bakes its colors onto the low-poly,
+        so painted detail lines up with the detail in the normal map. Slower: the painter
+        unwraps the denser mesh.
+      default: false
+  - { id: paint, use: texture, params: { resolution: 1024 }, inputs: [dense, frame] }
   - id: match
     use: texture.match
     inputs: [paint, frame]
@@ -19,6 +31,6 @@ stages:
         painted texture back toward them, and projects the reference onto the parts of the
         asset it shows. When the job has back and side views, those are projected too.
       default: false
-  - { id: bake, use: bake, inputs: [match, cleanup] }
+  - { id: bake, use: bake, inputs: [match, cleanup, lowpoly] }
   - { id: lods, use: mesh.lods, params: { ratios: [0.5, 0.25] } }
   - { id: export, use: export, params: { format: glb, compression: meshopt } }

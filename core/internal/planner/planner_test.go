@@ -53,6 +53,49 @@ func TestTextureOnlyChangeKeepsShapeKeys(t *testing.T) {
 	expectChanged(t, changed(a, b), "paint", "bake", "lods", "export")
 }
 
+func TestADenserMeshAddsOneStageAndRekeysWhatReadsIt(t *testing.T) {
+	off, on := plan(t, nil), plan(t, map[string]any{"dense.enabled": true})
+	ids := func(p *Plan) string {
+		var out []string
+		for _, s := range p.Stages {
+			out = append(out, s.ID)
+		}
+		return strings.Join(out, ",")
+	}
+	if got := ids(off); got != "bg,frame,shape,cleanup,lowpoly,paint,bake,lods,export" {
+		t.Fatalf("off: %s", got)
+	}
+	if got := ids(on); got != "bg,frame,shape,cleanup,lowpoly,dense,paint,bake,lods,export" {
+		t.Fatalf("on: %s", got)
+	}
+	keys := func(p *Plan) map[string]string {
+		out := map[string]string{}
+		for _, s := range p.Stages {
+			out[s.ID] = s.Key
+		}
+		return out
+	}
+	a, b := keys(off), keys(on)
+	for _, id := range []string{"bg", "frame", "shape", "cleanup", "lowpoly"} {
+		if a[id] != b[id] {
+			t.Errorf("%s was rekeyed by the denser mesh", id)
+		}
+	}
+	for _, id := range []string{"paint", "bake", "lods", "export"} {
+		if a[id] == b[id] {
+			t.Errorf("%s kept its key although it now works on another mesh", id)
+		}
+	}
+	// What the low-poly and the high-poly are stays in the bake's inputs, in order.
+	bake := on.Stages[on.Index("bake")]
+	if got := strings.Join(bake.Inputs, ","); got != "paint,cleanup,lowpoly" {
+		t.Errorf("bake reads %s", got)
+	}
+	if got := strings.Join(on.Stages[on.Index("paint")].Inputs, ","); got != "dense,frame" {
+		t.Errorf("paint reads %s", got)
+	}
+}
+
 func TestKeysAreDeterministic(t *testing.T) {
 	expectChanged(t, changed(plan(t, nil), plan(t, nil)))
 }

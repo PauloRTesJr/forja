@@ -11,7 +11,7 @@ A preset is a pipeline: the stages a job runs, in order, with their budgets. It 
 | Environment piece | `environment-piece` | 15,000 | 2K base color, baked normal and AO | 50% and 25% | Buildings, rocks, set dressing |
 | Hero character | `hero-character` | 30,000 | 2K base color, baked normal and AO | 50% and 25% | Characters seen up close; optionally rigged |
 
-Every preset starts the same way: remove the background, frame the subject at 1024 pixels, generate the shape, clean it up. The textured presets then reduce the mesh to their triangle budget, paint it (the painter unwraps UVs itself, unless a UV stage did), bake the high-poly detail into normal and AO maps ([baking](remesh.md#baking)), build the LODs and export a GLB, meshopt-compressed when `gltfpack` is on your `PATH`.
+Every preset starts the same way: remove the background, frame the subject at 1024 pixels, generate the shape, clean it up. The textured presets then reduce the mesh to their triangle budget, paint it (the painter unwraps UVs itself, unless a UV stage did; Mobile prop and Environment piece can paint a denser, 40,000-triangle version instead, see [optional stages](#optional-stages)), bake the high-poly detail into normal and AO maps ([baking](remesh.md#baking)), build the LODs and export a GLB, meshopt-compressed when `gltfpack` is on your `PATH`.
 
 Local painters produce base color only. Roughness and metallic are constants, the paint stage's `roughness` (0.8) and `metallic` (0) parameters.
 
@@ -24,10 +24,12 @@ Optional stages are switches under the preset on Generate, all off by default. F
 | Match the reference colors | `match` | Mobile prop, Environment piece, Hero character | Pulls the painted texture back toward the reference image's colors and projects the reference onto the parts of the asset it shows, and the back and side views too when the job has them. Painting models can drift in color; turn it on when they do |
 | Quad remesh with Blender | `remesh` | Environment piece, Hero character | Rebuilds the mesh from even quads in place of the decimation, within the same triangle budget ([quad remesh](remesh.md#quad-remesh)) |
 | Unwrap with Blender's Smart UV Project | `uv` | Environment piece, Hero character | Unwraps before painting, in fewer, straighter islands ([Smart UV](remesh.md#smart-uv-project)) |
+| Paint a denser mesh | `dense` | Mobile prop, Environment piece | Paints a 40,000-triangle version of the shape instead of the low-poly, then bakes its colors onto the low-poly together with the normals ([details](remesh.md#baking-colors-from-a-denser-mesh)). Slower; not measured on real painters yet, so try it against the default on your own images |
 | Rig the character | `rig` | Hero character | Adds a skeleton and skin weights ([rigging](rigging.md)) |
 
 ```sh
 forja generate chest.png --with match
+forja generate chest.png --with dense
 forja generate knight.png --preset hero-character --with remesh --with rig
 ```
 
@@ -80,13 +82,13 @@ A stage reads the previous stage's output unless `inputs` names other stage ids,
 | `framing` | built in | the cut-out |
 | `shape` | a model | the framed cut-out (and side views) |
 | `mesh.cleanup` | built in | a mesh |
-| `mesh.decimate` | built in | a mesh; `target_tris` |
+| `mesh.decimate` | built in | a mesh; `target_tris`, and `source`, the number of the input to read (default 0: the first) |
 | `mesh.remesh` | built in, through Blender | a mesh; `target_tris`, `preserve_sharp` |
 | `mesh.uv` | built in | a mesh (painters unwrap for themselves) |
 | `mesh.uv.smart` | built in, through Blender | a mesh; `angle_limit`, `margin` |
 | `texture` | a model | a mesh and the framed cut-out |
 | `texture.match` | built in | the painted mesh and the framed cut-out, plus the framed left, back and right views when the job has them |
-| `bake` | built in | the low-poly painted mesh and the high-poly mesh; `resolution`, `samples`, `cage`, `ao_samples`, `ao_radius` |
+| `bake` | built in | the low-poly painted mesh and the high-poly mesh, and optionally the unpainted low-poly as a third mesh with fewer triangles than the first, which then only gives its colors ([denser mesh](remesh.md#baking-colors-from-a-denser-mesh)); `resolution`, `samples`, `cage`, `ao_samples`, `ao_radius` |
 | `rig` | a model | the baked low-poly mesh |
 | `mesh.lods` | built in | a mesh; `ratios` |
 | `export` | built in | a mesh; `format: glb`, `compression: meshopt` |
