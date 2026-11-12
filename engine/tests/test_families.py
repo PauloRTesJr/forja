@@ -8,6 +8,7 @@ import contextlib
 import importlib
 import math
 import os
+import re
 import sys
 import types
 from pathlib import Path
@@ -180,7 +181,7 @@ def test_triposg_yaw_and_cancel(tmp_path, triposg):
 
 @pytest.fixture
 def hunyuan(monkeypatch, fake_torch):
-    log = {"offload": 0, "renders": []}
+    log = {"offload": 0, "renders": [], "inner_offload": [], "generators": []}
 
     class Config:
         def __init__(self, delight, multiview, subfolder):
@@ -188,22 +189,53 @@ def hunyuan(monkeypatch, fake_torch):
             self.render_size = self.texture_size = 2048
             self.device = "cuda"
 
+    class Diffusion:
+        """What upstream calls `net.pipeline`: a diffusers pipeline."""
+
+        device = "cuda"
+
+        def __init__(self, name):
+            self.name = name
+
+        def enable_model_cpu_offload(self, **kwargs):
+            log["inner_offload"].append(self.name)
+
+        def __call__(self, images, num_inference_steps, generator, **kwargs):
+            log["generators"].append((generator.device, generator.seed))
+            return types.SimpleNamespace(
+                images=[Image.new("RGB", (512, 512), (40 * i, 0, 0)) for i in range(6)]
+            )
+
     class Net:
-        def __init__(self, config):
+        def __init__(self, config, name):
             self.device = config.device
+            self.pipeline = Diffusion(name)
+
+        def __call__(self, images, controls, camera_info):
+            # As Multiview_Diffusion_Net.__call__ does: its generator is always seeded with 0.
+            seed0 = sys.modules["torch"].Generator(device=self.pipeline.device).manual_seed(0)
+            return self.pipeline(images, num_inference_steps=30, generator=seed0).images
 
     class Pipeline:
         def __init__(self, config):
             self.config = config
             log["built_on"] = config.device
-            self.models = {"delight_model": Net(config), "multiview_model": Net(config)}
+            self.models = {
+                "delight_model": Net(config, "delight"),
+                "multiview_model": Net(config, "multiview"),
+            }
 
         def enable_model_cpu_offload(self):
             log["offload"] += 1
+            for net in self.models.values():
+                net.pipeline.enable_model_cpu_offload()
 
         def __call__(self, mesh, image):
             assert all(i.mode == "RGBA" for i in image)
             log["images"] = len(image)
+            views = self.models["multiview_model"](image, [], [])
+            log["view_sizes"] = [v.size for v in views]
+            log["baked_from"] = [v.resize((self.config.render_size,) * 2) for v in views]  # as upstream does
             mesh = sys.modules["hy3dgen.texgen.pipelines"].mesh_uv_wrap(mesh)  # as upstream does
             tex = Image.new("RGB", (self.config.texture_size,) * 2, (10, 200, 30))
             mat = trimesh.visual.texture.SimpleMaterial(image=tex)
@@ -314,6 +346,180 @@ def test_hunyuan_offload_at_load_builds_in_ram(tmp_path, hunyuan):
     assert {n.device for n in a.pipe.models.values()} == {"cuda"}
     a.run(ctx(tmp_path, StageType.TEXTURE, paint_inputs(tmp_path), offload=True))
     assert log["offload"] == 1  # not enabled a second time at run
+
+
+def paint_seeded(adapter, tmp_path, seed, **params):
+    c = ctx(tmp_path, StageType.TEXTURE, paint_inputs(tmp_path), **params)
+    c.seed = seed
+    return adapter.run(c)[0]
+
+
+def test_hunyuan_paint_draws_its_views_from_the_job_seed(tmp_path, hunyuan):
+    adapter, log = hunyuan
+    paint_seeded(adapter, tmp_path, 7)
+    paint_seeded(adapter, tmp_path, 8)
+    paint_seeded(adapter, tmp_path, 7)
+    # Upstream asked for seed 0 every time; the generator keeps its device.
+    assert log["generators"] == [("cuda", 7), ("cuda", 8), ("cuda", 7)]
+    assert log["inner_offload"] == []  # nothing offloaded unless asked
+
+
+class Upscaler:
+    """Stands in for the Real-ESRGAN network: the real one needs torch and a GPU."""
+
+    def __init__(self):
+        self.calls, self.placed = [], []
+
+    def half(self):
+        return self
+
+    def to(self, device):
+        self.placed.append(device)
+        return self
+
+
+@pytest.fixture
+def upscaler(monkeypatch, hunyuan):
+    from forja_hunyuan3d2 import upscale
+
+    adapter, log = hunyuan
+    net = Upscaler()
+    monkeypatch.setattr(upscale, "load_network", lambda path: net)
+
+    def enlarge(self, network, image):
+        net.calls.append(image.size)
+        return image.resize((image.width * 4, image.height * 4))
+
+    monkeypatch.setattr(upscale.Upscaler, "_one", enlarge)
+    return adapter, log, net
+
+
+def test_hunyuan_paint_sharpens_each_view_before_baking(tmp_path, upscaler):
+    adapter, log, net = upscaler
+    out = paint_seeded(adapter, tmp_path, 7)
+    assert log["view_sizes"] == [(2048, 2048)] * 6  # 512 px views, 4x
+    assert net.calls == [(512, 512)] * 6
+    assert net.placed == ["cuda", "cpu"]  # on the GPU for the pass only
+    assert [v.size for v in log["baked_from"]] == [(2048, 2048)] * 6
+    assert out.note == ""
+    assert adapter.sharpened.enabled
+
+
+def test_hunyuan_paint_can_leave_its_views_as_they_are(tmp_path, upscaler):
+    adapter, log, net = upscaler
+    out = paint_seeded(adapter, tmp_path, 7, upscale=False)
+    assert log["view_sizes"] == [(512, 512)] * 6 and net.calls == [] and out.note == ""
+    paint_seeded(adapter, tmp_path, 7)  # and the next job asks again
+    assert len(net.calls) == 6
+
+
+def test_hunyuan_paint_says_when_it_has_no_upscaler(tmp_path, hunyuan, caplog):
+    adapter, log = hunyuan  # /w/realesrgan/RealESRGAN_x4plus.pth does not exist
+    out = paint_seeded(adapter, tmp_path, 7)
+    assert log["view_sizes"] == [(512, 512)] * 6
+    assert out.note == (
+        "The texture was not sharpened: repair Hunyuan3D-2 Paint on the Models screen to fetch its upscaler."
+    )
+    assert "will not sharpen" in caplog.text
+    assert paint_seeded(adapter, tmp_path, 7, upscale=False).note == ""  # asked not to: nothing to say
+
+
+def test_hunyuan_paint_skips_an_upscaler_whose_weights_do_not_load(tmp_path, hunyuan, monkeypatch):
+    from forja_hunyuan3d2 import upscale
+
+    adapter, log = hunyuan
+
+    def refuse(path):
+        raise upscale.Unavailable("not a Real-ESRGAN x4plus checkpoint")
+
+    monkeypatch.setattr(upscale, "load_network", refuse)
+    out = paint_seeded(adapter, tmp_path, 7)
+    assert log["view_sizes"] == [(512, 512)] * 6 and "upscaler" in out.note
+
+
+def test_hunyuan_paint_keeps_its_views_when_the_upscaler_runs_out_of_memory(tmp_path, upscaler, monkeypatch):
+    from forja_hunyuan3d2 import upscale
+
+    adapter, log, net = upscaler
+
+    def oom(self, network, image):
+        raise RuntimeError("CUDA out of memory")
+
+    monkeypatch.setattr(upscale.Upscaler, "_one", oom)
+    out = paint_seeded(adapter, tmp_path, 7)
+    assert log["view_sizes"] == [(512, 512)] * 6  # the diffusion is not thrown away
+    assert out.note.startswith("The texture was not sharpened") and net.placed == ["cuda", "cpu"]
+    assert paint_seeded(adapter, tmp_path, 7, upscale=False).note == ""  # the flag resets per run
+
+
+def test_hunyuan_paint_finds_an_upscaler_fetched_after_it_loaded(tmp_path, hunyuan, monkeypatch):
+    from forja_hunyuan3d2 import upscale
+
+    adapter, _ = hunyuan
+    adapter.weights_dir = tmp_path
+    adapter.upscaler.path = tmp_path / upscale.WEIGHTS
+    net = Upscaler()
+
+    def load(path):
+        if not path.is_file():
+            raise upscale.Unavailable(f"{path} is missing")
+        return net
+
+    monkeypatch.setattr(upscale, "load_network", load)
+    assert paint_seeded(adapter, tmp_path, 7).note  # no file yet
+    adapter.upscaler.path.parent.mkdir(parents=True)
+    adapter.upscaler.path.write_bytes(b"weights")  # a repair
+    monkeypatch.setattr(upscale.Upscaler, "_one", lambda self, network, image: image)
+    assert paint_seeded(adapter, tmp_path, 7).note == ""
+
+
+def test_the_rrdbnet_enlarges_4x_and_names_its_weights_like_the_checkpoint(tmp_path):
+    torch = pytest.importorskip("torch")
+    from forja_hunyuan3d2 import upscale
+
+    net = upscale.rrdbnet().eval()
+    with torch.inference_mode():
+        assert tuple(net(torch.rand(1, 3, 16, 16)).shape) == (1, 3, 64, 64)
+    names = set(net.state_dict())
+    block = r"body\.\d+\.rdb[123]\.conv[1-5]\.(weight|bias)"
+    top = ("conv_first", "conv_body", "conv_up1", "conv_up2", "conv_hr", "conv_last")
+    assert all(re.fullmatch(block, n) or n.split(".")[0] in top for n in names)
+    assert len(names) == 23 * 3 * 5 * 2 + len(top) * 2
+    # The file as Real-ESRGAN releases it: weights under params_ema.
+    path = tmp_path / "x4.pth"
+    torch.save({"params_ema": net.state_dict()}, path)
+    loaded = upscale.load_network(path)
+    assert not loaded.training and not any(p.requires_grad for p in loaded.parameters())
+    torch.save({"params": net.state_dict()}, path)
+    with pytest.raises(upscale.Unavailable, match="not a Real-ESRGAN"):
+        upscale.load_network(path)
+    with pytest.raises(upscale.Unavailable, match="missing"):
+        upscale.load_network(tmp_path / "nothing.pth")
+    # The upscaler end to end on the CPU: any image, 4x, RGB.
+    torch.save({"params_ema": net.state_dict()}, path)
+    out = upscale.Upscaler(path, device="cpu")(
+        [Image.new("RGB", (16, 8), (200, 30, 30)), Image.new("RGBA", (8, 8), (0, 0, 0, 0))]
+    )
+    assert [(o.size, o.mode) for o in out] == [((64, 32), "RGB"), ((32, 32), "RGB")]
+
+
+def test_the_wrappers_pass_the_offload_hooks_and_the_device_on(tmp_path, hunyuan):
+    from forja_hunyuan3d2 import Hunyuan3D2Paint
+
+    _, log = hunyuan
+    a = Hunyuan3D2Paint()
+    a.weights_dir, a.offload = Path("/w"), True
+    a.load(Device.CUDA)
+    # What upstream's enable_model_cpu_offload reaches: each model's own diffusers pipeline.
+    assert log["inner_offload"] == ["delight", "multiview"]
+    models = a.pipe.models
+    assert models["multiview_model"] is a.sharpened
+    assert {n.device for n in models.values()} == {"cuda"}  # the loop set it through the wrapper
+    inner = a.sharpened._net
+    assert inner.device == "cuda" and inner.pipeline is a.seeded
+    assert a.seeded.device == "cuda" and a.seeded._pipeline.device == "cuda"
+    a.unload()
+    assert a.pipe is None and a.upscaler is None
 
 
 # --- Hunyuan3D-2mv -------------------------------------------------------------------------

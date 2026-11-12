@@ -8,6 +8,10 @@ time and never committed to Forja.
 Paint's output is base color only, with constant roughness and metallic (docs/decisions.md, 6).
 Upstream unwraps UVs with xatlas; a mesh that already has UVs (a preset's UV stage, such as
 Blender's Smart UV Project) keeps them.
+
+Upstream draws its six views at 512 px with a fixed seed. Forja seeds that diffusion with the
+job's seed and, when the Real-ESRGAN file is installed (upscale.py), enlarges each view 4x
+before upstream resizes it to the render size.
 """
 
 from __future__ import annotations
@@ -33,10 +37,16 @@ from forja_engine.sdk import (
     StageType,
 )
 
+from .upscale import WEIGHTS as UPSCALER_WEIGHTS
+from .upscale import SharpenedViews, Upscaler
+
 GB = 1 << 30
 DELIGHT = "hunyuan3d-delight-v2-0"
 PAINT_TURBO = "hunyuan3d-paint-v2-0-turbo"
 MV_TURBO = "hunyuan3d-dit-v2-mv-turbo"
+NOT_SHARPENED = "The texture was not sharpened: {why}"
+UPSCALER_MISSING = "repair Hunyuan3D-2 Paint on the Models screen to fetch its upscaler."
+UPSCALER_FAILED = "the upscaler failed on this computer's GPU (see the engine log)."
 
 
 def texture_image(mesh: trimesh.Trimesh) -> Image.Image:
@@ -69,15 +79,48 @@ def keep_uvs(wrap: Any) -> Any:
     return unwrap
 
 
+class SeededPipeline:
+    """The multiview diffusion pipeline, drawing its noise from the job's seed.
+
+    Upstream's Multiview_Diffusion_Net passes `generator=Generator(...).manual_seed(0)` on every
+    call, so a job's seed never changed the paint. This replaces that generator with one on the
+    same device, seeded by `seed`; every other attribute is the wrapped pipeline's.
+    """
+
+    def __init__(self, pipeline: Any, torch: Any) -> None:
+        object.__setattr__(self, "_pipeline", pipeline)
+        object.__setattr__(self, "_torch", torch)
+        object.__setattr__(self, "seed", 0)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._pipeline, name)
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        if name == "seed":
+            object.__setattr__(self, name, value)
+        else:
+            setattr(self._pipeline, name, value)
+
+    def __call__(self, *args: Any, **kwargs: Any) -> Any:
+        if (upstream := kwargs.get("generator")) is not None:
+            kwargs["generator"] = self._torch.Generator(device=upstream.device).manual_seed(self.seed)
+        return self._pipeline(*args, **kwargs)
+
+
 class Hunyuan3D2Paint(Adapter):
-    # 2: keeps the UVs of a mesh that has them instead of unwrapping it again.
-    version = "2"
+    # 3: the job's seed reaches the multiview diffusion, and its 512 px views are upscaled 4x
+    # (Real-ESRGAN) before baking. 2: keeps the UVs of a mesh that has them instead of unwrapping
+    # it again.
+    version = "3"
 
     def __init__(self) -> None:
         self.pipe: Any = None
         self.torch: Any = None
         self.offloaded = False
         self.sizes: tuple[int, int] | None = None
+        self.seeded: SeededPipeline | None = None
+        self.sharpened: SharpenedViews | None = None
+        self.upscaler: Upscaler | None = None
 
     def capabilities(self) -> Capabilities:
         return Capabilities(tasks=(StageType.TEXTURE,), devices=(Device.CUDA,), vram_bytes=int(12.5 * GB))
@@ -101,6 +144,14 @@ class Hunyuan3D2Paint(Adapter):
             # construction, and that full load is what overflows a 12 GB card.
             config.device = "cpu"
         self.pipe = Hunyuan3DPaintPipeline(config)
+        # Before the loop below and the offload hooks: they reach the wrappers, which pass
+        # `.device` and `.pipeline` on to the objects upstream built.
+        net = self.pipe.models["multiview_model"]
+        self.seeded = SeededPipeline(net.pipeline, torch)
+        net.pipeline = self.seeded
+        self.upscaler = Upscaler(self.weights_dir / UPSCALER_WEIGHTS)
+        self.sharpened = SharpenedViews(net, self.upscaler)
+        self.pipe.models["multiview_model"] = self.sharpened
         if self.offload:
             for net in self.pipe.models.values():
                 net.device = "cuda"  # inputs go where the offload hooks run each model
@@ -109,11 +160,18 @@ class Hunyuan3D2Paint(Adapter):
         self.sizes = (config.render_size, config.texture_size)
 
     def unload(self) -> None:
-        self.pipe = None
+        self.pipe = self.seeded = self.sharpened = self.upscaler = None
         self.offloaded = False
         gc.collect()
         if self.torch is not None:
             self.torch.cuda.empty_cache()
+
+    def _sharpen(self, wanted: bool) -> str:
+        """Turns the upscaler on for this run; returns why it is off when the person asked for it."""
+        assert self.sharpened is not None and self.upscaler is not None
+        self.sharpened.failed = ""
+        self.sharpened.enabled = wanted and self.upscaler.ready()
+        return UPSCALER_MISSING if wanted and not self.sharpened.enabled else ""
 
     def _configure(self, render_size: int, texture_size: int) -> None:
         if self.sizes == (render_size, texture_size):
@@ -142,7 +200,11 @@ class Hunyuan3D2Paint(Adapter):
         ctx.progress(1, 3)
         ctx.check_cancel()
 
+        assert self.seeded is not None and self.sharpened is not None
+        self.seeded.seed = ctx.seed
+        why = self._sharpen(bool(ctx.params.get("upscale", True)))
         painted = self.pipe(mesh, image=images)
+        why = why or (UPSCALER_FAILED if self.sharpened.failed else "")
         ctx.progress(2, 3)
         ctx.check_cancel()
 
@@ -155,7 +217,7 @@ class Hunyuan3D2Paint(Adapter):
         )
         path = mesh_ops.save(out, ctx.out_dir / "textured.glb")
         ctx.progress(3, 3)
-        return [StageOutput(path, ArtifactKind.MESH_GLB)]
+        return [StageOutput(path, ArtifactKind.MESH_GLB, note=NOT_SHARPENED.format(why=why) if why else "")]
 
 
 class Hunyuan3D2MV(Adapter):

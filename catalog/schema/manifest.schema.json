@@ -170,7 +170,7 @@
           }
         },
         "extra": {
-          "description": "Further weights the model's code loads, each pinned: a Hugging Face repository downloaded into <dir>, or one file over HTTPS saved at <path>, both inside the model's weights folder.",
+          "description": "Further weights the model's code loads, each pinned: a Hugging Face repository downloaded into <dir>, or one file over HTTPS saved at <path>, both inside the model's weights folder. `optional: true` marks a weight the model works without (its adapter skips the feature that needs it): install and repair still fetch it, but a download that fails does not fail the install, and a model installed before the weight was added stays ready.",
           "type": "array",
           "items": {
             "oneOf": [
@@ -182,6 +182,7 @@
                   "repo": { "type": "string", "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$" },
                   "revision": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
                   "dir": { "$ref": "#/$defs/relpath" },
+                  "optional": { "type": "boolean" },
                   "allow": { "type": "array", "items": { "type": "string" } },
                   "ignore": { "type": "array", "items": { "type": "string" } },
                   "files": { "$ref": "#/$defs/weights/properties/files" }
@@ -195,6 +196,7 @@
                   "url": { "type": "string", "pattern": "^https://" },
                   "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
                   "path": { "$ref": "#/$defs/relpath" },
+                  "optional": { "type": "boolean" },
                   "bytes": { "type": "integer", "minimum": 0 }
                 }
               }

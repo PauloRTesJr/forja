@@ -2,8 +2,9 @@ id: hunyuan3d2-paint
 name: Hunyuan3D-2 Paint (turbo)
 family: hunyuan3d2
 adapter: forja_hunyuan3d2:Hunyuan3D2Paint
-# 2: keeps the UVs of a mesh that has them.
-adapter_version: "2"
+# 3: the job's seed reaches the multiview diffusion, and its 512 px views are upscaled 4x
+# before they are baked. 2: keeps the UVs of a mesh that has them.
+adapter_version: "3"
 tasks: [texture]
 rank: 10
 # Upstream's paint pipeline takes a list of reference images, as in its multi-view example.
@@ -34,9 +35,15 @@ weights:
   ignore: ["hunyuan3d-paint-v2-0-turbo/unet/diffusion_pytorch_model.safetensors"]
   files:
     - { path: hunyuan3d-paint-v2-0-turbo/unet/diffusion_pytorch_model.bin, sha256: 24e7f1aea8a7c94cee627eb06f5265f19eeff4e19568636c5eaef050cc19ba3d, bytes: 7325432923 }
+  extra:
+    # Real-ESRGAN x4plus (BSD-3-Clause, https://github.com/xinntao/Real-ESRGAN/blob/master/LICENSE),
+    # which sharpens the six 512 px views before they are baked. Optional: a model installed before
+    # this file was added stays ready, and paints unsharpened until it is repaired.
+    - { url: "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.1.0/RealESRGAN_x4plus.pth", sha256: 4fa0d38905f75ac06eb49a7951b426670021be3018265fd191d2125df9d682f1, path: realesrgan/RealESRGAN_x4plus.pth, bytes: 67040989, optional: true }
 params:
   resolution: { type: integer, default: 2048, enum: [1024, 2048] }
   render_size: { type: integer, default: 2048, enum: [1024, 2048] }
   roughness: { type: number, default: 0.8, minimum: 0, maximum: 1 }
   metallic: { type: number, default: 0.0, minimum: 0, maximum: 1 }
+  upscale: { type: boolean, default: true, description: Sharpen the generated views 4x with Real-ESRGAN before baking them (needs its weights from a repair) }
   yaw_degrees: { type: number, default: 0, description: Rotate before painting so the front view matches the image }
