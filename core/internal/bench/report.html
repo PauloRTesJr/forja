@@ -96,6 +96,17 @@
       <td class="n">{{count .Triangles}}</td><td class="n">{{share .Watertight}}</td><td class="n">{{share .UVCoverage}}</td></tr>
     {{end}}
   </table></div>
+
+  {{if hasMeasures .Stages}}
+  <h3>What the stages measured about their outputs</h3>
+  <p class="muted">Medians over the samples, except cracks, which keep the worst sample. <code>forja bench compare</code> fails when a share falls or a crack count grows.</p>
+  <div class="wrap"><table>
+    <tr><th>Preset</th><th>Stage</th><th>Measured</th></tr>
+    {{range .Stages}}{{if .Metrics}}
+    <tr><td>{{.Preset}}</td><td>{{.Stage}} <span class="muted">{{.Use}}</span></td><td>{{range measures .Metrics}}{{.}}<br>{{end}}</td></tr>
+    {{end}}{{end}}
+  </table></div>
+  {{end}}
   {{end}}
 
   <h2>Images</h2>

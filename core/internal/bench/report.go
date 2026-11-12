@@ -11,7 +11,10 @@ import (
 	_ "image/jpeg" // reference images come as PNG or JPEG; WebP gets no thumbnail
 	"image/png"
 	"os"
+	"slices"
 	"time"
+
+	"forja/internal/quality"
 )
 
 //go:embed report.html
@@ -66,6 +69,10 @@ var reportTemplate = template.Must(template.New("report").Funcs(template.FuncMap
 	"over": func(spread Spread, budget float64) bool { return budget > 0 && spread.N > 0 && spread.Median > budget },
 	"overMS": func(spread Spread, budget float64) bool {
 		return budget > 0 && spread.N > 0 && spread.Median*1000 > budget
+	},
+	"measures": quality.Lines,
+	"hasMeasures": func(stages []StageSummary) bool {
+		return slices.ContainsFunc(stages, func(s StageSummary) bool { return len(s.Metrics) > 0 })
 	},
 	"date":  func(t time.Time) string { return t.Format("2006-01-02 15:04") },
 	"short": func(s string) string { return s[:min(len(s), 12)] },

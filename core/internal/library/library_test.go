@@ -354,3 +354,19 @@ func TestAJobAdmittedButNotStartedIsQueuedAgainOnceByFailUnfinished(t *testing.T
 		t.Fatalf("admitted twice: %s %q, resumed %d", j.Status, j.Error, j.Resumes)
 	}
 }
+
+// A stage's measures about its outputs come back merged, and a stage that measured nothing has none.
+func TestAStageMergesTheMetricsOfItsOutputs(t *testing.T) {
+	s := Stage{Outputs: []Output{
+		{Hash: "a", Metrics: map[string]float64{"match_iou": 0.9, "uv_coverage": 0.5}},
+		{Hash: "b"},
+		{Hash: "c", Metrics: map[string]float64{"uv_coverage": 0.7}},
+	}}
+	got := s.Metrics()
+	if len(got) != 2 || got["match_iou"] != 0.9 || got["uv_coverage"] != 0.7 {
+		t.Fatalf("merged %v", got)
+	}
+	if (&Stage{Outputs: []Output{{Hash: "a"}}}).Metrics() != nil || (&Stage{}).Metrics() != nil {
+		t.Fatal("a stage that measured nothing has no metrics")
+	}
+}

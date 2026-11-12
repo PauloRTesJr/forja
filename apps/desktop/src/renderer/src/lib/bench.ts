@@ -1,5 +1,6 @@
 import type { BenchComparison, BenchDelta, BenchEntry, BenchList, BenchPreset, BenchResult, BenchSample } from './api'
 import { bytes, seconds } from './format'
+import { metricName, metricValue } from './quality'
 
 export const sampleDone = (s: BenchSample): boolean => s.status === 'succeeded' || s.status === 'failed' || s.status === 'cancelled'
 
@@ -76,9 +77,12 @@ export function budgetState(p: BenchPreset): 'ok' | 'over' | undefined {
 /** What a delta measures, as a row label. */
 export function deltaName(d: BenchDelta): string {
   if (d.metric === 'core_overhead') return 'Core overhead per job'
-  const what = d.metric === 'failed' ? 'failed samples' : d.metric === 'peak_vram_bytes' ? 'peak VRAM' : d.stage ? 'time' : 'image to GLB'
+  const what = d.metric === 'failed' ? 'failed samples' : d.metric === 'peak_vram_bytes' ? 'peak VRAM' : isTimed(d.metric) ? (d.stage ? 'time' : 'image to GLB') : metricName(d.metric)
   return [d.preset, d.stage, what].filter(Boolean).join(' · ')
 }
+
+/** Whether a delta is one of the core's own measures rather than something a stage said about its output. */
+const isTimed = (metric: string): boolean => metric === 'seconds'
 
 /** A delta's value in its own unit. */
 export function deltaValue(d: BenchDelta, v: number): string {
@@ -87,8 +91,11 @@ export function deltaValue(d: BenchDelta, v: number): string {
       return bytes(v)
     case 'failed':
       return String(v)
-    default:
+    case 'core_overhead':
+    case 'seconds':
       return seconds(v)
+    default:
+      return metricValue(d.metric, v)
   }
 }
 

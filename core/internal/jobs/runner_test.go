@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -53,6 +54,8 @@ type fakeProvider struct {
 	unavailable map[string]string
 	// notes are what a stage type says about its first output, such as a stand-in it made.
 	notes map[string]string
+	// metrics are what a stage type measured about its first output.
+	metrics map[string]map[string]float64
 }
 
 var cpu = "cpu"
@@ -184,6 +187,7 @@ func (f *fakeProvider) Run(ctx context.Context, req engineapi.RunRequest, evs ch
 		}
 		f.mu.Lock()
 		outs[0].Note = f.notes[s.Use]
+		outs[0].Metrics = f.metrics[s.Use]
 		f.mu.Unlock()
 		produced[s.ID] = outs[0].Hash
 		secs := 0.01
@@ -297,6 +301,38 @@ func TestAnOutputsNoteStaysWithIt(t *testing.T) {
 		}
 		if !slices.Equal(s.OutputNotes(), want) {
 			t.Fatalf("stage %s: notes %q", s.ID, s.OutputNotes())
+		}
+	}
+}
+
+// What a stage measured about its output stays with the output, in the job as the library keeps it.
+func TestAnOutputsMetricsStayWithIt(t *testing.T) {
+	r, fp, _, _, img := setup(t)
+	fp.set(func(f *fakeProvider) {
+		f.metrics = map[string]map[string]float64{"bake": {"bake_hit_ratio": 0.99, "bake_cage": 0.05}}
+	})
+	j, err := r.Submit(context.Background(), SubmitRequest{Input: img, Preset: "mobile-prop"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := wait(t, r, j.ID)
+	for _, s := range done.Stages {
+		want := map[string]float64(nil)
+		if s.Use == "bake" {
+			want = map[string]float64{"bake_hit_ratio": 0.99, "bake_cage": 0.05}
+		}
+		if !maps.Equal(s.Metrics(), want) {
+			t.Fatalf("stage %s: metrics %v", s.ID, s.Metrics())
+		}
+	}
+	// The job comes back from the library the same, so the app and `jobs show` read what ran.
+	again, err := r.db.Job(context.Background(), j.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, s := range done.Stages {
+		if !maps.Equal(again.Stages[i].Metrics(), s.Metrics()) {
+			t.Fatalf("stage %s lost its metrics in the library: %v", s.ID, again.Stages[i].Metrics())
 		}
 	}
 }

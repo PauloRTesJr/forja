@@ -1248,7 +1248,7 @@ func (r *Runner) runBatch(ctx context.Context, a *active, plan *planner.Plan, id
 				return &stageError{provider: p.ID(), stages: idsAt(plan, idx), down: true,
 					err: fmt.Errorf("downloading %s: %w", o.Hash, err)}
 			}
-			outs = append(outs, library.Output{Hash: o.Hash, Kind: o.Kind, Preview: o.Preview, Note: o.Note})
+			outs = append(outs, library.Output{Hash: o.Hash, Kind: o.Kind, Preview: o.Preview, Note: o.Note, Metrics: o.Metrics})
 		}
 		seconds := 0.0
 		if st.Seconds != nil {

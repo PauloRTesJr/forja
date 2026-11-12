@@ -210,6 +210,137 @@ func TestCompareFailsOnlyPastTheThresholdAndTheNoiseFloor(t *testing.T) {
 	}
 }
 
+// measuredSample is a sample whose bake stage measured its output.
+func measuredSample(hit, cracks float64) jobs.Sample {
+	j := &library.Job{ID: "j", Status: library.Succeeded, Stages: []library.Stage{
+		{ID: "shape", Use: "shape", Status: library.Succeeded, Outputs: []library.Output{{Hash: "a"}}},
+		{ID: "bake", Use: "bake", Status: library.Succeeded, Outputs: []library.Output{
+			{Hash: "b", Metrics: map[string]float64{"bake_hit_ratio": hit, "lod_open_edges": cracks}}}},
+	}}
+	return jobs.Sample{Job: j, Wall: time.Second}
+}
+
+func TestEachSampleRecordsWhatItsStagesMeasuredAndTheSummaryKeepsTheMedianAndTheWorstCracks(t *testing.T) {
+	res := &Result{Options: Options{Presets: []string{"draft"}}}
+	for _, s := range []struct{ hit, cracks float64 }{{0.9, 0}, {0.99, 7}, {0.95, 2}} {
+		res.Jobs = append(res.Jobs, jobResult(JobResult{Preset: "draft"}, measuredSample(s.hit, s.cracks)))
+	}
+	if got := res.Jobs[1].Stages[1].Metrics; got["bake_hit_ratio"] != 0.99 || got["lod_open_edges"] != 7 {
+		t.Fatalf("the sample's stage: %v", got)
+	}
+	if res.Jobs[0].Stages[0].Metrics != nil {
+		t.Fatalf("a stage that measured nothing: %v", res.Jobs[0].Stages[0].Metrics)
+	}
+	sum := summarize(res, &Suite{}, time.Minute)
+	if got := sum.Stages[1].Metrics; got["bake_hit_ratio"] != 0.95 || got["lod_open_edges"] != 7 {
+		t.Fatalf("the summary: %v", got)
+	}
+	if sum.Stages[0].Metrics != nil {
+		t.Fatalf("a summary of nothing: %v", sum.Stages[0].Metrics)
+	}
+	raw, err := json.Marshal(res.Jobs[0])
+	if err != nil || !strings.Contains(string(raw), `"metrics":{"bake_hit_ratio":0.9,"lod_open_edges":0}`) {
+		t.Fatalf("the result file: %s %v", raw, err)
+	}
+}
+
+// withMeasures is a result whose shape stage measured m.
+func withMeasures(id string, m map[string]float64) *Result {
+	r := result(id, 10, 6, 0.05, 0)
+	r.Summary.Stages[0].Metrics = m
+	return r
+}
+
+func TestCompareFailsWhenASharedMeasureFallsOrCracksAppear(t *testing.T) {
+	th := Thresholds{Pct: 10, MinSeconds: 0.05, MinVRAMMB: 64}
+	run := func(base, cur map[string]float64) *Comparison {
+		t.Helper()
+		c, err := Compare(withMeasures("a", base), withMeasures("b", cur), th)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return c
+	}
+	regressed := func(c *Comparison) string {
+		var out []string
+		for _, d := range c.Deltas {
+			if d.Regression {
+				out = append(out, d.Stage+"/"+d.Metric)
+			}
+		}
+		return strings.Join(out, ",")
+	}
+	base := map[string]float64{"match_iou": 0.93, "match_reprojected": 0.41, "bake_hit_ratio": 0.99, "uv_coverage": 0.71,
+		"lod_open_edges": 0}
+	for _, c := range []struct {
+		name string
+		cur  map[string]float64
+		want string
+	}{
+		{"unchanged", base, ""},
+		{"a small slip", map[string]float64{"match_iou": 0.85, "match_reprojected": 0.41, "bake_hit_ratio": 0.99,
+			"uv_coverage": 0.71, "lod_open_edges": 0}, ""},
+		{"each share past 10% and 0.01", map[string]float64{"match_iou": 0.80, "match_reprojected": 0.30,
+			"bake_hit_ratio": 0.80, "uv_coverage": 0.60, "lod_open_edges": 0},
+			"shape/match_iou,shape/match_reprojected,shape/bake_hit_ratio,shape/uv_coverage"},
+		{"one crack", map[string]float64{"match_iou": 0.93, "match_reprojected": 0.41, "bake_hit_ratio": 0.99,
+			"uv_coverage": 0.71, "lod_open_edges": 1}, "shape/lod_open_edges"},
+		{"better everywhere", map[string]float64{"match_iou": 0.99, "match_reprojected": 0.5, "bake_hit_ratio": 1,
+			"uv_coverage": 0.8, "lod_open_edges": 0}, ""},
+	} {
+		cmp := run(base, c.cur)
+		if got := regressed(cmp); got != c.want {
+			t.Errorf("%s: regressions %q, want %q", c.name, got, c.want)
+		}
+		if len(cmp.Warnings) != 0 {
+			t.Errorf("%s: warnings %v", c.name, cmp.Warnings)
+		}
+	}
+	// A crack count is failed on any growth, a share only past the threshold in percent.
+	if c := run(map[string]float64{"lod_open_edges": 40}, map[string]float64{"lod_open_edges": 41}); c.Regressions != 1 {
+		t.Fatalf("41 cracks after 40: %+v", c.Deltas)
+	}
+	if c := run(map[string]float64{"uv_coverage": 0.5}, map[string]float64{"uv_coverage": 0.46}); c.Regressions != 0 {
+		t.Fatalf("a drop of 8%%: %+v", c.Deltas)
+	}
+}
+
+func TestAMeasureOnOneSideOnlyIsReportedAndNeverFails(t *testing.T) {
+	th := Thresholds{Pct: 10, MinSeconds: 0.05, MinVRAMMB: 64}
+	c, err := Compare(withMeasures("a", map[string]float64{"match_iou": 0.9}),
+		withMeasures("b", map[string]float64{"bake_hit_ratio": 0.1, "bake_cage": 0.3}), th)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Regressions != 0 {
+		t.Fatalf("regressions %+v", c.Deltas)
+	}
+	if len(c.Warnings) != 2 || !strings.Contains(c.Warnings[0], "baseline's draft has no bake_hit_ratio for stage shape") ||
+		!strings.Contains(c.Warnings[1], "this run's draft has no match_iou for stage shape") {
+		t.Fatalf("warnings %q", c.Warnings)
+	}
+}
+
+// A result file from before stages measured their outputs still loads and compares.
+func TestAnOldResultFileStillLoadsAndComparesWithoutFailing(t *testing.T) {
+	raw, err := json.Marshal(result("old", 10, 6, 0.05, 0))
+	if err != nil || strings.Contains(string(raw), `"metrics"`) {
+		t.Fatalf("an old file has no metrics: %s %v", raw, err)
+	}
+	path := write(t, filepath.Join(t.TempDir(), "bench.json"), string(raw))
+	old, err := ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cur := withMeasures("new", map[string]float64{"match_iou": 0.2, "lod_open_edges": 50})
+	for _, pair := range [][2]*Result{{old, cur}, {cur, old}} {
+		c, err := Compare(pair[0], pair[1], Thresholds{Pct: 10, MinSeconds: 0.05, MinVRAMMB: 64})
+		if err != nil || c.Regressions != 0 || len(c.Warnings) != 1 {
+			t.Fatalf("%+v %v", c, err)
+		}
+	}
+}
+
 func TestTheReportCarriesItsThumbnails(t *testing.T) {
 	st, err := store.Open(filepath.Join(t.TempDir(), "store"))
 	if err != nil {

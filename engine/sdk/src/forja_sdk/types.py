@@ -68,6 +68,11 @@ class StageOutput:
     # What the person should know about this output, in a sentence: a stage that could not do
     # what it was asked and made a stand-in says so here. The job shows it.
     note: str = ""
+    # What the stage measured about this output, by snake_case name: how well the mesh fits the
+    # reference (match_iou), how much of the texture the bake reached (bake_hit_ratio). Finite
+    # numbers only; the engine drops any other. Jobs show them and `forja bench compare` gates on
+    # the ones it knows.
+    metrics: dict[str, float] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

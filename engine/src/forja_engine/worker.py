@@ -10,13 +10,14 @@ corrupt the protocol stream.
     -> {"op": "unload"} / {"op": "exit"}
     <- {"type": "ready"} / {"type": "loaded", "adapter": ...}
     <- {"type": "progress", "id": ..., "step": n, "total": m}
-    <- {"type": "result", "id": ..., "outputs": [{"path", "kind", "preview", "note"}], "seconds": s}
+    <- {"type": "result", "id": ..., "outputs": [{"path", "kind", "preview", "note", "metrics"}], ...}
     <- {"type": "error", "id": ..., "error": "...", "cancelled": bool}
 """
 
 from __future__ import annotations
 
 import json
+import math
 import os
 import queue
 import sys
@@ -38,8 +39,28 @@ from forja_engine.sdk import (
 )
 
 
+def finite_metrics(metrics: dict[str, float]) -> dict[str, float]:
+    """The metrics that are finite numbers: one NaN or infinity would make the JSON invalid."""
+    out: dict[str, float] = {}
+    for key, value in metrics.items():
+        if isinstance(value, bool) or not isinstance(value, int | float):
+            continue
+        if math.isfinite(value):
+            out[str(key)] = float(value)
+    return out
+
+
 def outputs_to_json(outputs: list[StageOutput]) -> list[dict[str, Any]]:
-    return [{"path": str(o.path), "kind": str(o.kind), "preview": o.preview, "note": o.note} for o in outputs]
+    return [
+        {
+            "path": str(o.path),
+            "kind": str(o.kind),
+            "preview": o.preview,
+            "note": o.note,
+            "metrics": finite_metrics(o.metrics),
+        }
+        for o in outputs
+    ]
 
 
 def ctx_to_json(ctx: StageContext) -> dict[str, Any]:

@@ -365,6 +365,11 @@
 .stage-note.warn {
   color: var(--warn);
 }
+/* What the stage measured about its output arrives with the stage's result: it fades in, as the
+   rest of the row settles, instead of popping in. */
+.stage-note.measure {
+  animation: fade-in var(--dur-3) var(--ease-out) both;
+}
 
 @media (prefers-reduced-motion: reduce) {
   .seg.running > i,

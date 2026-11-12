@@ -3,7 +3,11 @@ package bench
 import (
 	"errors"
 	"fmt"
+	"maps"
+	"strings"
 	"time"
+
+	"forja/internal/quality"
 )
 
 // Thresholds say what counts as a regression: a value that grew by more than Pct percent,
@@ -14,7 +18,8 @@ type Thresholds struct {
 	MinVRAMMB  float64 `json:"min_vram_mb"`
 }
 
-// Metrics a comparison reads.
+// Metrics a comparison reads. Besides these, a stage's own measures (quality.Words lists them:
+// match_iou, bake_hit_ratio, uv_coverage, lod_open_edges) are compared under their own names.
 const (
 	MetricSeconds  = "seconds"         // median stage, or image-to-GLB, time
 	MetricVRAM     = "peak_vram_bytes" // highest peak over the samples
@@ -137,10 +142,57 @@ func Compare(baseline, current *Result, t Thresholds) (*Comparison, error) {
 			add(Delta{Preset: s.Preset, Stage: s.Stage, Metric: MetricVRAM, Baseline: float64(*b.PeakVRAMBytes),
 				Current: float64(*s.PeakVRAMBytes)}, floorVRAM)
 		}
+		compareMeasures(c, s.Preset, s.Stage, b.Metrics, s.Metrics)
 	}
 	if baseline.Summary.CoreOverhead.N > 0 && current.Summary.CoreOverhead.N > 0 {
 		add(Delta{Metric: MetricOverhead, Baseline: baseline.Summary.CoreOverhead.Median,
 			Current: current.Summary.CoreOverhead.Median}, floorSeconds)
 	}
 	return c, nil
+}
+
+// compareMeasures compares what a stage measured about its outputs. A share that fell by more
+// than the threshold, and by more than quality.MinDrop, regresses; so does any growth in a
+// count of flaws. A measure only one run has is warned about, never failed: runs from before
+// the engine reported it have none.
+func compareMeasures(c *Comparison, preset, stage string, baseline, current map[string]float64) {
+	all := maps.Clone(baseline)
+	if all == nil {
+		all = map[string]float64{}
+	}
+	maps.Copy(all, current)
+	var lacksBaseline, lacksCurrent []string
+	for _, key := range quality.Keys(all) {
+		if quality.DirectionOf(key) == quality.Informative {
+			continue
+		}
+		b, inBaseline := baseline[key]
+		v, inCurrent := current[key]
+		switch {
+		case !inBaseline:
+			lacksBaseline = append(lacksBaseline, key)
+			continue
+		case !inCurrent:
+			lacksCurrent = append(lacksCurrent, key)
+			continue
+		}
+		d := Delta{Preset: preset, Stage: stage, Metric: key, Baseline: b, Current: v,
+			Regression: quality.Regressed(key, b, v, c.Thresholds.Pct)}
+		if b != 0 {
+			pct := round((v-b)/b*100, 1)
+			d.Pct = &pct
+		}
+		if d.Regression {
+			c.Regressions++
+		}
+		c.Deltas = append(c.Deltas, d)
+	}
+	if len(lacksBaseline) > 0 {
+		c.Warnings = append(c.Warnings, fmt.Sprintf("the baseline's %s has no %s for stage %s", preset,
+			strings.Join(lacksBaseline, ", "), stage))
+	}
+	if len(lacksCurrent) > 0 {
+		c.Warnings = append(c.Warnings, fmt.Sprintf("this run's %s has no %s for stage %s", preset,
+			strings.Join(lacksCurrent, ", "), stage))
+	}
 }

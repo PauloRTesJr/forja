@@ -19,6 +19,7 @@ import (
 	"forja/internal/engineapi"
 	"forja/internal/jobs"
 	"forja/internal/library"
+	"forja/internal/quality"
 )
 
 func (a *app) generateCmd() *cobra.Command {
@@ -532,6 +533,9 @@ func (a *app) stageLines(j *library.Job, seen map[string]string) {
 		if s.Status == library.Succeeded {
 			for _, note := range s.OutputNotes() {
 				a.printf("  %-10s %-20s note: %s\n", j.Name, s.ID, note)
+			}
+			for _, line := range quality.Lines(s.Metrics()) {
+				a.printf("  %-10s %-20s %s\n", j.Name, s.ID, line)
 			}
 		}
 	}

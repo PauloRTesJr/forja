@@ -135,6 +135,10 @@ describe('budgets and deltas', () => {
     expect(deltaName({ ...d, stage: undefined, metric: 'seconds' })).toBe('draft · image to GLB')
     expect(deltaName({ ...d, preset: undefined, stage: undefined, metric: 'core_overhead' })).toBe('Core overhead per job')
     expect(deltaValue({ ...d, metric: 'core_overhead' }, 0.042)).toBe('42 ms')
+    const fit = { ...d, preset: 'mobile-prop', stage: 'match', metric: 'match_iou' }
+    expect(deltaName(fit)).toBe('mobile-prop · match · reference fit')
+    expect(deltaValue(fit, 0.93)).toBe('93%')
+    expect(deltaValue({ ...fit, metric: 'lod_open_edges' }, 3)).toBe('3')
     expect(pct(12.5)).toBe('+12.5%')
     expect(pct(-3)).toBe('-3.0%')
     expect(pct(null)).toBe('—')

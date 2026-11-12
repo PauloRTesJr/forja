@@ -3,6 +3,7 @@ import type { Stage } from '../lib/api'
 import { whereItRan } from '../lib/estimate'
 import { stageName } from '../lib/format'
 import { phaseState, phasesOf, progressText, stageFraction, stageTime } from '../lib/jobs'
+import { measureLines as measures } from '../lib/quality'
 
 /**
  * The pipeline as a segmented bar: a segment per stage, grouped by phase. Each segment fills
@@ -62,6 +63,7 @@ export function StageList({ stages }: { stages: Stage[] }) {
       <tbody>
         {stages.map((s) => {
           const where = whereItRan(s)
+          const lines = measures(s)
           return (
             <tr key={s.id} className={s.status}>
               <td>
@@ -78,6 +80,7 @@ export function StageList({ stages }: { stages: Stage[] }) {
                         {o.note}
                       </span>
                     ))}
+                {lines.length > 0 && <span className="stage-note measure">{lines.join(' · ')}</span>}
               </td>
               <td className="stage-model" title={where}>
                 {s.model ?? 'built-in'}

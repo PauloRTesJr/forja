@@ -14,6 +14,7 @@ import (
 	"forja/internal/api"
 	"forja/internal/jobs"
 	"forja/internal/library"
+	"forja/internal/quality"
 )
 
 // pageQuery is ?limit=&before= for the job and asset lists; before is a date or a time.
@@ -252,6 +253,9 @@ func (a *app) showJob(j *library.Job) {
 		}
 		for _, note := range s.OutputNotes() {
 			a.printf("%s: %s\n", s.ID, note)
+		}
+		for _, line := range quality.Lines(s.Metrics()) {
+			a.printf("%s: %s\n", s.ID, line)
 		}
 		if s.Error != "" {
 			a.printf("%s failed: %s\n", s.ID, s.Error)

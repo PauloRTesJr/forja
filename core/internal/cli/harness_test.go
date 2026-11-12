@@ -51,6 +51,8 @@ type fakeEngine struct {
 	measured []bool
 	// notes are what a stage type says about its first output, such as a stand-in it made.
 	notes map[string]string
+	// metrics are what a stage type measured about its first output.
+	metrics map[string]map[string]float64
 	// refuse, when set, is the refusal every run gets instead of running.
 	refuse string
 }
@@ -180,6 +182,7 @@ func (e *fakeEngine) Run(_ context.Context, req engineapi.RunRequest, evs chan<-
 			produced[s.ID] = outs[0].Hash
 			e.mu.Lock()
 			outs[0].Note = e.notes[s.Use]
+			outs[0].Metrics = e.metrics[s.Use]
 			e.mu.Unlock()
 		}
 		secs := 0.01
