@@ -525,22 +525,24 @@ func (a *app) stageLines(j *library.Job, seen map[string]string) {
 			seen[key+"#note"] = s.Note
 			a.printf("  %-10s %-20s %s\n", j.Name, s.ID, s.Note)
 		}
-		if seen[key] == string(s.Status) {
-			continue
+		if seen[key] != string(s.Status) {
+			seen[key] = string(s.Status)
+			switch {
+			case s.Status == library.Running:
+				a.printf("  %-10s %-20s running\n", j.Name, s.ID)
+			case s.Status == library.Succeeded && s.PeakVRAM > 0:
+				a.printf("  %-10s %-20s done in %.2fs, peak %.1f GB VRAM\n", j.Name, s.ID, s.Seconds,
+					float64(s.PeakVRAM)/(1<<30))
+			case s.Status == library.Succeeded:
+				a.printf("  %-10s %-20s done in %.2fs\n", j.Name, s.ID, s.Seconds)
+			case s.Status == library.Failed:
+				a.printf("  %-10s %-20s failed: %s\n", j.Name, s.ID, s.Error)
+			}
 		}
-		seen[key] = string(s.Status)
-		switch {
-		case s.Status == library.Running:
-			a.printf("  %-10s %-20s running\n", j.Name, s.ID)
-		case s.Status == library.Succeeded && s.PeakVRAM > 0:
-			a.printf("  %-10s %-20s done in %.2fs, peak %.1f GB VRAM\n", j.Name, s.ID, s.Seconds,
-				float64(s.PeakVRAM)/(1<<30))
-		case s.Status == library.Succeeded:
-			a.printf("  %-10s %-20s done in %.2fs\n", j.Name, s.ID, s.Seconds)
-		case s.Status == library.Failed:
-			a.printf("  %-10s %-20s failed: %s\n", j.Name, s.ID, s.Error)
-		}
-		if s.Status == library.Succeeded {
+		// A stage is marked done when its event arrives; its outputs join the job when the batch
+		// ends, so what they say is printed when they come, not when the status changed.
+		if s.Status == library.Succeeded && len(s.Outputs) > 0 && seen[key+"#outputs"] == "" {
+			seen[key+"#outputs"] = "shown"
 			for _, note := range s.OutputNotes() {
 				a.printf("  %-10s %-20s note: %s\n", j.Name, s.ID, note)
 			}
