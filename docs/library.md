@@ -55,6 +55,29 @@ export_dir = "Assets/Generated"
 default_preset = "environment-piece"
 ```
 
+## Materials
+
+Local painters make base color only, so a generated asset ships with one roughness (0.8) and one metallic (0) for its whole surface: a chest's iron bands shade like its wood. **Materials** lets you say how rough and how metallic each part is. Nothing is guessed for you.
+
+Forja finds the materials as the few dominant colors of the base color texture (at most six, largest first; colors that look alike count as one, and specks are ignored). You set two numbers from 0 to 1 for each, and Forja writes them into the asset's metallic-roughness map (green is roughness, blue is metallic; the occlusion in red is kept), blurring the borders a little so they do not alias. The same texture always gives the same materials.
+
+It edits the asset in place: its GLB is replaced, so exports and drag-outs carry the change, and the geometry, LODs and rig are untouched. The old file goes at the next sweep. Files you exported earlier, and copies made into a project, are not changed: export again.
+
+**In the app:** open an asset; **Materials** lists each color with its share of the texture and a Roughness and a Metallic slider. The change is saved a moment after you stop moving a slider, and the viewer shows the new file.
+
+**From a terminal:**
+
+```sh
+forja assets materials <asset-id>                                  # index, color, share, roughness, metallic
+forja assets materials <asset-id> --set 1.roughness=0.3 --set 1.metallic=1
+```
+
+`--set <index>.roughness=<0 to 1>` and `--set <index>.metallic=<0 to 1>` can be repeated; materials you do not name keep their values. `--json` prints what the core answered.
+
+- **Painted maps.** Some models (TRELLIS.2 Paint, hosted models) paint roughness and metallic themselves. Such an asset shows "This asset's roughness and metallic were painted by its model." instead of sliders, and a command that would replace the painting is refused; **Replace them…** in the app (after you confirm), or `--overwrite`, does it.
+- **Textures Forja can edit.** PNG and JPEG textures stored inside the GLB. An asset with KTX2 or WebP textures, or none, says why it cannot be edited.
+- **Several textures.** An asset whose materials use different base color textures lists each texture's colors in turn, numbered through; materials that share one texture share one map.
+
 ## Delete assets
 
 Deleting an asset removes it and the job that made it from the library (`forja assets rm <asset-id>`). Files you exported stay where they are. Its files in the object store go at the next sweep ([what stays on disk](#what-stays-on-disk)).

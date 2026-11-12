@@ -13,7 +13,7 @@ A preset is a pipeline: the stages a job runs, in order, with their budgets. It 
 
 Every preset starts the same way: remove the background, frame the subject at 1024 pixels, generate the shape, clean it up. The textured presets then reduce the mesh to their triangle budget, paint it (the painter unwraps UVs itself, unless a UV stage did), bake the high-poly detail into normal and AO maps ([baking](remesh.md#baking)), build the LODs and export a GLB, meshopt-compressed when `gltfpack` is on your `PATH`.
 
-Local painters produce base color only. Roughness and metallic are constants, the paint stage's `roughness` (0.8) and `metallic` (0) parameters.
+Local painters produce base color only. Roughness and metallic are constants, the paint stage's `roughness` (0.8) and `metallic` (0) parameters, and can be set per material afterwards in the library ([materials](library.md#materials)).
 
 ## Optional stages
 

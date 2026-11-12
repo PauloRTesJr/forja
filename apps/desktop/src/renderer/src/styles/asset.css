@@ -349,6 +349,61 @@
   margin-top: var(--s-1);
 }
 
+/* Materials: one block per color, a hairline between blocks. The swatch is the texture's color. */
+.asset-materials .section-head {
+  margin-top: 0;
+}
+.mat-list {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.mat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--s-2) 0;
+  border-top: 1px solid var(--border-soft);
+}
+.mat:first-child {
+  padding-top: 0;
+  border-top: 0;
+}
+.mat-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  min-height: var(--h-sm);
+}
+.mat-head .num {
+  margin-left: auto;
+}
+.mat-swatch {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-1);
+}
+.mat-field {
+  display: grid;
+  grid-template-columns: 68px minmax(0, 1fr) 36px;
+  align-items: center;
+  gap: var(--s-2);
+}
+.mat-value {
+  text-align: right;
+}
+.mat-note {
+  margin: 0;
+}
+.mat-wait {
+  display: block;
+  height: 72px;
+}
+
 /* Narrow windows put the properties under the viewer, and the two lesser actions shrink to their icons. */
 @media (max-width: 1100px) {
   .asset-body {
