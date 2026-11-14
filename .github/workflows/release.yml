@@ -108,6 +108,8 @@ jobs:
           name: release-core
           path: core/bin/forja-*
           if-no-files-found: error
+          # Only the publish job of this run reads it; the release keeps the files.
+          retention-days: 1
 
   desktop:
     name: desktop (${{ matrix.os }})
@@ -155,6 +157,7 @@ jobs:
             apps/desktop/release/*.AppImage
             apps/desktop/release/*.deb
           if-no-files-found: error
+          retention-days: 1
 
   # The engine image for remote GPUs (spec, section 8), one per torch lane. No weights inside.
   engine-image:
