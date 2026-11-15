@@ -163,9 +163,14 @@ def decimate(mesh: trimesh.Trimesh, target_tris: int) -> trimesh.Trimesh:
     faces = len(mesh.faces)
     if faces <= target_tris:
         return mesh.copy()
-    reduction = 1.0 - target_tris / faces
+    # A textured mesh is split along its UV seams. Simplified as is, each UV island's border is
+    # an open edge it shrinks on its own, and the islands pull apart into holes. The output has
+    # no UVs anyway, so the islands are joined by position first.
+    welded = trimesh.Trimesh(mesh.vertices, mesh.faces, process=False)
+    welded.merge_vertices(merge_tex=True, merge_norm=True)
+    reduction = 1.0 - target_tris / len(welded.faces)
     verts, tris = fast_simplification.simplify(
-        np.asarray(mesh.vertices, dtype=np.float32), np.asarray(mesh.faces, dtype=np.int32), reduction
+        np.asarray(welded.vertices, dtype=np.float32), np.asarray(welded.faces, dtype=np.int32), reduction
     )
     out = trimesh.Trimesh(verts, tris, process=True)
     # Collapses leave zero-area slivers behind; they shade as nothing and can leave a vertex

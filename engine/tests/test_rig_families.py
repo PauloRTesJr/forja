@@ -334,6 +334,10 @@ def test_unirig_rigs_the_mesh_that_ships(unirig, tmp_path):
     assert np.allclose(weights.weights.sum(axis=1), 1, atol=1e-5)
     tip = int(np.argmax(out.vertices[:, 0]))
     assert skeleton.names[weights.joints[tip, 0]].startswith("Left")
+    # It keeps the normals the bake's maps were made against, which recomputing would split at seams.
+    baked = mesh_ops.load(src, keep_normals=True).vertex_normals
+    assert not np.allclose(mesh_ops.load(src).vertex_normals, baked, atol=1e-3)
+    assert np.allclose(mesh_ops.load(glb.path, keep_normals=True).vertex_normals, baked, atol=1e-3)
 
 
 def test_unirig_can_leave_a_skeleton_unnamed(unirig, tmp_path):
@@ -467,13 +471,16 @@ def test_skintokens_loads_offline_and_without_flash_attn(skintokens, tmp_path):
 def test_skintokens_predicts_a_rig_and_names_a_humanoid(skintokens, tmp_path):
     adapter, seen = skintokens
     mesh = character()
-    glb, profile = adapter.run(ctx(tmp_path, mesh_ops.save(mesh, tmp_path / "baked.glb"), beams=3))
+    src = mesh_ops.save(mesh, tmp_path / "baked.glb")
+    glb, profile = adapter.run(ctx(tmp_path, src, beams=3))
     assert seen["tokens"] is None and seen["kwargs"]["num_beams"] == 3 and seen["workers"] == 0
     skeleton, skins = skin_ops.read(glb.path)
     assert skeleton.profile == "humanoid" and set(rig_ops.REQUIRED) <= set(skeleton.names)
     assert skeleton.heads[skeleton.names.index("LeftHand")][0] > 0.15
     assert len(next(iter(skins.values()))) == len(mesh.vertices)
     assert json.loads(profile.path.read_text())["source"] == "skintokens"
+    baked = mesh_ops.load(src, keep_normals=True).vertex_normals
+    assert np.allclose(mesh_ops.load(glb.path, keep_normals=True).vertex_normals, baked, atol=1e-3)
 
 
 def test_skintokens_weights_the_standard_skeleton_it_is_given(skintokens, tmp_path):

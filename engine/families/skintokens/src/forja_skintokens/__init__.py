@@ -134,7 +134,7 @@ def match_joints(predicted: NDArray[np.float64], given: NDArray[np.float64]) -> 
 
 
 class SkinTokens(Adapter):
-    version = "1"
+    version = "2"
 
     def __init__(self) -> None:
         self.torch: Any = None
@@ -184,7 +184,8 @@ class SkinTokens(Adapter):
 
     def run(self, ctx: StageContext) -> list[StageOutput]:
         torch = self.torch
-        mesh = mesh_ops.load(ctx.input(ArtifactKind.MESH_GLB).path)
+        # The normals the bake's normal map was made against: recomputed, they split at UV seams.
+        mesh = mesh_ops.load(ctx.input(ArtifactKind.MESH_GLB).path, keep_normals=True)
         template = rig_ops.template(mesh) if ctx.params.get("skeleton", "predict") == "template" else None
         random.seed(ctx.seed)
         np.random.seed(ctx.seed % (1 << 32))

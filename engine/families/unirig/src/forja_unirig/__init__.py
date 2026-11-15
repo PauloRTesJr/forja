@@ -134,7 +134,7 @@ class _Part:
 
 
 class UniRig(Adapter):
-    version = "1"
+    version = "2"
 
     def __init__(self) -> None:
         self.torch: Any = None
@@ -244,7 +244,8 @@ class UniRig(Adapter):
 
     def run(self, ctx: StageContext) -> list[StageOutput]:
         assert self.root is not None and self.skeleton is not None and self.skinner is not None
-        mesh = mesh_ops.load(ctx.input(ArtifactKind.MESH_GLB).path)
+        # The normals the bake's normal map was made against: recomputed, they split at UV seams.
+        mesh = mesh_ops.load(ctx.input(ArtifactKind.MESH_GLB).path, keep_normals=True)
         seed_everything(ctx.seed, self.torch)
         with tempfile.TemporaryDirectory(dir=ctx.out_dir) as tmp, inside(self.root):
             work = Path(tmp)

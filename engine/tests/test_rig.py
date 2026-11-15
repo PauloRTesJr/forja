@@ -284,3 +284,12 @@ def test_a_bone_whose_own_name_is_a_humanoid_one_gives_it_up():
     assert truth[named.names.index("Head")] == "Head"
     assert named.names[finger] == f"Head_{finger}"
     assert len(set(named.names)) == len(named.names)
+
+
+def test_the_stub_keeps_the_normals_the_maps_were_baked_against(tmp_path):
+    src = mesh_ops.save(character(), tmp_path / "baked.glb")
+    baked = mesh_ops.load(src, keep_normals=True).vertex_normals
+    # Recomputed, the normals would split along the UV seams and no longer match the normal map.
+    assert not np.allclose(mesh_ops.load(src).vertex_normals, baked, atol=1e-3)
+    glb, _ = StubRig().run(ctx(tmp_path, StageType.RIG, src))
+    assert np.allclose(mesh_ops.load(glb.path, keep_normals=True).vertex_normals, baked, atol=1e-3)

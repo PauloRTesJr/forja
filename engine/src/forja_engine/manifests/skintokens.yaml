@@ -2,6 +2,8 @@ id: skintokens
 name: SkinTokens (TokenRig)
 family: skintokens
 adapter: forja_skintokens:SkinTokens
+# 2: keeps the normals of the mesh it rigs, which its normal map was baked against.
+adapter_version: "2"
 tasks: [rig]
 # UniRig's successor, with markedly better skin weights: picked first where it fits.
 rank: 10

@@ -64,7 +64,7 @@ class Decimate(Adapter):
     """Simplifies a mesh to `target_tris` triangles. `source` picks which mesh input it reads
     (default the first): a preset can wire a stage in front of it whose output it must not touch."""
 
-    version = "2"
+    version = "3"
 
     def capabilities(self) -> Capabilities:
         return Capabilities(tasks=(StageType.MESH_DECIMATE,), devices=CPU)

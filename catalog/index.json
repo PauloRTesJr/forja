@@ -143,13 +143,13 @@
         "commercial": true,
         "restrictions": []
       },
-      "adapter_version": "1",
+      "adapter_version": "2",
       "vram_gb": 14.0,
       "disk_gb": 8.1,
       "rank": 10,
       "stub": false,
       "manifest": "engine/src/forja_engine/manifests/skintokens.yaml",
-      "sha256": "3ae969dd8634d2c70d5cb893f927aa0e938e1ccf21cb37535fe4efda52175987"
+      "sha256": "82e0a07ba9ae023dc364423961f243385c622f3b30470473c59eae6aa2c011ee"
     },
     {
       "id": "stub-background",
@@ -203,13 +203,13 @@
         "commercial": true,
         "restrictions": []
       },
-      "adapter_version": "1",
+      "adapter_version": "2",
       "vram_gb": 0.0,
       "disk_gb": 0.0,
       "rank": 0,
       "stub": true,
       "manifest": "engine/src/forja_engine/manifests/stub-rig.yaml",
-      "sha256": "fc2faa1d5dc71427ce690d6760fa18efd73a6fc94c652bfc221fd8eb94064e90"
+      "sha256": "bf5a0a65193e3b13194b7490321f0add5a20599c37d010537b6601e3e617200e"
     },
     {
       "id": "stub-shape",
@@ -307,13 +307,13 @@
         "commercial": true,
         "restrictions": []
       },
-      "adapter_version": "1",
+      "adapter_version": "2",
       "vram_gb": 8.7,
       "disk_gb": 10.7,
       "rank": 5,
       "stub": false,
       "manifest": "engine/src/forja_engine/manifests/unirig.yaml",
-      "sha256": "72f4fdce46c985b4b20fe93cdcc138ead43a0e4c79a48d8640f397b68daca811"
+      "sha256": "49bf9551c0980293ffdc26dc995c0e736b8034c1d4cf3d54d6edcb81e528bed8"
     }
   ]
 }

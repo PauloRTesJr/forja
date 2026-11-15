@@ -126,3 +126,16 @@ def test_decimate_reads_the_mesh_input_its_source_names(tmp_path):
     assert first.extents.max() > 3.5  # the box
     assert second.extents.max() < 2.1  # the sphere
     assert 0 < len(second.faces) <= 200
+
+
+def test_decimating_a_mesh_split_along_uv_seams_leaves_no_holes():
+    # A textured mesh from a shape model has its vertices split along its UV seams. Simplified
+    # as is, each UV island shrinks apart from its neighbors and the surface tears open.
+    sphere = m.unwrap(trimesh.creation.icosphere(subdivisions=5))
+    welded = trimesh.Trimesh(sphere.vertices, sphere.faces, process=False)
+    welded.merge_vertices(merge_tex=True, merge_norm=True)
+    assert len(sphere.vertices) > len(welded.vertices)  # split along its seams
+    low = m.decimate(sphere, 1000)
+    joined = trimesh.Trimesh(low.vertices, low.faces, process=False)
+    joined.merge_vertices(merge_tex=True, merge_norm=True)
+    assert joined.is_watertight

@@ -130,11 +130,13 @@ class StubRig(Adapter):
     chain up its tallest axis.
     """
 
+    version = "2"
+
     def capabilities(self) -> Capabilities:
         return Capabilities(tasks=(StageType.RIG,), devices=(Device.CPU,), vram_bytes=512 * MB)
 
     def run(self, ctx: StageContext) -> list[StageOutput]:
-        mesh = mesh_ops.load(ctx.input(ArtifactKind.MESH_GLB).path)
+        mesh = mesh_ops.load(ctx.input(ArtifactKind.MESH_GLB).path, keep_normals=True)
         want = str(ctx.params.get("profile", "auto"))
         humanoid = want == "humanoid" or (want == "auto" and rig_ops.looks_humanoid(mesh))
         skeleton = rig_ops.template(mesh) if humanoid else rig_ops.chain(mesh)

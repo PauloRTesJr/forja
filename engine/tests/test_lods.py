@@ -3,6 +3,7 @@
 import time
 from pathlib import Path
 
+import fast_simplification
 import numpy as np
 import trimesh
 from PIL import Image
@@ -43,7 +44,12 @@ def run_levels(tmp_path: Path, mesh: trimesh.Trimesh) -> list[trimesh.Trimesh]:
 
 def old_level(lod0: trimesh.Trimesh, target: int) -> trimesh.Trimesh:
     """LODs as built before the UV islands were kept: simplify the split vertices as they are."""
-    lod = mesh_ops.decimate(lod0, target)
+    verts, tris = fast_simplification.simplify(
+        np.asarray(lod0.vertices, dtype=np.float32),
+        np.asarray(lod0.faces, dtype=np.int32),
+        1.0 - target / len(lod0.faces),
+    )
+    lod = trimesh.Trimesh(verts, tris, process=True)
     _, tri = cKDTree(lod0.triangles_center).query(lod.vertices)
     bary = np.clip(trimesh.triangles.points_to_barycentric(lod0.triangles[tri], lod.vertices), 0, 1)
     bary /= np.maximum(bary.sum(axis=1, keepdims=True), 1e-9)

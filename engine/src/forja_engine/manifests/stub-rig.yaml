@@ -4,6 +4,8 @@ family: stub
 stub: true
 description: Deterministic stand-in for tests; its output is not a real asset.
 adapter: forja_engine.adapters.stub:StubRig
+# 2: keeps the normals of the mesh it rigs, which its normal map was baked against.
+adapter_version: "2"
 tasks: [rig]
 license: { spdx: Apache-2.0, commercial: true }
 requirements:

@@ -2,6 +2,8 @@ id: unirig
 name: UniRig
 family: unirig
 adapter: forja_unirig:UniRig
+# 2: keeps the normals of the mesh it rigs, which its normal map was baked against.
+adapter_version: "2"
 tasks: [rig]
 # Below SkinTokens, its successor, which needs a 14 GB card; UniRig is the one that fits 12 GB.
 rank: 5
